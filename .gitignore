@@ -10,10 +10,12 @@ venv/
 
 # Outputs
 outputs/*
-!outputs/.gitkeep
 !outputs/figures/
 !outputs/tables/
 !outputs/reports/
+!outputs/figures/.gitkeep
+!outputs/tables/.gitkeep
+!outputs/reports/.gitkeep
 
 # Data
 data/
