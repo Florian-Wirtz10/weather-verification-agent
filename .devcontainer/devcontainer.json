@@ -3,17 +3,50 @@
   "build": {
     "dockerfile": "Dockerfile"
   },
+
+  // Node.js and the non-root OS user come from maintained, versioned
+  // devcontainer Features instead of a hand-rolled "curl | bash" installer
+  // in the Dockerfile — reproducible across machines and easy to bump.
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "username": "dev",
+      "uid": "1000",
+      "gid": "1000",
+      "upgradePackages": false,
+      "installZsh": false
+    }
+  },
+
   "workspaceFolder": "/workspace",
-  "mounts": [
-    "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached"
-  ],
+
+  // The ONLY thing mounted from the host is this project folder. No SSH
+  // agent forwarding, no docker.sock, no host credential/config directories
+  // — the container cannot see or touch anything on the Mac outside of
+  // this repo.
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+  "runArgs": ["--init"],
+
+  // Run as an unprivileged, host-UID-matched user rather than root, so
+  // files created in the container keep sane ownership on the host and a
+  // compromised process/dependency can't act with root inside the
+  // container either.
+  "remoteUser": "dev",
+  "updateRemoteUserUID": true,
+
+  // postCreateCommand runs after the Node/user features are applied, so
+  // both npm and the project's own package are set up here in one place —
+  // versions are pinned so every clone of this repo ends up identical.
+  "postCreateCommand": "npm install -g @anthropic-ai/claude-code@2.1.201 && pip install --user -e \".[dev]\"",
+
   "customizations": {
     "vscode": {
       "extensions": [
         "ms-python.python",
         "ms-python.vscode-pylance",
         "ms-toolsai.jupyter",
-        "ms-azuretools.vscode-docker",
         "charliermarsh.ruff",
         "tamasfe.even-better-toml",
         "redhat.vscode-yaml"
@@ -25,7 +58,6 @@
       }
     }
   },
-  "postCreateCommand": "pip install -e .",
-  "forwardPorts": [8501, 8888],
-  "remoteUser": "root"
+
+  "forwardPorts": [8501]
 }

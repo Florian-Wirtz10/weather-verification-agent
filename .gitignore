@@ -4,9 +4,20 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.ruff_cache/
+.mypy_cache/
+
+# Node (only present if Claude Code or tooling writes local caches here)
+node_modules/
 
 # Environment
 .env
+
+# Claude Code project state — local to this machine/session, must never
+# be shared or committed (permission grants, session-local settings).
+# .claude/settings.json (if ever added for team-shared config) stays tracked.
+.claude/settings.local.json
+.claude/ide/
 
 # Outputs
 outputs/*
