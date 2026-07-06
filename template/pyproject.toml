@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "your-project-name"
+version = "0.1.0"
+description = "One-sentence description of what this project does."
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Runtime dependencies only — what the project needs to actually run.
+# Add them here as you write code, e.g. "pydantic>=2.7".
+dependencies = []
+
+# Dev-only tooling — kept out of the runtime dependency set so a deployed
+# environment doesn't pull in test/lint tooling it will never use.
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.4",
+]
+
+# Auto-discovers whatever top-level packages you add (each needs an
+# __init__.py). No need to list folders by name or keep this in sync by hand.
+[tool.setuptools.packages.find]
+exclude = ["tests*", "outputs*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
