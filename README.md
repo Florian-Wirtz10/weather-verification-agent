@@ -57,10 +57,5 @@ weather_verification_agent/
 ├── outputs/         # 运行产物（figures/tables/reports），已被 gitignore
 ├── tests/
 ├── app.py           # Streamlit 入口
-├── template/        # 可复用的项目骨架（容器配置等），复制出去改个名字即可用于新项目
 └── pyproject.toml
 ```
-
-## 项目模板
-
-`template/` 目录是从本项目提炼出的、不含任何天气检验业务代码的空骨架（容器配置、`.gitignore`、`pyproject.toml` 骨架等），用来快速创建新项目。用法见 `template/TEMPLATE_USAGE.md`。
