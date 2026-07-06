@@ -18,6 +18,7 @@ node_modules/
 # .claude/settings.json (if ever added for team-shared config) stays tracked.
 .claude/settings.local.json
 .claude/ide/
+.claude/worktrees/
 
 # Outputs
 outputs/*
