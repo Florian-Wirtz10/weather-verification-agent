@@ -1,0 +1,65 @@
+"""End-to-end test of run_fenglei_case_verification against small synthetic
+fixtures (never the private external/ sample data)."""
+
+import numpy as np
+
+from agent import run_fenglei_case_verification
+from tests.test_real_data_io import _make_cref_nc, _make_swan_mosaic_bytes
+
+
+def test_run_fenglei_case_verification_end_to_end(tmp_path):
+    fenglei_dir = tmp_path / "fenglei"
+    radar_dir = tmp_path / "radar"
+    fenglei_dir.mkdir()
+    radar_dir.mkdir()
+
+    nx, ny = 6, 6
+    lat = 30.0 - 0.01 * np.arange(ny)  # north -> south, matches StartLat=30 in the fixture
+    lat = lat[::-1]  # ascending, matching what read_swan_mosaic will produce
+    lon = 110.0 + 0.01 * np.arange(nx)
+
+    for lead_minutes in (6, 12):
+        # a simple echo blob, shifted slightly by lead time so scores differ per lead
+        raw = np.zeros((ny, nx), dtype="u1")
+        raw[2:4, 2 + lead_minutes // 6 : 5] = 140  # 140*0.5-33 = 37 dBZ
+        blob = _make_swan_mosaic_bytes(
+            nx=nx,
+            ny=ny,
+            cell_bytes=1,
+            scale=0.5,
+            offset=-33.0,
+            values=raw,
+            header_overrides={"interval": lead_minutes},
+        )
+        path = fenglei_dir / f"REFMOSAIC-202504110212-{lead_minutes:03d}MIN.bz2"
+        path.write_bytes(blob)
+
+        # matching obs: same blob location, no lead-shift (perfect obs at valid time)
+        obs_data = np.zeros((ny, nx), dtype="f4")
+        obs_data[2:4, 2:5] = 40.0
+        valid_time_beijing = f"2025-04-11 10:{12 + lead_minutes:02d}:00"  # BJT = UTC+8 of 02:xx
+        _make_cref_nc(
+            radar_dir / f"CREF_with_time_{lead_minutes}.nc",
+            lat=lat.astype("f4"),
+            lon=lon.astype("f4"),
+            data=obs_data,
+            valid_time_str=valid_time_beijing,
+        )
+
+    result = run_fenglei_case_verification(
+        fenglei_dir=fenglei_dir,
+        radar_dir=radar_dir,
+        bbox=(29.9, 30.1, 109.9, 110.1),
+        thresholds=(20,),
+    )
+
+    assert result["lead_minutes"] == [6, 12]
+    assert len(result["per_lead"]) == 2
+    assert result["per_lead"][0]["categorical"][20]["csi"] > 0
+    expected_figures = {
+        "csi_time_series", "pod_time_series", "far_time_series",
+        "bias_score_time_series", "ets_time_series",
+        "forecast_first_lead", "obs_first_lead", "error_first_lead",
+        "forecast_last_lead", "obs_last_lead", "error_last_lead",
+    }
+    assert expected_figures <= result["figures"].keys()

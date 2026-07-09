@@ -39,6 +39,11 @@ data/
 *.npy
 *.npz
 
+# Private reference material (project requirement docs, real case sample
+# data from upstream 风雷/雷达 sources) — not ours to redistribute, never
+# committed. data_io real-data readers must not hardcode paths into this.
+external/
+
 # macOS
 .DS_Store
 

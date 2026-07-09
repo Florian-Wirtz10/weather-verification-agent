@@ -9,15 +9,17 @@ description = "Natural-language-driven weather forecast verification agent for p
 readme = "README.md"
 requires-python = ">=3.11"
 
-# Runtime dependencies only — what phase 1 (synthetic arrays, metrics,
-# plotting, Streamlit display) actually needs. Add xarray/netCDF4/scipy/
-# anthropic/etc. when the code that uses them lands, not before.
+# Runtime dependencies — grown past the phase-1 synthetic-only set now that
+# phase 2 reads real 风雷 mosaic (bz2) and radar CREF (NetCDF) products and
+# calls out to an LLM for NL parsing.
 dependencies = [
     "numpy>=1.26",
     "pandas>=2.2",
     "matplotlib>=3.8",
     "streamlit>=1.35",
     "python-dotenv>=1.0",
+    "netCDF4>=1.6",
+    "openai>=1.30",
 ]
 
 # Dev-only tooling — kept out of the runtime dependency set so a deployed
