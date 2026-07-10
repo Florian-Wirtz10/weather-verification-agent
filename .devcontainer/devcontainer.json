@@ -30,12 +30,14 @@
   "runArgs": ["--init"],
 
   // Persist Claude Code's session state (~/.claude — holds chat history
-  // under projects/) across container rebuilds. This is a Docker NAMED
-  // VOLUME, not a host path: it exposes no file on the Mac, so the
-  // isolation guarantee above still holds — it only survives rebuilds so
-  // conversations aren't lost every time the container is rebuilt.
+  // under projects/) and Codex's login/config (~/.codex) across container
+  // rebuilds. Both are Docker NAMED VOLUMES, not host paths: they expose no
+  // file on the Mac, so the isolation guarantee above still holds — they
+  // only survive rebuilds so conversations and logins aren't lost every
+  // time the container is rebuilt.
   "mounts": [
-    "source=${localWorkspaceFolderBasename}-claude-home,target=/home/dev/.claude,type=volume"
+    "source=${localWorkspaceFolderBasename}-claude-home,target=/home/dev/.claude,type=volume",
+    "source=${localWorkspaceFolderBasename}-codex-home,target=/home/dev/.codex,type=volume"
   ],
 
   // Run as an unprivileged, host-UID-matched user rather than root, so
@@ -48,9 +50,14 @@
   // postCreateCommand runs after the Node/user features are applied, so
   // both npm and the project's own package are set up here in one place —
   // versions are pinned so every clone of this repo ends up identical.
-  // The leading chown hands the freshly-created .claude volume (mounted
-  // root-owned) to the dev user, so Claude Code can write its session state.
-  "postCreateCommand": "sudo chown -R dev:dev /home/dev/.claude && npm install -g @anthropic-ai/claude-code@2.1.201 && pip install --user -e \".[dev]\"",
+  // The chown/mkdir hand the freshly-created .claude/.codex volumes
+  // (mounted root-owned) to the dev user. Claude Code's account login
+  // token actually lives in ~/.claude.json, OUTSIDE the mounted ~/.claude
+  // directory, so on a fresh container it's a plain file that vanishes on
+  // rebuild; the mv+symlink step relocates it into the persisted volume
+  // once so future rebuilds resume an already-logged-in session instead of
+  // prompting a re-login.
+  "postCreateCommand": "sudo mkdir -p /home/dev/.codex && sudo chown -R dev:dev /home/dev/.claude /home/dev/.codex && if [ -f /home/dev/.claude.json ] && [ ! -L /home/dev/.claude.json ]; then mv /home/dev/.claude.json /home/dev/.claude/.claude.json; fi && ln -sfn /home/dev/.claude/.claude.json /home/dev/.claude.json && npm install -g @anthropic-ai/claude-code@2.1.201 @openai/codex@0.144.1 && pip install --user -e \".[dev]\"",
 
   "customizations": {
     "vscode": {
