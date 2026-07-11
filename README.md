@@ -1,78 +1,124 @@
 # Weather Verification Agent
 
-自然语言驱动的 AI 模型降水预报检验智能体原型。
+面向已接入风雷预报个例的受限检验助手：自然语言只负责生成可审计的检验参数，确定性代码
+负责读取资料、计算指标和绘图，LLM 可以在严格证据边界内解释计算结果。
 
-## 当前阶段目标
+它不是实时天气问答、任意数据分析或自由代码/制图工具。
 
-第一阶段实现的最小可行版本（已冻结，见 tag `v1.0-phase1`）：
+## 阶段状态
 
-- 使用随机二维数组模拟预报降水和实况降水；
-- 计算降水预报检验指标；
-- 自动绘制预报图、实况图、误差图；
-- 使用 Streamlit 展示结果。
+- Phase 1（tag `v1.0-phase1`）：合成降水场、基础指标、绘图和 Streamlit demo。
+- Phase 2（tag `v2.0-phase2`）：接入风雷 V1.0 REFMOSAIC、雷达 CREF、DeepSeek 单轮选图。
+- Phase 3（当前）：可信的单轮检验助手。
 
-第二阶段（当前分支）在此之上接入真实数据和自然语言层：
+Phase 3 的主要能力：
 
-- 读取风雷 REFMOSAIC 反射率预报（SWAN/diamond-131 二进制 + bz2）和雷达 CREF 观测（NetCDF），
-  在 2025-04-11 湖北大范围强对流个例上做真实检验（`data_io/fenglei_mosaic.py`、
-  `data_io/radar_obs.py`、`data_io/grid.py`）；
-- `visualization/plots.py` 提供一份固定的图表菜单（反射率场、误差场、CSI/POD/FAR/ETS/
-  频率偏差随预报时效变化曲线）；
-- `agent/nl_parser.py` 用 DeepSeek 把自然语言请求解析成"选哪些阈值、调用菜单里的哪些图"，
-  模型只能从固定菜单中选择，不允许生成或执行任意绘图代码；
-- 私有的项目需求文档和风雷/雷达样例数据放在 `external/`（已被 `.gitignore` 排除，不随仓库
-  分发）——`data_io` 里的读取器只接受路径参数，不硬编码依赖 `external/`。
+- 将自然语言解析成版本化、白名单化的请求 Schema；
+- 支持反射率阈值、预报时效范围和精确到单张 Figure 的视图请求；
+- 一次运行强制只使用一个风雷起报，预报和观测时间必须完全一致；
+- 在解压大文件前按起报与时效过滤，逐对流式读取，避免内存随历史帧数累积；
+- 显式区分 `ready / partial / unsupported / out_of_scope / no_data / parser_error`；
+- 不支持、无数据或 API 失败时不计算、不乱出默认图；
+- 保留 hits、misses、false alarms、correct negatives 和有效/无效格点数；
+- 缺测值不再被当作正确否定，空间范围外不再复制最近边界值；
+- 先由代码生成事实摘要，再可选地把白名单汇总发送给 DeepSeek 组织成文字解读；
+- DeepSeek 解读失败时，确定性摘要、指标表和图仍然正常展示。
 
-## 技术栈
+## 支持的自然语言能力
 
-- Python 3.11
-- NumPy / Pandas
-- Matplotlib
-- netCDF4
-- Streamlit
-- DeepSeek（OpenAI 兼容接口，经 `openai` SDK 调用）
-- Docker Dev Container
-- Claude Code
+支持的评分指标：`CSI / POD / FAR / bias / ETS`。
 
-## 开发环境
+支持的视图：
 
-本项目要求使用 VS Code Dev Containers（`.devcontainer/`），不支持也不建议在宿主机 Python 环境中直接运行。
+- 单项评分随预报时效变化曲线；
+- 指定时效的风雷预报与雷达观测对比图；
+- 指定时效的反射率误差图。
 
-容器隔离与安全设计：
+示例：
 
-- 唯一挂载进容器的宿主机路径就是本项目文件夹本身（`workspaceMount`），不挂载 `~/.ssh`、`~/.aws`、Docker socket 或任何其他宿主机目录/凭据。
-- 容器内以非 root 用户 `dev`（UID/GID 1000，与宿主机常见用户 UID 对齐）运行，而非 root。
-- Node.js（供 Claude Code 使用）通过官方维护的 [devcontainer Feature](https://containers.dev/features) 安装，而非从网络下载脚本直接 `curl | bash` 执行。
-- 所有工具版本（Node、uv、pip、Claude Code）均在 `Dockerfile` / `devcontainer.json` 中锁定版本号，保证任何人在任何时间构建出的环境一致。
-- 密钥只通过 `.env`（已被 `.gitignore` 排除，不会被提交或分发）注入，仓库中只保留 `.env.example` 占位模板。首次使用请自行复制：`cp .env.example .env` 并填入真实 key。
-- `.claude/settings.local.json` 等会话本地状态已加入 `.gitignore`，不会随仓库分享出去。
+```text
+使用35 dBZ阈值，只看前1小时，生成CSI和ETS两张曲线，并简要解读结果。
+```
+
+规范化后只会选择 6—60 分钟的严格匹配资料，并生成两张 Figure。
+
+以下请求不会被偷偷替换成全部图表：
+
+- “画 Taylor 图” → `unsupported`，不出图；
+- “画 Taylor 图和 CSI” → `partial`，只出明确要求且已支持的 CSI；
+- “检验 2025 年 4 月 10 日” → `no_data`，列出可用日期；
+- “今天天气怎么样” → `out_of_scope`；
+- DeepSeek/API/JSON 失败 → `parser_error`，可重试或主动点击明确默认方案。
+
+## 数据与计算口径
+
+当前真实个例链路为：
+
+```text
+风雷 V1.0 REFMOSAIC 雷达组合反射率预报（dBZ）
+                    vs
+雷达 CREF 组合反射率观测（dBZ）
+```
+
+- 风雷头时间按 UTC；雷达文件头北京时统一转换为 UTC；
+- 只接受有效时间完全相等的预报—观测对；
+- 风雷场通过最近邻重采样到雷达网格；完整风雷范围外填为缺测；
+- 指标只使用预报和观测均为有限值的公共格点；
+- 时间序列保留逐 6 分钟数据，横轴主刻度每 30 分钟；原始缺帧处断线显示；
+- 单个例结果不能推广为模型整体能力结论。
+
+如果未来切换到风雷 V1.1 `V11-PRE`，必须使用同时段的定量降水实况和 mm 阈值，不能复用
+当前 REFMOSAIC/CREF 的 dBZ 检验口径。
 
 ## 运行方式
 
-进入 Dev Container 后运行：
+项目使用 VS Code Dev Container。进入容器后：
 
 ```bash
 streamlit run app.py
 ```
 
-`app.py` 有两个标签页：phase 1 的合成数据 demo，和 phase 2 的真实个例检验。真实个例检验需要
-在 `.env` 里配置 `DEEPSEEK_API_KEY`、`FENGLEI_CASE_DIR`、`RADAR_OBS_DIR`（指向你本地的
-`external/` 数据目录）。
+在 `.env` 中配置：
 
-## 项目结构
+```dotenv
+DEEPSEEK_API_KEY=...
+FENGLEI_CASE_DIR=external/smoke_data/fenglei
+RADAR_OBS_DIR=external/smoke_data/radar
+```
+
+页面默认不把指标发送给 DeepSeek。勾选“允许将汇总指标发送给 DeepSeek”后，只发送白名单事实
+摘要，不发送路径、文件名、原始网格、图片或代码。
+
+## 验证
+
+```bash
+python -m pytest -q
+ruff check .
+npx --yes pyright agent data_io reports tests verification visualization app.py --level error
+```
+
+`external/` 和 `.env` 均被 `.gitignore` 排除，不会进入仓库。
+
+## 结构
 
 ```text
-weather_verification_agent/
-├── agent/           # 自然语言编排层：解析用户请求，驱动下面各层的流水线
-│   ├── nl_parser.py     # DeepSeek 请求解析：只能从固定图表菜单里选图，不生成代码
-│   └── orchestrator.py  # 合成数据 pipeline + 真实个例 pipeline
-├── verification/    # 检验指标：纯函数，不做 I/O、不画图
-├── data_io/         # 数据读写层：合成场 + 风雷 mosaic / 雷达 CREF 真实数据读取
-├── visualization/   # 绘图层：只接收数组/指标结果，不计算指标
-├── reports/         # 报告生成：汇总指标与图表，写入 outputs/reports/
-├── outputs/         # 运行产物（figures/tables/reports），已被 gitignore
-├── external/        # 私有项目需求文档 + 风雷/雷达样例数据，已被 gitignore，不随仓库分发
-├── tests/
-├── app.py           # Streamlit 入口
-└── pyproject.toml
+agent/
+├── request_schema.py       # 不可信 JSON → 严格的领域请求 Schema
+├── request_resolution.py   # 能力、日期、个例和状态的确定性闸门
+├── nl_parser.py            # DeepSeek 只负责提出请求 JSON
+├── orchestrator.py         # 单起报、按时效流式计算、按请求渲染
+├── insight.py              # 确定性事实摘要 + 可选 LLM 文字组织
+└── errors.py               # no-data / ambiguous-case / data-contract 错误
+
+data_io/                    # 风雷、雷达读取与网格对齐
+verification/               # 列联表和检验指标纯函数
+visualization/              # 确定性 Matplotlib 图表
+reports/                    # 报告输出
+tests/                      # Schema、拒绝状态、科学计算、端到端测试
+app.py                      # Streamlit UI
 ```
+
+## 下一阶段候选
+
+Phase 4 再考虑受限多轮修改、多个历史个例、持续性基线、FSS/邻域检验和 V1.1 降水适配；
+通用声明式制图、跨个例批处理与上游任务调度放到更后续阶段。
