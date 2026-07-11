@@ -46,7 +46,14 @@ _SAFE_COVERAGE_KEYS = (
     "selected_leads",
     "missing_leads",
 )
-_SAFE_FACT_KEYS = ("context", "coverage", "thresholds", "undefined_values", "limitations")
+_SAFE_FACT_KEYS = (
+    "context",
+    "coverage",
+    "requested_metrics",
+    "thresholds",
+    "undefined_values",
+    "limitations",
+)
 _SENSITIVE_KEYS = {
     "path",
     "paths",
@@ -71,6 +78,9 @@ _SENSITIVE_KEYS = {
 _SYSTEM_PROMPT = """你是强对流预报检验结果解读助手。用户消息只包含服务端已经计算好的事实 JSON。
 所有数值计算与异常标记都已完成；不要重新计算、补造数字，也不要引入 JSON 中没有的事实。
 
+只讨论 requested_metrics 中列出的评分指标。即使你能从列联表推导其它指标，也不得在报告中
+主动引入用户没有请求的 POD、FAR、CSI、Bias 或 ETS。
+
 请用专业但直观的中文简洁作答，并严格区分三部分：
 1. 客观事实：只复述有数据支撑的变化、极值、负 ETS、缺帧或不可定义值；
 2. 可能解释：必须明确写成“可能”或“需要进一步核查”的假设，不能仅凭评分断言空间偏移、
@@ -81,7 +91,9 @@ _SYSTEM_PROMPT = """你是强对流预报检验结果解读助手。用户消息
 变差。"""
 
 
-def build_insight_facts(result: Mapping[str, Any]) -> dict[str, Any]:
+def build_insight_facts(
+    result: Mapping[str, Any], *, requested_metrics: Sequence[str] | None = None
+) -> dict[str, Any]:
     """Build a compact, JSON-safe and path-free fact sheet from one case result.
 
     Non-finite scores are represented as ``None`` and listed explicitly under
@@ -102,11 +114,18 @@ def build_insight_facts(result: Mapping[str, Any]) -> dict[str, Any]:
     coverage.setdefault("missing_leads", [])
     coverage["matched_count"] = len(actual_leads)
 
+    metrics = _normalise_requested_metrics(requested_metrics)
     thresholds = _collect_thresholds(entries)
     undefined_values: list[dict[str, Any]] = []
     threshold_units = context.get("units") or context.get("unit") or ""
     threshold_facts = [
-        _summarise_threshold(threshold, entries, undefined_values, threshold_units)
+        _summarise_threshold(
+            threshold,
+            entries,
+            undefined_values,
+            threshold_units,
+            metrics,
+        )
         for threshold in thresholds
     ]
 
@@ -127,6 +146,7 @@ def build_insight_facts(result: Mapping[str, Any]) -> dict[str, Any]:
     facts = {
         "context": context,
         "coverage": coverage,
+        "requested_metrics": metrics,
         "thresholds": threshold_facts,
         "undefined_values": undefined_values,
         "limitations": limitations,
@@ -169,7 +189,14 @@ def render_deterministic_summary(facts: Mapping[str, Any]) -> str:
             if not isinstance(metrics, Mapping):
                 continue
             parts: list[str] = []
-            for metric_name in ("csi", "ets"):
+            requested_metrics = facts.get("requested_metrics")
+            metric_names = (
+                [str(name) for name in requested_metrics]
+                if isinstance(requested_metrics, Sequence)
+                and not isinstance(requested_metrics, (str, bytes))
+                else ["csi", "ets"]
+            )
+            for metric_name in metric_names:
                 metric = metrics.get(metric_name)
                 if not isinstance(metric, Mapping):
                     continue
@@ -252,15 +279,8 @@ def _summarise_threshold(
     entries: Sequence[dict[str, Any]],
     undefined_values: list[dict[str, Any]],
     threshold_units: Any,
+    metric_names: Sequence[str],
 ) -> dict[str, Any]:
-    metric_names: list[str] = list(_METRIC_ORDER)
-    extras: set[str] = set()
-    for entry in entries:
-        scores = _threshold_mapping(entry.get("categorical"), threshold)
-        if scores:
-            extras.update(str(name) for name in scores if str(name) not in _METRIC_ORDER)
-    metric_names.extend(sorted(extras))
-
     metrics: dict[str, Any] = {}
     for metric_name in metric_names:
         finite_points: list[tuple[int | float, float]] = []
@@ -283,19 +303,23 @@ def _summarise_threshold(
                 finite_points.append((lead, number))
         metrics[metric_name] = _metric_facts(finite_points, undefined_leads)
 
-    negative_points = [
-        point
-        for point in (
-            (
-                entry["lead_minutes"],
-                _finite_float(
-                    (_threshold_mapping(entry.get("categorical"), threshold) or {}).get("ets")
-                ),
+    negative_points = []
+    if "ets" in metric_names:
+        negative_points = [
+            point
+            for point in (
+                (
+                    entry["lead_minutes"],
+                    _finite_float(
+                        (_threshold_mapping(entry.get("categorical"), threshold) or {}).get(
+                            "ets"
+                        )
+                    ),
+                )
+                for entry in entries
             )
-            for entry in entries
-        )
-        if point[1] is not None and point[1] < 0
-    ]
+            if point[1] is not None and point[1] < 0
+        ]
 
     by_lead: list[dict[str, Any]] = []
     totals = {key: 0 for key in _COUNT_KEYS}
@@ -315,17 +339,29 @@ def _summarise_threshold(
             totals["valid_count"] += int(row["valid_count"])
         by_lead.append(row)
 
-    return {
+    summary = {
         "threshold": threshold,
         "threshold_units": threshold_units,
         "metrics": metrics,
-        "negative_ets": {
+        "contingency": {"by_lead": by_lead, "totals": totals},
+    }
+    if "ets" in metric_names:
+        summary["negative_ets"] = {
             "count": len(negative_points),
             "leads": [lead for lead, _ in negative_points],
             "values": [value for _, value in negative_points],
-        },
-        "contingency": {"by_lead": by_lead, "totals": totals},
-    }
+        }
+    return summary
+
+
+def _normalise_requested_metrics(value: Sequence[str] | None) -> list[str]:
+    if value is None:
+        return list(_METRIC_ORDER)
+    metrics = list(dict.fromkeys(str(metric).lower() for metric in value))
+    unsupported = [metric for metric in metrics if metric not in _METRIC_ORDER]
+    if unsupported:
+        raise ValueError(f"unsupported insight metrics: {unsupported}")
+    return metrics
 
 
 def _metric_facts(

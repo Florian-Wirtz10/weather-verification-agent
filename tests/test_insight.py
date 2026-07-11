@@ -138,3 +138,22 @@ def test_generate_insight_rejects_empty_response():
         assert "empty insight response" in str(exc)
     else:
         raise AssertionError("an empty LLM response must raise")
+
+
+def test_requested_metric_scope_excludes_unrequested_scores_from_llm_payload():
+    captured = {}
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=_FakeCompletions(captured)),
+    )
+    facts = build_insight_facts(_result(), requested_metrics=["csi", "ets"])
+
+    assert facts["requested_metrics"] == ["csi", "ets"]
+    assert set(facts["thresholds"][0]["metrics"]) == {"csi", "ets"}
+
+    generate_insight(facts, client=client)
+    payload = json.loads(captured["messages"][1]["content"])
+    metric_names = set(payload["thresholds"][0]["metrics"])
+    assert metric_names == {"csi", "ets"}
+    assert "pod" not in captured["messages"][1]["content"]
+    assert "far" not in captured["messages"][1]["content"]
+    assert "bias_score" not in captured["messages"][1]["content"]

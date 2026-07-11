@@ -112,7 +112,12 @@ def _execute_real_case_request(
             "message": "部分空间图没有对应的精确预报时效，已只生成有数据的视图。",
         }
         attempt["decision"] = decision
-    facts = build_insight_facts(result)
+    requested_metrics = [
+        view["metric"]
+        for view in execution["views"]
+        if view["type"] == "score_time_series"
+    ]
+    facts = build_insight_facts(result, requested_metrics=requested_metrics)
     deterministic_summary = render_deterministic_summary(facts)
     ai_insight = None
     insight_error = None
