@@ -16,7 +16,8 @@ dependencies = [
     "numpy>=1.26",
     "pandas>=2.2",
     "matplotlib>=3.8",
-    "streamlit>=1.35",
+    # Phase 3 uses width="stretch" and download_button(on_click="ignore").
+    "streamlit>=1.59",
     "python-dotenv>=1.0",
     "netCDF4>=1.6",
     "openai>=1.30",

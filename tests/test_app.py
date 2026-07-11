@@ -1,4 +1,43 @@
+import matplotlib.pyplot as plt
+import numpy as np
 from streamlit.testing.v1 import AppTest
+
+import agent
+from tests.test_real_data_io import _make_cref_nc, _make_swan_mosaic_bytes
+
+
+def _write_app_case(tmp_path):
+    fenglei_dir = tmp_path / "fenglei"
+    radar_dir = tmp_path / "radar"
+    fenglei_dir.mkdir()
+    radar_dir.mkdir()
+
+    raw = np.zeros((6, 6), dtype="u1")
+    raw[2:4, 2:5] = 140
+    (fenglei_dir / "REFMOSAIC-202504110212-006MIN.bz2").write_bytes(
+        _make_swan_mosaic_bytes(
+            nx=6,
+            ny=6,
+            cell_bytes=1,
+            scale=0.5,
+            offset=-33.0,
+            values=raw,
+        )
+    )
+    obs = np.zeros((6, 6), dtype="f4")
+    obs[2:4, 2:5] = 40.0
+    _make_cref_nc(
+        radar_dir / "CREF_with_time_fixture.nc",
+        lat=np.linspace(29.95, 30.0, 6, dtype="f4"),
+        lon=np.linspace(110.0, 110.05, 6, dtype="f4"),
+        data=obs,
+        valid_time_str="2025-04-11 10:18:00",
+    )
+    return fenglei_dir, radar_dir
+
+
+def _button(app, label):
+    return next(button for button in app.button if button.label == label)
 
 
 def test_streamlit_initial_screen_renders_without_exceptions():
@@ -8,3 +47,57 @@ def test_streamlit_initial_screen_renders_without_exceptions():
     labels = {button.label for button in app.button}
     assert "解析并运行" in labels
     assert "使用明确默认方案运行" in labels
+
+
+def test_phase3_result_has_browser_downloads_and_releases_figures(tmp_path, monkeypatch):
+    fenglei_dir, radar_dir = _write_app_case(tmp_path)
+    monkeypatch.setenv("FENGLEI_CASE_DIR", str(fenglei_dir))
+    monkeypatch.setenv("RADAR_OBS_DIR", str(radar_dir))
+    plt.close("all")
+
+    app = AppTest.from_file("app.py", default_timeout=30).run()
+    app = _button(app, "使用明确默认方案运行").click().run()
+
+    assert not app.exception
+    assert len(app.image) == 1
+    download_labels = {button.label for button in app.download_button}
+    assert {
+        "下载已生成的部分结果 ZIP",
+        "下载本次请求指标 CSV",
+        "下载结果解读 Markdown",
+        "下载这张图（PNG）",
+    } <= download_labels
+    assert any("请求只能部分执行" in item.value for item in app.warning)
+    assert not plt.get_fignums()
+
+
+def test_failed_ai_retry_is_visible_and_preserves_last_success(tmp_path, monkeypatch):
+    fenglei_dir, radar_dir = _write_app_case(tmp_path)
+    monkeypatch.setenv("FENGLEI_CASE_DIR", str(fenglei_dir))
+    monkeypatch.setenv("RADAR_OBS_DIR", str(radar_dir))
+    calls = 0
+
+    def generate_once_then_fail(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return "第一次成功生成的解读"
+        raise RuntimeError("simulated retry failure")
+
+    monkeypatch.setattr(agent, "generate_insight", generate_once_then_fail)
+
+    app = AppTest.from_file("app.py", default_timeout=30).run()
+    app = _button(app, "使用明确默认方案运行").click().run()
+    consent = next(
+        item
+        for item in app.checkbox
+        if item.label == "允许将汇总指标发送给 DeepSeek 生成文字解读"
+    )
+    app = consent.set_value(True).run()
+    app = _button(app, "基于当前结果生成 AI 解读").click().run()
+    app = _button(app, "重新生成 AI 解读").click().run()
+
+    assert not app.exception
+    assert calls == 2
+    assert any("第一次成功生成的解读" in item.value for item in app.info)
+    assert any("仍保留上一次成功的版本" in item.value for item in app.warning)

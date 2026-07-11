@@ -214,3 +214,13 @@ def test_free_text_is_bounded_and_unmatched_is_deduplicated():
         validate_request({"notes": "x" * 1_001})
     with pytest.raises(RequestValidationError):
         validate_request({"unmatched_requests": ["x" * 301]})
+
+
+def test_spatial_view_count_is_bounded_for_memory_safety():
+    views = [
+        {"type": "reflectivity_error", "lead": lead}
+        for lead in (6, 12, 18, 24, 30, 36, 42)
+    ]
+
+    with pytest.raises(RequestValidationError, match="空间图最多允许 6 张"):
+        validate_request({"views": views})

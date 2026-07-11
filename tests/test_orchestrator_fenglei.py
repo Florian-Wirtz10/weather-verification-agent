@@ -5,7 +5,12 @@ import numpy as np
 import pytest
 
 import agent.orchestrator as orchestrator_module
-from agent import AmbiguousCaseError, discover_fenglei_cases, run_fenglei_case_verification
+from agent import (
+    AmbiguousCaseError,
+    DataContractError,
+    discover_fenglei_cases,
+    run_fenglei_case_verification,
+)
 from tests.test_real_data_io import _make_cref_nc, _make_swan_mosaic_bytes
 
 
@@ -53,7 +58,7 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
         radar_dir=radar_dir,
         bbox=(29.9, 30.1, 109.9, 110.1),
         thresholds=(20,),
-        lead_range=(6, 12),
+        lead_range=(0, 12),
         views=[
             {"type": "score_time_series", "metric": "csi"},
             {"type": "score_time_series", "metric": "ets"},
@@ -74,6 +79,7 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
     }
     assert result["context"]["init_time"].isoformat() == "2025-04-11T02:12:00"
     assert result["coverage"]["selected_leads"] == [6, 12]
+    assert result["coverage"]["missing_leads"] == []
     assert result["per_lead"][0]["contingency"][20]["valid_count"] > 0
 
     cases = discover_fenglei_cases(fenglei_dir, radar_dir)
@@ -99,6 +105,18 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
     assert list(filtered["figures"]) == ["view_01"]
     assert len(decoded_paths) == 1
     assert "006MIN" in decoded_paths[0].name
+
+    with pytest.raises(DataContractError, match="at most 6 spatial views"):
+        run_fenglei_case_verification(
+            fenglei_dir=fenglei_dir,
+            radar_dir=radar_dir,
+            bbox=(29.9, 30.1, 109.9, 110.1),
+            thresholds=(20,),
+            views=[
+                {"type": "reflectivity_error", "lead": 6}
+                for _ in range(7)
+            ],
+        )
 
 
 def test_run_fenglei_case_requires_exact_timestamp_match(tmp_path):

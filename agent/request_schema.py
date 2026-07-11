@@ -24,6 +24,8 @@ SUPPORTED_VIEW_TYPES = (
     "reflectivity_error",
 )
 DEFAULT_THRESHOLDS_DBZ = (10.0, 20.0, 35.0)
+MAX_VIEWS = 12
+MAX_SPATIAL_VIEWS = 6
 
 _SUPPORTED_INTENTS = {
     "verify_case",
@@ -81,6 +83,11 @@ def validate_request(parsed: object) -> dict[str, Any]:
     intent = _validate_intent(parsed.get("intent", "verify_case"), unmatched)
     filters = _validate_filters(parsed.get("filters", {}))
     views = _validate_views(parsed.get("views", []), unmatched)
+    if len(views) > MAX_VIEWS:
+        raise RequestValidationError(f"views 最多允许 {MAX_VIEWS} 项")
+    spatial_count = sum(view["type"] != "score_time_series" for view in views)
+    if spatial_count > MAX_SPATIAL_VIEWS:
+        raise RequestValidationError(f"空间图最多允许 {MAX_SPATIAL_VIEWS} 张")
     insight = _validate_insight(parsed.get("insight", {}))
     notes = _validate_free_text(
         parsed.get("notes", ""),

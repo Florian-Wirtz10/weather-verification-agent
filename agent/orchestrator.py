@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from agent.errors import AmbiguousCaseError, DataContractError, NoDataError
+from agent.request_schema import MAX_SPATIAL_VIEWS, MAX_VIEWS
 from data_io.fenglei_mosaic import read_swan_mosaic, read_swan_mosaic_metadata
 from data_io.grid import GriddedField, align_pair
 from data_io.radar_obs import index_cref_files, read_cref
@@ -130,9 +131,19 @@ def _resolve_spatial_lead(selection, selected_leads):
 
 
 def _normalize_execution_views(views, selected_leads):
+    requested_views = views or _DEFAULT_VIEWS
+    if len(requested_views) > MAX_VIEWS:
+        raise DataContractError(f"at most {MAX_VIEWS} views can be rendered")
+    spatial_count = sum(
+        view.get("type") != "score_time_series" for view in requested_views
+    )
+    if spatial_count > MAX_SPATIAL_VIEWS:
+        raise DataContractError(
+            f"at most {MAX_SPATIAL_VIEWS} spatial views can be rendered"
+        )
     normalized = []
     unavailable = []
-    for view in views or _DEFAULT_VIEWS:
+    for view in requested_views:
         view_type = view.get("type")
         if view_type == "score_time_series":
             metric = view.get("metric")
@@ -199,7 +210,10 @@ def run_fenglei_case_verification(
             f"no matched forecast leads in requested range {start_lead}–{end_lead} minutes"
         )
 
-    first_expected = math.ceil(start_lead / _NATIVE_LEAD_STEP_MINUTES) * _NATIVE_LEAD_STEP_MINUTES
+    first_expected = max(
+        _NATIVE_LEAD_STEP_MINUTES,
+        math.ceil(start_lead / _NATIVE_LEAD_STEP_MINUTES) * _NATIVE_LEAD_STEP_MINUTES,
+    )
     expected_leads = list(
         range(first_expected, end_lead + 1, _NATIVE_LEAD_STEP_MINUTES)
     )
@@ -274,9 +288,13 @@ def run_fenglei_case_verification(
 
     warnings = []
     if missing_leads:
-        warnings.append(f"requested range contains missing leads: {missing_leads}")
+        warnings.append(
+            f"请求范围内缺少 {len(missing_leads)} 个精确匹配时效，完整列表见“时效覆盖”。"
+        )
     if unavailable_views:
-        warnings.append(f"some spatial views had no exact lead: {unavailable_views}")
+        warnings.append(
+            f"有 {len(unavailable_views)} 张空间图没有对应的精确预报时效，已不生成这些图。"
+        )
 
     return {
         "context": {
