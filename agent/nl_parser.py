@@ -52,6 +52,8 @@ def parse_request(user_text, *, model="deepseek-chat", api_key=None, base_url="h
         response_format={"type": "json_object"},
         temperature=0,
     )
+    if not response.choices or response.choices[0].message.content is None:
+        raise ValueError("DeepSeek returned an empty response")
     return _validate(json.loads(response.choices[0].message.content))
 
 

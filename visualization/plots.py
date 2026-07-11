@@ -16,7 +16,7 @@ def plot_field(array, title, cmap="Blues"):
     fig, ax = plt.subplots()
     im = ax.imshow(array, cmap=cmap, origin="lower")
     ax.set_title(title)
-    fig.colorbar(im, ax=ax, label="mm")
+    plt.colorbar(im, ax=ax, label="mm")
     return fig
 
 
@@ -28,7 +28,7 @@ def plot_error(forecast, obs, title="Forecast - Obs"):
     fig, ax = plt.subplots()
     im = ax.imshow(error, cmap="RdBu_r", origin="lower", vmin=-limit, vmax=limit)
     ax.set_title(title)
-    fig.colorbar(im, ax=ax, label="mm")
+    plt.colorbar(im, ax=ax, label="mm")
     return fig
 
 
@@ -64,7 +64,7 @@ _REFLECTIVITY_COLORS = [
 
 def _reflectivity_cmap_norm():
     cmap = ListedColormap(_REFLECTIVITY_COLORS)
-    norm = BoundaryNorm(_REFLECTIVITY_BOUNDS, cmap.N)
+    norm = BoundaryNorm(_REFLECTIVITY_BOUNDS, len(_REFLECTIVITY_COLORS))
     return cmap, norm
 
 
@@ -86,14 +86,19 @@ def plot_reflectivity_field(field, title=None):
     """Render a GriddedField of dBZ reflectivity on its lat/lon extent, using the
     standard 18-level radar color table."""
     cmap, norm = _reflectivity_cmap_norm()
-    extent = [field.lon.min(), field.lon.max(), field.lat.min(), field.lat.max()]
+    extent = (
+        float(field.lon.min()),
+        float(field.lon.max()),
+        float(field.lat.min()),
+        float(field.lat.max()),
+    )
 
     fig, ax = plt.subplots()
     im = ax.imshow(field.data, cmap=cmap, norm=norm, origin="lower", extent=extent, aspect="auto")
     ax.set_title(title or f"{field.product} ({field.valid_time:%Y-%m-%d %H:%M} UTC)")
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
-    fig.colorbar(im, ax=ax, label="dBZ", ticks=_REFLECTIVITY_BOUNDS[::2])
+    plt.colorbar(im, ax=ax, label="dBZ", ticks=_REFLECTIVITY_BOUNDS[::2])
     return fig
 
 
@@ -102,7 +107,12 @@ def plot_reflectivity_error(forecast_field, obs_field, title="Forecast - Obs (dB
     same grid (see data_io.grid.align_pair), with a zero-centered diverging colormap."""
     diff = forecast_field.data - obs_field.data
     limit = float(np.max(np.abs(diff))) or 1.0
-    extent = [obs_field.lon.min(), obs_field.lon.max(), obs_field.lat.min(), obs_field.lat.max()]
+    extent = (
+        float(obs_field.lon.min()),
+        float(obs_field.lon.max()),
+        float(obs_field.lat.min()),
+        float(obs_field.lat.max()),
+    )
 
     fig, ax = plt.subplots()
     im = ax.imshow(
@@ -112,7 +122,7 @@ def plot_reflectivity_error(forecast_field, obs_field, title="Forecast - Obs (dB
     ax.set_title(title)
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
-    fig.colorbar(im, ax=ax, label="dBZ error")
+    plt.colorbar(im, ax=ax, label="dBZ error")
     return fig
 
 

@@ -121,6 +121,8 @@ with tab_real_case:
 
     if case_result is None:
         st.info("填好目录/区域参数，用自然语言描述需求，然后点击上方按钮运行。")
+    elif parsed is None:
+        st.error("检验结果缺少已解析的请求参数，请重新运行检验。")
     else:
         selected_figures = select_figures(case_result["figures"], parsed["plots"])
         for name, fig in selected_figures.items():

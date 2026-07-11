@@ -5,8 +5,9 @@ confused with 风雷 REFMOSAIC, which is 风雷's own reflectivity *forecast*
 product (see data_io.fenglei_mosaic).
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import netCDF4
 
@@ -29,12 +30,15 @@ def read_cref(path):
         lat = ds.variables["lat"][:].astype("float64")
         lon = ds.variables["lon"][:].astype("float64")
         time_var = ds.variables["time"]
-        valid_time = netCDF4.num2date(
-            time_var[0],
-            units=time_var.units,
-            calendar=getattr(time_var, "calendar", "standard"),
-            only_use_cftime_datetimes=False,
-            only_use_python_datetimes=True,
+        valid_time = cast(
+            datetime,
+            netCDF4.num2date(
+                time_var[0],
+                units=time_var.units,
+                calendar=getattr(time_var, "calendar", "standard"),
+                only_use_cftime_datetimes=False,
+                only_use_python_datetimes=True,
+            ),
         )
         valid_time -= _CREF_TIME_IS_BEIJING
 

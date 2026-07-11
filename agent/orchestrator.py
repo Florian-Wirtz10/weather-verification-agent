@@ -6,9 +6,10 @@ thresholds) and runs the full pipeline.
 """
 
 from pathlib import Path
+from typing import TypedDict
 
 from data_io.fenglei_mosaic import read_swan_mosaic
-from data_io.grid import align_pair
+from data_io.grid import GriddedField, align_pair
 from data_io.radar_obs import nearest_in_time, read_cref_series
 from data_io.synthetic import generate_synthetic_fields
 from verification.metrics import CATEGORICAL_SCORES, compute_all_metrics, contingency_table
@@ -19,6 +20,14 @@ from visualization.plots import (
     plot_reflectivity_field,
     plot_score_time_series,
 )
+
+
+class VerificationFrame(TypedDict):
+    """One forecast/observation pair retained for endpoint plots."""
+
+    lead_minutes: int
+    forecast: GriddedField
+    obs: GriddedField
 
 
 def run_verification(shape=(64, 64), seed=None, thresholds=(1, 5, 10)):
@@ -67,9 +76,13 @@ def run_fenglei_case_verification(
         raise ValueError(f"no fenglei mosaic files matching {fenglei_pattern!r} under {fenglei_dir}")
 
     per_lead = []
-    first_frame = last_frame = None
+    first_frame: VerificationFrame | None = None
+    last_frame: VerificationFrame | None = None
     for path in forecast_paths:
         forecast = read_swan_mosaic(path)
+        if forecast.lead_minutes is None:
+            raise ValueError(f"{path}: forecast lead time is missing")
+        lead_minutes = forecast.lead_minutes
         obs = nearest_in_time(obs_series, forecast.valid_time)
         if obs is None:
             continue
@@ -84,19 +97,23 @@ def run_fenglei_case_verification(
         }
         per_lead.append(
             {
-                "lead_minutes": forecast.lead_minutes,
+                "lead_minutes": lead_minutes,
                 "valid_time": forecast.valid_time,
                 "categorical": categorical,
             }
         )
 
-        frame = {"lead_minutes": forecast.lead_minutes, "forecast": forecast_on_grid, "obs": obs_crop}
-        if first_frame is None or forecast.lead_minutes < first_frame["lead_minutes"]:
+        frame: VerificationFrame = {
+            "lead_minutes": lead_minutes,
+            "forecast": forecast_on_grid,
+            "obs": obs_crop,
+        }
+        if first_frame is None or lead_minutes < first_frame["lead_minutes"]:
             first_frame = frame
-        if last_frame is None or forecast.lead_minutes > last_frame["lead_minutes"]:
+        if last_frame is None or lead_minutes > last_frame["lead_minutes"]:
             last_frame = frame
 
-    if not per_lead:
+    if not per_lead or first_frame is None or last_frame is None:
         raise ValueError("no fenglei forecast frame found a matching radar observation")
 
     per_lead.sort(key=lambda entry: entry["lead_minutes"])
