@@ -50,6 +50,30 @@ def _decode_text(field):
     return bytes(field).split(b"\x00")[0].decode("gbk", errors="ignore")
 
 
+def _read_header(path):
+    """Read only the fixed-size SWAN header from a compressed mosaic file."""
+    with bz2.open(Path(path), "rb") as f:
+        raw_header = f.read(SwanHdr.itemsize)
+    if len(raw_header) != SwanHdr.itemsize:
+        raise ValueError(
+            f"{path}: truncated SWAN header ({len(raw_header)} of {SwanHdr.itemsize} bytes)"
+        )
+    return np.frombuffer(raw_header, dtype=SwanHdr)[0]
+
+
+def read_swan_mosaic_valid_time(path) -> datetime:
+    """Read a forecast's UTC valid time without decompressing its full grid."""
+    header = _read_header(path)
+    init_time = datetime(
+        int(header["year"]),
+        int(header["month"]),
+        int(header["day"]),
+        int(header["hour"]),
+        int(header["minute"]),
+    )
+    return init_time + timedelta(minutes=int(header["interval"]))
+
+
 def read_swan_mosaic(path):
     """Read one bz2-compressed SWAN/diamond-131 mosaic file into a GriddedField.
 

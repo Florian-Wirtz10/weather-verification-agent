@@ -19,6 +19,46 @@ import netCDF4
 _CREF_TIME_IS_BEIJING = timedelta(hours=8)
 
 
+def _decode_valid_time(time_var) -> datetime:
+    """Decode a CREF timestamp and normalize Beijing Time to UTC."""
+    valid_time = cast(
+        datetime,
+        netCDF4.num2date(
+            time_var[0],
+            units=time_var.units,
+            calendar=getattr(time_var, "calendar", "standard"),
+            only_use_cftime_datetimes=False,
+            only_use_python_datetimes=True,
+        ),
+    )
+    return valid_time - _CREF_TIME_IS_BEIJING
+
+
+def read_cref_valid_time(path) -> datetime:
+    """Read only a CREF file's timestamp, without loading its 2D data field."""
+    with netCDF4.Dataset(Path(path)) as ds:
+        return _decode_valid_time(ds.variables["time"])
+
+
+def index_cref_files(directory, pattern="CREF_with_time_*.nc") -> dict[datetime, Path]:
+    """Map UTC valid times to CREF paths while loading metadata only.
+
+    Keeping paths instead of :class:`GriddedField` instances lets callers load
+    one large radar grid at a time rather than retaining an entire time series
+    in memory.
+    """
+    index: dict[datetime, Path] = {}
+    for path in sorted(Path(directory).glob(pattern)):
+        valid_time = read_cref_valid_time(path)
+        if valid_time in index:
+            raise ValueError(
+                f"duplicate radar observations for {valid_time:%Y-%m-%d %H:%M:%S} UTC: "
+                f"{index[valid_time]} and {path}"
+            )
+        index[valid_time] = path
+    return index
+
+
 def read_cref(path):
     """Read a single-timestep CREF observation NetCDF file into a GriddedField."""
     from data_io.grid import GriddedField
@@ -29,18 +69,7 @@ def read_cref(path):
         cref = ds.variables["CREF"][:]
         lat = ds.variables["lat"][:].astype("float64")
         lon = ds.variables["lon"][:].astype("float64")
-        time_var = ds.variables["time"]
-        valid_time = cast(
-            datetime,
-            netCDF4.num2date(
-                time_var[0],
-                units=time_var.units,
-                calendar=getattr(time_var, "calendar", "standard"),
-                only_use_cftime_datetimes=False,
-                only_use_python_datetimes=True,
-            ),
-        )
-        valid_time -= _CREF_TIME_IS_BEIJING
+        valid_time = _decode_valid_time(ds.variables["time"])
 
     data = cref[0]
     if lat[0] > lat[-1]:
@@ -60,7 +89,11 @@ def read_cref(path):
 
 
 def read_cref_series(directory, pattern="CREF_with_time_*.nc"):
-    """Read every CREF file in `directory` matching `pattern`, sorted by valid time."""
+    """Eagerly read every matching CREF file, sorted by valid time.
+
+    Batch verification should prefer :func:`index_cref_files` and load one
+    indexed path at a time; this helper remains for small, already-bounded sets.
+    """
     directory = Path(directory)
     fields = [read_cref(p) for p in sorted(directory.glob(pattern))]
     fields.sort(key=lambda field: field.valid_time)

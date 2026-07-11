@@ -8,9 +8,9 @@ thresholds) and runs the full pipeline.
 from pathlib import Path
 from typing import TypedDict
 
-from data_io.fenglei_mosaic import read_swan_mosaic
+from data_io.fenglei_mosaic import read_swan_mosaic, read_swan_mosaic_valid_time
 from data_io.grid import GriddedField, align_pair
-from data_io.radar_obs import nearest_in_time, read_cref_series
+from data_io.radar_obs import index_cref_files, read_cref
 from data_io.synthetic import generate_synthetic_fields
 from verification.metrics import CATEGORICAL_SCORES, compute_all_metrics, contingency_table
 from visualization.plots import (
@@ -61,14 +61,16 @@ def run_fenglei_case_verification(
 
     `bbox` is (lat_min, lat_max, lon_min, lon_max). Real 风雷/雷达 grids don't share an
     exact origin, so each lead's forecast is regridded onto the observation's native
-    grid via data_io.grid.align_pair before scoring — see that module for why.
+    grid via data_io.grid.align_pair before scoring — see that module for why. Forecast
+    and observation timestamps must match exactly. Files are indexed from metadata and
+    matching pairs are loaded one at a time to keep memory bounded.
 
     Returns per-lead categorical scores plus the earliest/latest lead's forecast,
     obs, and error figures, and CSI/POD/FAR/ETS/bias time-series figures.
     """
     lat_min, lat_max, lon_min, lon_max = bbox
-    obs_series = read_cref_series(radar_dir)
-    if not obs_series:
+    obs_files = index_cref_files(radar_dir)
+    if not obs_files:
         raise ValueError(f"no radar observation files found under {radar_dir}")
 
     forecast_paths = sorted(Path(fenglei_dir).glob(fenglei_pattern))
@@ -79,13 +81,16 @@ def run_fenglei_case_verification(
     first_frame: VerificationFrame | None = None
     last_frame: VerificationFrame | None = None
     for path in forecast_paths:
+        valid_time = read_swan_mosaic_valid_time(path)
+        obs_path = obs_files.get(valid_time)
+        if obs_path is None:
+            continue
+
         forecast = read_swan_mosaic(path)
         if forecast.lead_minutes is None:
             raise ValueError(f"{path}: forecast lead time is missing")
         lead_minutes = forecast.lead_minutes
-        obs = nearest_in_time(obs_series, forecast.valid_time)
-        if obs is None:
-            continue
+        obs = read_cref(obs_path)
 
         forecast_on_grid, obs_crop = align_pair(forecast, obs, lat_min, lat_max, lon_min, lon_max)
         categorical = {
@@ -114,7 +119,9 @@ def run_fenglei_case_verification(
             last_frame = frame
 
     if not per_lead or first_frame is None or last_frame is None:
-        raise ValueError("no fenglei forecast frame found a matching radar observation")
+        raise ValueError(
+            "no fenglei forecast frame found an exactly matching radar observation timestamp"
+        )
 
     per_lead.sort(key=lambda entry: entry["lead_minutes"])
     lead_minutes = [entry["lead_minutes"] for entry in per_lead]

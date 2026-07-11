@@ -9,9 +9,9 @@ import netCDF4
 import numpy as np
 import pytest
 
-from data_io.fenglei_mosaic import SwanHdr, read_swan_mosaic
+from data_io.fenglei_mosaic import SwanHdr, read_swan_mosaic, read_swan_mosaic_valid_time
 from data_io.grid import GriddedField, align_pair, regrid_nearest
-from data_io.radar_obs import nearest_in_time, read_cref
+from data_io.radar_obs import index_cref_files, nearest_in_time, read_cref, read_cref_valid_time
 
 
 def _pack_text(text, width, encoding="gbk"):
@@ -62,6 +62,7 @@ def test_read_swan_mosaic_infers_dtype_and_scales(tmp_path):
     assert field.lead_minutes == 6
     assert field.valid_time == datetime(2025, 4, 11, 2, 18)
     assert field.units == "dBZ"
+    assert read_swan_mosaic_valid_time(path) == datetime(2025, 4, 11, 2, 18)
 
 
 def test_read_swan_mosaic_two_byte_precip(tmp_path):
@@ -126,6 +127,19 @@ def test_read_cref_converts_beijing_time_to_utc(tmp_path):
     assert field.units == "dBZ"
     np.testing.assert_allclose(field.lat, lat)
     np.testing.assert_array_equal(field.data, data)
+
+
+def test_index_cref_files_uses_normalized_valid_times(tmp_path):
+    lat = np.array([28.0], dtype="f4")
+    lon = np.array([110.0], dtype="f4")
+    data = np.array([[20.0]], dtype="f4")
+    path = tmp_path / "CREF_with_time_sample.nc"
+    _make_cref_nc(path, lat=lat, lon=lon, data=data, valid_time_str="2025-04-11 10:18:00")
+
+    expected = datetime(2025, 4, 11, 2, 18)
+
+    assert read_cref_valid_time(path) == expected
+    assert index_cref_files(tmp_path) == {expected: path}
 
 
 def test_read_cref_flips_descending_lat(tmp_path):

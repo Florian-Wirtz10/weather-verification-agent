@@ -2,6 +2,7 @@
 fixtures (never the private external/ sample data)."""
 
 import numpy as np
+import pytest
 
 from agent import run_fenglei_case_verification
 from tests.test_real_data_io import _make_cref_nc, _make_swan_mosaic_bytes
@@ -63,3 +64,31 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path):
         "forecast_last_lead", "obs_last_lead", "error_last_lead",
     }
     assert expected_figures <= result["figures"].keys()
+
+
+def test_run_fenglei_case_requires_exact_timestamp_match(tmp_path):
+    fenglei_dir = tmp_path / "fenglei"
+    radar_dir = tmp_path / "radar"
+    fenglei_dir.mkdir()
+    radar_dir.mkdir()
+
+    raw = np.zeros((2, 2), dtype="u1")
+    blob = _make_swan_mosaic_bytes(
+        nx=2, ny=2, cell_bytes=1, scale=0.5, offset=-33.0, values=raw
+    )
+    (fenglei_dir / "REFMOSAIC-202504110212-006MIN.bz2").write_bytes(blob)
+    _make_cref_nc(
+        radar_dir / "CREF_with_time_mismatch.nc",
+        lat=np.array([29.99, 30.0], dtype="f4"),
+        lon=np.array([110.0, 110.01], dtype="f4"),
+        data=np.zeros((2, 2), dtype="f4"),
+        valid_time_str="2025-04-11 10:19:00",
+    )
+
+    with pytest.raises(ValueError, match="exactly matching"):
+        run_fenglei_case_verification(
+            fenglei_dir=fenglei_dir,
+            radar_dir=radar_dir,
+            bbox=(29.9, 30.1, 109.9, 110.1),
+            thresholds=(20,),
+        )
