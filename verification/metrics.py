@@ -7,21 +7,50 @@ precipitation threshold; continuous scores work on the raw fields.
 import numpy as np
 
 
-def contingency_table(forecast, obs, threshold):
-    """Binarize forecast/obs at threshold and count the 2x2 contingency table."""
-    fcst_yes = forecast >= threshold
-    obs_yes = obs >= threshold
+def _common_finite_values(forecast, obs):
+    """Return input data and a mask where both fields contain finite values."""
+    forecast_array = np.ma.asarray(forecast)
+    obs_array = np.ma.asarray(obs)
+    if forecast_array.shape != obs_array.shape:
+        raise ValueError(
+            "forecast and obs must have the same shape "
+            f"(got {forecast_array.shape} and {obs_array.shape})"
+        )
 
-    hits = int(np.sum(fcst_yes & obs_yes))
-    misses = int(np.sum(~fcst_yes & obs_yes))
-    false_alarms = int(np.sum(fcst_yes & ~obs_yes))
-    correct_negatives = int(np.sum(~fcst_yes & ~obs_yes))
+    forecast_data = np.asarray(np.ma.getdata(forecast_array))
+    obs_data = np.asarray(np.ma.getdata(obs_array))
+    valid = (
+        ~np.ma.getmaskarray(forecast_array)
+        & ~np.ma.getmaskarray(obs_array)
+        & np.isfinite(forecast_data)
+        & np.isfinite(obs_data)
+    )
+    return forecast_data, obs_data, valid
+
+
+def contingency_table(forecast, obs, threshold):
+    """Count a 2x2 table over cells where forecast and obs are both finite."""
+    threshold_array = np.asarray(threshold)
+    if threshold_array.ndim != 0 or not bool(np.isfinite(threshold_array)):
+        raise ValueError(f"threshold must be a finite scalar (got {threshold!r})")
+
+    forecast_data, obs_data, valid = _common_finite_values(forecast, obs)
+    fcst_yes = forecast_data >= threshold
+    obs_yes = obs_data >= threshold
+
+    hits = int(np.sum(valid & fcst_yes & obs_yes))
+    misses = int(np.sum(valid & ~fcst_yes & obs_yes))
+    false_alarms = int(np.sum(valid & fcst_yes & ~obs_yes))
+    correct_negatives = int(np.sum(valid & ~fcst_yes & ~obs_yes))
+    valid_count = int(np.sum(valid))
 
     return {
         "hits": hits,
         "misses": misses,
         "false_alarms": false_alarms,
         "correct_negatives": correct_negatives,
+        "valid_count": valid_count,
+        "invalid_count": int(valid.size - valid_count),
     }
 
 
@@ -63,18 +92,27 @@ def ets(table):
 
 
 def mae(forecast, obs):
-    """Mean absolute error."""
-    return float(np.mean(np.abs(forecast - obs)))
+    """Mean absolute error over cells where both inputs are finite."""
+    forecast_data, obs_data, valid = _common_finite_values(forecast, obs)
+    if not np.any(valid):
+        return float("nan")
+    return float(np.mean(np.abs(forecast_data[valid] - obs_data[valid])))
 
 
 def rmse(forecast, obs):
-    """Root mean squared error."""
-    return float(np.sqrt(np.mean((forecast - obs) ** 2)))
+    """Root mean squared error over cells where both inputs are finite."""
+    forecast_data, obs_data, valid = _common_finite_values(forecast, obs)
+    if not np.any(valid):
+        return float("nan")
+    return float(np.sqrt(np.mean((forecast_data[valid] - obs_data[valid]) ** 2)))
 
 
 def mean_error(forecast, obs):
-    """Mean error (bias): mean(forecast - obs)."""
-    return float(np.mean(forecast - obs))
+    """Mean error over cells where both inputs are finite."""
+    forecast_data, obs_data, valid = _common_finite_values(forecast, obs)
+    if not np.any(valid):
+        return float("nan")
+    return float(np.mean(forecast_data[valid] - obs_data[valid]))
 
 
 CATEGORICAL_SCORES = {

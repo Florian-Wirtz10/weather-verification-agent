@@ -70,9 +70,25 @@ def regrid_nearest(source, target_lat, target_lon):
     (0.01 deg) but origins differ by a fraction of a cell — so index-aligning crops isn't
     safe; this regrids source onto the target's native grid instead.
     """
+    target_lat = np.asarray(target_lat)
+    target_lon = np.asarray(target_lon)
     lat_idx = _nearest_indices(source.lat, target_lat)
     lon_idx = _nearest_indices(source.lon, target_lon)
-    return source.data[np.ix_(lat_idx, lon_idx)]
+    result = source.data[np.ix_(lat_idx, lon_idx)]
+
+    # Nearest-neighbor lookup is meaningful only within the source domain.  Clipping
+    # indices outside it would otherwise copy edge cells into places with no forecast.
+    outside = (
+        (target_lat[:, None] < source.lat[0])
+        | (target_lat[:, None] > source.lat[-1])
+        | (target_lon[None, :] < source.lon[0])
+        | (target_lon[None, :] > source.lon[-1])
+    )
+    if np.any(outside):
+        if not np.issubdtype(result.dtype, np.inexact):
+            result = result.astype(np.result_type(result.dtype, np.float32))
+        result[outside] = np.nan
+    return result
 
 
 def align_pair(forecast, obs, lat_min, lat_max, lon_min, lon_max):
@@ -80,18 +96,19 @@ def align_pair(forecast, obs, lat_min, lat_max, lon_min, lon_max):
     grid (nearest neighbor), so both come back with obs's shape/coordinates — the shape
     verification.metrics needs for a per-cell forecast/obs comparison.
     """
-    forecast_crop = forecast.crop(lat_min, lat_max, lon_min, lon_max)
     obs_crop = obs.crop(lat_min, lat_max, lon_min, lon_max)
 
-    regridded_data = regrid_nearest(forecast_crop, obs_crop.lat, obs_crop.lon)
+    # Regrid from the complete forecast domain.  Cropping it first can discard the
+    # nearest source cell merely because that cell lies just outside the requested bbox.
+    regridded_data = regrid_nearest(forecast, obs_crop.lat, obs_crop.lon)
     forecast_on_obs_grid = GriddedField(
         data=regridded_data,
         lat=obs_crop.lat,
         lon=obs_crop.lon,
-        valid_time=forecast_crop.valid_time,
-        product=forecast_crop.product,
-        units=forecast_crop.units,
-        init_time=forecast_crop.init_time,
-        lead_minutes=forecast_crop.lead_minutes,
+        valid_time=forecast.valid_time,
+        product=forecast.product,
+        units=forecast.units,
+        init_time=forecast.init_time,
+        lead_minutes=forecast.lead_minutes,
     )
     return forecast_on_obs_grid, obs_crop

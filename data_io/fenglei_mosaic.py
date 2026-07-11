@@ -12,6 +12,7 @@ which reproduces the known-correct widths (1 byte for REFMOSAIC reflectivity,
 """
 
 import bz2
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -45,6 +46,16 @@ SwanHdr = np.dtype(
 _WIDTH_TO_DTYPE = {1: np.dtype("u1"), 2: np.dtype("<i2"), 4: np.dtype("<f4")}
 
 
+@dataclass(frozen=True)
+class SwanMosaicMetadata:
+    """Small, header-only description used to filter files before full decoding."""
+
+    init_time: datetime
+    valid_time: datetime
+    lead_minutes: int
+    product: str
+
+
 def _decode_text(field):
     """Decode a fixed-width char[] header field (GBK, NUL-padded) to str."""
     return bytes(field).split(b"\x00")[0].decode("gbk", errors="ignore")
@@ -61,9 +72,7 @@ def _read_header(path):
     return np.frombuffer(raw_header, dtype=SwanHdr)[0]
 
 
-def read_swan_mosaic_valid_time(path) -> datetime:
-    """Read a forecast's UTC valid time without decompressing its full grid."""
-    header = _read_header(path)
+def _metadata_from_header(header) -> SwanMosaicMetadata:
     init_time = datetime(
         int(header["year"]),
         int(header["month"]),
@@ -71,7 +80,24 @@ def read_swan_mosaic_valid_time(path) -> datetime:
         int(header["hour"]),
         int(header["minute"]),
     )
-    return init_time + timedelta(minutes=int(header["interval"]))
+    lead_minutes = int(header["interval"])
+    product = _decode_text(header["DataName"]) or _decode_text(header["ZoneName"])
+    return SwanMosaicMetadata(
+        init_time=init_time,
+        valid_time=init_time + timedelta(minutes=lead_minutes),
+        lead_minutes=lead_minutes,
+        product=product,
+    )
+
+
+def read_swan_mosaic_metadata(path) -> SwanMosaicMetadata:
+    """Read forecast identity and timing without decompressing the full grid."""
+    return _metadata_from_header(_read_header(path))
+
+
+def read_swan_mosaic_valid_time(path) -> datetime:
+    """Read a forecast's UTC valid time without decompressing its full grid."""
+    return read_swan_mosaic_metadata(path).valid_time
 
 
 def read_swan_mosaic(path):

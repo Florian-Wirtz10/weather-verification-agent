@@ -9,7 +9,12 @@ import netCDF4
 import numpy as np
 import pytest
 
-from data_io.fenglei_mosaic import SwanHdr, read_swan_mosaic, read_swan_mosaic_valid_time
+from data_io.fenglei_mosaic import (
+    SwanHdr,
+    read_swan_mosaic,
+    read_swan_mosaic_metadata,
+    read_swan_mosaic_valid_time,
+)
 from data_io.grid import GriddedField, align_pair, regrid_nearest
 from data_io.radar_obs import index_cref_files, nearest_in_time, read_cref, read_cref_valid_time
 
@@ -63,6 +68,10 @@ def test_read_swan_mosaic_infers_dtype_and_scales(tmp_path):
     assert field.valid_time == datetime(2025, 4, 11, 2, 18)
     assert field.units == "dBZ"
     assert read_swan_mosaic_valid_time(path) == datetime(2025, 4, 11, 2, 18)
+    metadata = read_swan_mosaic_metadata(path)
+    assert metadata.init_time == datetime(2025, 4, 11, 2, 12)
+    assert metadata.lead_minutes == 6
+    assert metadata.product == "REF_TEST"
 
 
 def test_read_swan_mosaic_two_byte_precip(tmp_path):
@@ -210,5 +219,57 @@ def test_regrid_nearest_picks_closest_source_cell():
         product="src",
         units="mm",
     )
-    out = regrid_nearest(source, target_lat=np.array([9.0, 21.0]), target_lon=np.array([101.0, 199.0]))
+    out = regrid_nearest(
+        source,
+        target_lat=np.array([10.1, 19.9]),
+        target_lon=np.array([101.0, 199.0]),
+    )
     np.testing.assert_array_equal(out, np.array([[1.0, 2.0], [3.0, 4.0]]))
+
+
+def test_regrid_nearest_marks_targets_outside_source_domain_missing():
+    source = GriddedField(
+        data=np.array([[1, 2], [3, 4]]),
+        lat=np.array([10.0, 20.0]),
+        lon=np.array([100.0, 200.0]),
+        valid_time=datetime(2025, 1, 1),
+        product="src",
+        units="mm",
+    )
+
+    out = regrid_nearest(
+        source,
+        target_lat=np.array([9.9, 10.0, 20.0, 20.1]),
+        target_lon=np.array([99.9, 100.0, 200.0, 200.1]),
+    )
+
+    assert np.all(np.isnan(out[0]))
+    assert np.all(np.isnan(out[-1]))
+    assert np.all(np.isnan(out[:, 0]))
+    assert np.all(np.isnan(out[:, -1]))
+    np.testing.assert_array_equal(out[1:3, 1:3], source.data)
+
+
+def test_align_pair_uses_forecast_cells_just_outside_requested_bbox():
+    forecast = GriddedField(
+        data=np.array([[1.0, 2.0], [3.0, 4.0]]),
+        lat=np.array([0.0, 1.0]),
+        lon=np.array([10.0, 11.0]),
+        valid_time=datetime(2025, 1, 1),
+        product="forecast",
+        units="dBZ",
+    )
+    obs = GriddedField(
+        data=np.array([[9.0]]),
+        lat=np.array([0.51]),
+        lon=np.array([10.51]),
+        valid_time=datetime(2025, 1, 1),
+        product="obs",
+        units="dBZ",
+    )
+
+    forecast_on_grid, _ = align_pair(
+        forecast, obs, lat_min=0.5, lat_max=0.6, lon_min=10.5, lon_max=10.6
+    )
+
+    assert forecast_on_grid.data[0, 0] == 4.0

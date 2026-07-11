@@ -4,11 +4,12 @@ fixtures (never the private external/ sample data)."""
 import numpy as np
 import pytest
 
-from agent import run_fenglei_case_verification
+import agent.orchestrator as orchestrator_module
+from agent import AmbiguousCaseError, discover_fenglei_cases, run_fenglei_case_verification
 from tests.test_real_data_io import _make_cref_nc, _make_swan_mosaic_bytes
 
 
-def test_run_fenglei_case_verification_end_to_end(tmp_path):
+def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
     fenglei_dir = tmp_path / "fenglei"
     radar_dir = tmp_path / "radar"
     fenglei_dir.mkdir()
@@ -52,18 +53,52 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path):
         radar_dir=radar_dir,
         bbox=(29.9, 30.1, 109.9, 110.1),
         thresholds=(20,),
+        lead_range=(6, 12),
+        views=[
+            {"type": "score_time_series", "metric": "csi"},
+            {"type": "score_time_series", "metric": "ets"},
+            {"type": "reflectivity_comparison", "lead": "first"},
+            {"type": "reflectivity_error", "lead": 12},
+        ],
     )
 
     assert result["lead_minutes"] == [6, 12]
     assert len(result["per_lead"]) == 2
     assert result["per_lead"][0]["categorical"][20]["csi"] > 0
-    expected_figures = {
-        "csi_time_series", "pod_time_series", "far_time_series",
-        "bias_score_time_series", "ets_time_series",
-        "forecast_first_lead", "obs_first_lead", "error_first_lead",
-        "forecast_last_lead", "obs_last_lead", "error_last_lead",
+    assert list(result["figures"]) == ["view_01", "view_02", "view_03", "view_04"]
+    assert result["figure_metadata"] == {
+        "view_01": {"type": "score_time_series", "metric": "csi"},
+        "view_02": {"type": "score_time_series", "metric": "ets"},
+        "view_03": {"type": "reflectivity_comparison", "lead": 6},
+        "view_04": {"type": "reflectivity_error", "lead": 12},
     }
-    assert expected_figures <= result["figures"].keys()
+    assert result["context"]["init_time"].isoformat() == "2025-04-11T02:12:00"
+    assert result["coverage"]["selected_leads"] == [6, 12]
+    assert result["per_lead"][0]["contingency"][20]["valid_count"] > 0
+
+    cases = discover_fenglei_cases(fenglei_dir, radar_dir)
+    assert len(cases) == 1
+    assert cases[0]["available_leads"] == [6, 12]
+
+    decoded_paths = []
+    original_reader = orchestrator_module.read_swan_mosaic
+
+    def tracking_reader(path):
+        decoded_paths.append(path)
+        return original_reader(path)
+
+    monkeypatch.setattr(orchestrator_module, "read_swan_mosaic", tracking_reader)
+    filtered = run_fenglei_case_verification(
+        fenglei_dir=fenglei_dir,
+        radar_dir=radar_dir,
+        bbox=(29.9, 30.1, 109.9, 110.1),
+        thresholds=(20,),
+        lead_range=(6, 6),
+    )
+    assert filtered["lead_minutes"] == [6]
+    assert list(filtered["figures"]) == ["view_01"]
+    assert len(decoded_paths) == 1
+    assert "006MIN" in decoded_paths[0].name
 
 
 def test_run_fenglei_case_requires_exact_timestamp_match(tmp_path):
@@ -85,7 +120,44 @@ def test_run_fenglei_case_requires_exact_timestamp_match(tmp_path):
         valid_time_str="2025-04-11 10:19:00",
     )
 
-    with pytest.raises(ValueError, match="exactly matching"):
+    with pytest.raises(ValueError, match="exactly time-matched"):
+        run_fenglei_case_verification(
+            fenglei_dir=fenglei_dir,
+            radar_dir=radar_dir,
+            bbox=(29.9, 30.1, 109.9, 110.1),
+            thresholds=(20,),
+        )
+
+
+def test_run_fenglei_case_never_mixes_initializations(tmp_path):
+    fenglei_dir = tmp_path / "fenglei"
+    radar_dir = tmp_path / "radar"
+    fenglei_dir.mkdir()
+    radar_dir.mkdir()
+    raw = np.zeros((2, 2), dtype="u1")
+    lat = np.array([29.99, 30.0], dtype="f4")
+    lon = np.array([110.0, 110.01], dtype="f4")
+
+    for hour in (2, 3):
+        blob = _make_swan_mosaic_bytes(
+            nx=2,
+            ny=2,
+            cell_bytes=1,
+            scale=0.5,
+            offset=-33.0,
+            values=raw,
+            header_overrides={"hour": hour, "minute": 12, "interval": 6},
+        )
+        (fenglei_dir / f"REFMOSAIC-init-{hour}-006MIN.bz2").write_bytes(blob)
+        _make_cref_nc(
+            radar_dir / f"CREF_with_time_{hour}.nc",
+            lat=lat,
+            lon=lon,
+            data=np.zeros((2, 2), dtype="f4"),
+            valid_time_str=f"2025-04-11 {hour + 8:02d}:18:00",
+        )
+
+    with pytest.raises(AmbiguousCaseError, match="select one forecast initialization"):
         run_fenglei_case_verification(
             fenglei_dir=fenglei_dir,
             radar_dir=radar_dir,

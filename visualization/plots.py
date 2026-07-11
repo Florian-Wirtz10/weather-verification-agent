@@ -1,14 +1,13 @@
 """Matplotlib figure builders for forecast/observation/error fields.
 
-Phase 2 adds a fixed menu of real-data plotting functions (reflectivity
-field, reflectivity error, categorical-score time series) for the NL agent
-layer to call by name — the agent picks which of these to run and with what
-parameters, it does not write its own plotting code.
+Real-data plots are deterministic renderers selected through the Phase 3
+request schema; the language model never writes plotting code.
 """
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap
+from matplotlib.ticker import MultipleLocator
 
 
 def plot_field(array, title, cmap="Blues"):
@@ -33,7 +32,7 @@ def plot_error(forecast, obs, title="Forecast - Obs"):
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: real-data (geo-referenced) plots. Fixed categorical hue order —
+# Real-data (geo-referenced) plots. Fixed categorical hue order —
 # never cycled/reassigned per-series — per the dataviz skill's color formula.
 # ---------------------------------------------------------------------------
 
@@ -102,11 +101,48 @@ def plot_reflectivity_field(field, title=None):
     return fig
 
 
+def plot_reflectivity_comparison(forecast_field, obs_field, title=None):
+    """Render forecast and observation side by side as one auditable figure."""
+    cmap, norm = _reflectivity_cmap_norm()
+    extent = (
+        float(obs_field.lon.min()),
+        float(obs_field.lon.max()),
+        float(obs_field.lat.min()),
+        float(obs_field.lat.max()),
+    )
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharex=True, sharey=True)
+    im = None
+    for ax, field, panel_title in (
+        (axes[0], forecast_field, "Forecast"),
+        (axes[1], obs_field, "Observation"),
+    ):
+        im = ax.imshow(
+            field.data,
+            cmap=cmap,
+            norm=norm,
+            origin="lower",
+            extent=extent,
+            aspect="auto",
+        )
+        ax.set_title(panel_title)
+        ax.set_xlabel("Longitude")
+        ax.set_ylabel("Latitude")
+    if im is not None:
+        plt.colorbar(im, ax=list(axes), label="dBZ", ticks=_REFLECTIVITY_BOUNDS[::2])
+    fig.suptitle(
+        title
+        or f"Forecast vs observation ({forecast_field.valid_time:%Y-%m-%d %H:%M} UTC)"
+    )
+    return fig
+
+
 def plot_reflectivity_error(forecast_field, obs_field, title="Forecast - Obs (dBZ)"):
     """Render the forecast-minus-obs reflectivity error, cropped/regridded onto the
     same grid (see data_io.grid.align_pair), with a zero-centered diverging colormap."""
     diff = forecast_field.data - obs_field.data
-    limit = float(np.max(np.abs(diff))) or 1.0
+    finite_diff = diff[np.isfinite(diff)]
+    limit = float(np.max(np.abs(finite_diff))) if finite_diff.size else 1.0
+    limit = limit or 1.0
     extent = (
         float(obs_field.lon.min()),
         float(obs_field.lon.max()),
@@ -135,13 +171,42 @@ def plot_score_time_series(lead_minutes, scores_by_threshold, score_name, title=
     fig, ax = plt.subplots()
     for i, threshold in enumerate(sorted(scores_by_threshold)):
         color = CATEGORICAL_COLORS[i % len(CATEGORICAL_COLORS)]
+        x_values, y_values = _break_time_gaps(
+            lead_minutes, scores_by_threshold[threshold]
+        )
         ax.plot(
-            lead_minutes, scores_by_threshold[threshold],
+            x_values,
+            y_values,
             marker="o", markersize=5, linewidth=2, color=color, label=str(threshold),
         )
     ax.set_xlabel("Forecast lead time (min)")
     ax.set_ylabel(score_name.upper())
     ax.set_title(title or f"{score_name.upper()} vs lead time")
+    ax.xaxis.set_major_locator(MultipleLocator(30))
     _style_axes(ax)
     ax.legend(title="Threshold", frameon=False)
     return fig
+
+
+def _break_time_gaps(lead_minutes, values):
+    """Insert NaNs so missing native forecast times are visible as line breaks."""
+    leads = np.asarray(lead_minutes, dtype=float)
+    scores = np.asarray(values, dtype=float)
+    if leads.size != scores.size:
+        raise ValueError("lead_minutes and score values must have the same length")
+    if leads.size < 3:
+        return leads, scores
+    positive_steps = np.diff(leads)
+    positive_steps = positive_steps[positive_steps > 0]
+    if positive_steps.size == 0:
+        return leads, scores
+    native_step = float(np.min(positive_steps))
+    x_values = [leads[0]]
+    y_values = [scores[0]]
+    for previous, lead, score in zip(leads, leads[1:], scores[1:]):
+        if lead - previous > native_step * 1.5:
+            x_values.append(np.nan)
+            y_values.append(np.nan)
+        x_values.append(lead)
+        y_values.append(score)
+    return np.asarray(x_values), np.asarray(y_values)
