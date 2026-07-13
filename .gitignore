@@ -20,6 +20,9 @@ node_modules/
 .claude/ide/
 .claude/worktrees/
 
+# Qwen Code local session state
+.qwen/
+
 # Outputs
 outputs/*
 !outputs/figures/
