@@ -17,6 +17,7 @@ from agent import (
     discover_fenglei_cases,
     generate_insight,
     parse_request,
+    resolve_media_layout,
     render_deterministic_summary,
     resolve_request,
     run_fenglei_case_verification,
@@ -28,6 +29,21 @@ load_dotenv()
 
 st.set_page_config(page_title="Weather Verification Agent", layout="wide")
 st.title("Weather Verification Agent")
+st.markdown(
+    """
+    <style>
+    @media (min-width: 960px) {
+      div[data-testid="stHorizontalBlock"]:has(.ai-insight-anchor)
+        > div[data-testid="stColumn"]:last-child {
+          align-self: flex-start;
+          position: sticky;
+          top: 4.5rem;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 tab_synthetic, tab_real_case = st.tabs(["Phase 1: 合成数据 demo", "Phase 4: 风雷检验助手"])
 
@@ -202,50 +218,56 @@ def _metric_rows(result, requested_metrics):
 
 
 def _render_professional_insight(attempt, result, metric_rows, downloads):
-    """Render the always-present, evidence-bounded interpretation sidebar."""
-    st.subheader("专业解读")
-    st.caption("仅基于本次确定性评分、样本数与图表目录生成；不读取原始网格或图片。")
-    if st.button("重新生成解读", key=f"insight_{result['context']['case_id']}"):
-        with st.spinner("正在基于当前确定性事实生成专业解读……"):
-            previous_insight = attempt.get("ai_insight")
-            try:
-                candidate_insight = generate_insight(
-                    attempt["facts"], length=attempt["request"]["insight"]["length"]
-                )
-                candidate_downloads = build_case_download_artifacts(
-                    result=result,
-                    request=attempt["request"],
-                    metric_rows=metric_rows,
-                    facts=attempt["facts"],
-                    deterministic_summary=attempt["deterministic_summary"],
-                    ai_insight=candidate_insight,
-                    execution_status=attempt["decision"]["status"],
-                    rendered_images=downloads["images"],
-                )
-            except Exception as exc:
-                attempt["insight_error"] = str(exc)
-                attempt["insight_retry_failed"] = previous_insight is not None
-            else:
-                attempt["ai_insight"] = candidate_insight
-                attempt["insight_error"] = None
-                attempt["insight_retry_failed"] = False
-                attempt["downloads"] = candidate_downloads
-            st.session_state["fenglei_attempt"] = attempt
-            st.rerun()
-    if attempt.get("ai_insight"):
-        st.markdown(attempt["ai_insight"])
-    else:
-        st.info("确定性专业摘要")
-        st.write(attempt["deterministic_summary"])
-    if attempt.get("insight_retry_failed"):
-        st.warning("重新生成失败，页面和下载包仍保留上一次成功解读。")
-    elif attempt.get("insight_error"):
-        st.caption("AI 解读暂不可用；已保留确定性专业摘要。")
+    """Render a sticky, independently scrollable evidence-bounded AI panel."""
+    st.markdown('<span class="ai-insight-anchor"></span>', unsafe_allow_html=True)
+    st.subheader("AI 解读")
+    with st.container(height=680, border=False):
+        st.caption("仅基于本次确定性评分、样本数与图表目录生成；不读取原始网格或图片。")
+        if st.button("重新生成解读", key=f"insight_{result['context']['case_id']}"):
+            with st.spinner("正在基于当前确定性事实生成 AI 解读……"):
+                previous_insight = attempt.get("ai_insight")
+                try:
+                    candidate_insight = generate_insight(
+                        attempt["facts"], length=attempt["request"]["insight"]["length"]
+                    )
+                    candidate_downloads = build_case_download_artifacts(
+                        result=result,
+                        request=attempt["request"],
+                        metric_rows=metric_rows,
+                        facts=attempt["facts"],
+                        deterministic_summary=attempt["deterministic_summary"],
+                        ai_insight=candidate_insight,
+                        execution_status=attempt["decision"]["status"],
+                        rendered_images=downloads["images"],
+                    )
+                except Exception as exc:
+                    attempt["insight_error"] = str(exc)
+                    attempt["insight_retry_failed"] = previous_insight is not None
+                else:
+                    attempt["ai_insight"] = candidate_insight
+                    attempt["insight_error"] = None
+                    attempt["insight_retry_failed"] = False
+                    attempt["downloads"] = candidate_downloads
+                st.session_state["fenglei_attempt"] = attempt
+                st.rerun()
+        if attempt.get("ai_insight"):
+            st.markdown(attempt["ai_insight"])
+        else:
+            st.info("确定性摘要")
+            st.write(attempt["deterministic_summary"])
+        if attempt.get("insight_retry_failed"):
+            st.warning("重新生成失败，页面和下载包仍保留上一次成功解读。")
+        elif attempt.get("insight_error"):
+            st.caption("AI 解读暂不可用；已保留确定性摘要。")
 
 
 def _render_requested_media(result, downloads, request):
     """Display pre-rendered bytes in one of the schema-approved layouts."""
-    layout = request.get("presentation", {}).get("layout", "auto")
+    layout = resolve_media_layout(
+        request.get("presentation", {}).get("layout", "auto"),
+        figure_metadata=result["figure_metadata"],
+        animation_metadata=result["animation_metadata"],
+    )
     static_items = [
         ("image", key, item, result["figure_metadata"][key])
         for key, item in downloads["images"].items()
@@ -362,14 +384,9 @@ with tab_real_case:
     previous_attempt = st.session_state.get("fenglei_attempt")
     if previous_attempt is not None and previous_attempt.get("scope") != current_scope:
         st.session_state.pop("fenglei_attempt", None)
-    pending_plan = st.session_state.get("fenglei_pending_plan")
-    if pending_plan is not None and pending_plan.get("scope") != current_scope:
-        st.session_state.pop("fenglei_pending_plan", None)
-        pending_plan = None
 
     if parse_clicked or manual_clicked:
         st.session_state.pop("fenglei_attempt", None)
-        st.session_state.pop("fenglei_pending_plan", None)
         run_attempt: dict
         try:
             with st.spinner("正在解析检验要求……"):
@@ -393,32 +410,6 @@ with tab_real_case:
         except Exception as exc:
             run_attempt = {"decision": {"status": "parser_error", "message": str(exc)}}
         else:
-            decision = resolve_request(request, cases, selected_case_id=selected_case_id)
-            run_attempt = {"request": request, "decision": decision}
-            if decision["status"] in {"ready", "partial"}:
-                st.session_state["fenglei_pending_plan"] = {
-                    **run_attempt,
-                    "scope": current_scope,
-                    "submitted_prompt": None if manual_clicked else nl_request,
-                }
-            else:
-                run_attempt["scope"] = current_scope
-                run_attempt["submitted_prompt"] = None if manual_clicked else nl_request
-                st.session_state["fenglei_attempt"] = run_attempt
-        if run_attempt["decision"]["status"] == "parser_error":
-            run_attempt["scope"] = current_scope
-            run_attempt["submitted_prompt"] = None if manual_clicked else nl_request
-            st.session_state["fenglei_attempt"] = run_attempt
-
-    pending_plan = st.session_state.get("fenglei_pending_plan")
-    if pending_plan is not None:
-        pending_decision = pending_plan["decision"]
-        st.info("检验计划已生成；请确认后再读取资料、计算指标和绘图。")
-        with st.expander("查看待执行的规范化请求与执行口径", expanded=True):
-            st.json(pending_plan["request"])
-            st.json(pending_decision["execution"])
-        if st.button("确认执行此计划", type="primary", width="stretch"):
-            request = pending_plan["request"]
             try:
                 with st.spinner("正在索引资料、计算指标并生成图表……"):
                     run_attempt = _execute_real_case_request(
@@ -449,11 +440,9 @@ with tab_real_case:
                     "request": request,
                     "decision": {"status": "execution_error", "message": str(exc)},
                 }
-            run_attempt["scope"] = current_scope
-            run_attempt["submitted_prompt"] = pending_plan["submitted_prompt"]
-            st.session_state["fenglei_attempt"] = run_attempt
-            st.session_state.pop("fenglei_pending_plan", None)
-            st.rerun()
+        run_attempt["scope"] = current_scope
+        run_attempt["submitted_prompt"] = None if manual_clicked else nl_request
+        st.session_state["fenglei_attempt"] = run_attempt
 
     attempt = st.session_state.get("fenglei_attempt")
     if attempt is None:

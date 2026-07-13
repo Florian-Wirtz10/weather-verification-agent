@@ -17,6 +17,8 @@ def test_prompt_exposes_scope_schema_and_available_case():
     assert "2025-04-11" in prompt
     assert "unmatched_requests" in prompt
     assert "不得为了凑结果输出全部图" in prompt
+    assert "空间回波的“演变、过程、动态、逐时变化”" in prompt
+    assert 'layout="auto"' in prompt
 
 
 def test_validate_uses_schema_and_does_not_default_unsupported_request():

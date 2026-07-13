@@ -49,7 +49,7 @@ def test_streamlit_initial_screen_renders_without_exceptions():
     assert "使用明确默认方案运行" in labels
 
 
-def test_phase3_result_has_browser_downloads_and_releases_figures(tmp_path, monkeypatch):
+def test_phase4_result_has_browser_downloads_and_releases_figures(tmp_path, monkeypatch):
     fenglei_dir, radar_dir = _write_app_case(tmp_path)
     monkeypatch.setenv("FENGLEI_CASE_DIR", str(fenglei_dir))
     monkeypatch.setenv("RADAR_OBS_DIR", str(radar_dir))
@@ -58,8 +58,6 @@ def test_phase3_result_has_browser_downloads_and_releases_figures(tmp_path, monk
 
     app = AppTest.from_file("app.py", default_timeout=30).run()
     app = _button(app, "使用明确默认方案运行").click().run()
-    assert "确认执行此计划" in {button.label for button in app.button}
-    app = _button(app, "确认执行此计划").click().run()
 
     assert not app.exception
     assert len(app.image) == 1
@@ -70,6 +68,7 @@ def test_phase3_result_has_browser_downloads_and_releases_figures(tmp_path, monk
         "下载结果解读 Markdown",
         "下载这张图（PNG）",
     } <= download_labels
+    assert any(item.value == "AI 解读" for item in app.subheader)
     assert any("请求只能部分执行" in item.value for item in app.warning)
     assert not plt.get_fignums()
 
@@ -91,7 +90,6 @@ def test_failed_ai_retry_is_visible_and_preserves_last_success(tmp_path, monkeyp
 
     app = AppTest.from_file("app.py", default_timeout=30).run()
     app = _button(app, "使用明确默认方案运行").click().run()
-    app = _button(app, "确认执行此计划").click().run()
     app = _button(app, "重新生成解读").click().run()
 
     assert not app.exception

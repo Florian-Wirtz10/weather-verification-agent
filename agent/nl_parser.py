@@ -72,8 +72,11 @@ intent 只能是：
 9. notes 只简述理解，不承担是否可执行的判断。
 10. 如果用户说“保留刚才”“在上一结果基础上修改”等，以上一轮请求为基线，仅修改用户明确
     要求修改的字段；仍必须输出完整 JSON。
-11. 如果用户没有指定 layout，根据图表数量和是否包含动画，从支持的布局中选择最合适的一种；
-    不得输出自由布局描述。
+11. 只有用户明确说“单列、双列、2×2、报告式、动画优先”等布局时，才设置对应 layout；
+    否则输出 layout="auto"，由确定性页面根据实际生成的媒体决定布局。
+12. 用户明确要看空间回波的“演变、过程、动态、逐时变化”时，应提出一个
+    reflectivity_animation（使用其时效范围，默认 fps=2）；普通 CSI/ETS 等评分时序曲线
+    仍应保持 score_time_series，不能仅因横轴是时效就擅自增加动画。
 
 只输出 JSON 对象，不使用 Markdown。结构如下：
 {{
@@ -85,7 +88,7 @@ intent 只能是：
     "requested_date": null
   }},
   "views": [{{"type": "score_time_series", "metric": "csi"}}],
-  "presentation": {{"layout": "report"}},
+  "presentation": {{"layout": "auto"}},
   "insight": {{"enabled": true, "length": "detailed"}},
   "unmatched_requests": [],
   "notes": ""

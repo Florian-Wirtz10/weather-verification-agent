@@ -8,6 +8,7 @@ from agent.orchestrator import (
     run_fenglei_case_verification,
     run_verification,
 )
+from agent.presentation import resolve_media_layout
 from agent.request_resolution import resolve_request
 from agent.request_schema import RequestValidationError, default_request, validate_request
 
@@ -22,6 +23,7 @@ __all__ = [
     "build_insight_facts",
     "render_deterministic_summary",
     "generate_insight",
+    "resolve_media_layout",
     "NoDataError",
     "AmbiguousCaseError",
     "DataContractError",
