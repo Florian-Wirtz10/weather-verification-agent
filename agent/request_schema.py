@@ -22,10 +22,20 @@ SUPPORTED_VIEW_TYPES = (
     "score_time_series",
     "reflectivity_comparison",
     "reflectivity_error",
+    "reflectivity_animation",
 )
 DEFAULT_THRESHOLDS_DBZ = (10.0, 20.0, 35.0)
 MAX_VIEWS = 12
 MAX_SPATIAL_VIEWS = 6
+MAX_ANIMATION_FRAMES = 30
+SUPPORTED_LAYOUTS = (
+    "auto",
+    "single",
+    "two_column",
+    "grid_2x2",
+    "report",
+    "animation_focus",
+)
 
 _SUPPORTED_INTENTS = {
     "verify_case",
@@ -57,7 +67,8 @@ def default_request() -> dict[str, Any]:
             "requested_date": None,
         },
         "views": [{"type": "score_time_series", "metric": "csi"}],
-        "insight": {"enabled": True, "length": "brief"},
+        "presentation": {"layout": "auto"},
+        "insight": {"enabled": True, "length": "detailed"},
         "unmatched_requests": [],
         "notes": "",
     }
@@ -89,6 +100,7 @@ def validate_request(parsed: object) -> dict[str, Any]:
     if spatial_count > MAX_SPATIAL_VIEWS:
         raise RequestValidationError(f"空间图最多允许 {MAX_SPATIAL_VIEWS} 张")
     insight = _validate_insight(parsed.get("insight", {}))
+    presentation = _validate_presentation(parsed.get("presentation", {}))
     notes = _validate_free_text(
         parsed.get("notes", ""),
         field="notes",
@@ -112,6 +124,7 @@ def validate_request(parsed: object) -> dict[str, Any]:
         "intent": intent,
         "filters": filters,
         "views": views,
+        "presentation": presentation,
         "insight": insight,
         "unmatched_requests": unmatched,
         "notes": notes,
@@ -220,6 +233,8 @@ def _validate_views(value: object, unmatched: list[str]) -> list[dict[str, Any]]
 
         if view_type == "score_time_series":
             view = _validate_score_view(raw_view, unmatched)
+        elif view_type == "reflectivity_animation":
+            view = _validate_animation_view(raw_view)
         else:
             view = _validate_reflectivity_view(raw_view, view_type)
         if view is None:
@@ -260,10 +275,33 @@ def _validate_reflectivity_view(raw_view: dict[str, Any], view_type: str) -> dic
     return {"type": view_type, "lead": lead}
 
 
+def _validate_animation_view(raw_view: dict[str, Any]) -> dict[str, Any]:
+    value = raw_view.get("lead_range_minutes")
+    if not isinstance(value, dict):
+        raise RequestValidationError("reflectivity_animation 必须指定 lead_range_minutes")
+    start = _validate_lead(value.get("start"), field="reflectivity_animation.lead_range_minutes.start")
+    end = _validate_lead(value.get("end"), field="reflectivity_animation.lead_range_minutes.end")
+    if start > end:
+        raise RequestValidationError("reflectivity_animation.lead_range_minutes.start 不能大于 end")
+    fps = raw_view.get("fps", 2)
+    if isinstance(fps, bool) or not isinstance(fps, int) or not 1 <= fps <= 4:
+        raise RequestValidationError("reflectivity_animation.fps 必须是 1 到 4 的整数")
+    return {
+        "type": "reflectivity_animation",
+        "lead_range_minutes": {"start": start, "end": end},
+        "fps": fps,
+    }
+
+
 def _record_extra_view_parameters(
     raw_view: dict[str, Any], view_type: str, unmatched: list[str]
 ) -> None:
-    allowed = {"type", "metric"} if view_type == "score_time_series" else {"type", "lead"}
+    if view_type == "score_time_series":
+        allowed = {"type", "metric"}
+    elif view_type == "reflectivity_animation":
+        allowed = {"type", "lead_range_minutes", "fps"}
+    else:
+        allowed = {"type", "lead"}
     extras = sorted(str(key) for key in raw_view if key not in allowed)
     if extras:
         _append_unmatched(
@@ -284,6 +322,18 @@ def _validate_insight(value: object) -> dict[str, Any]:
     if not isinstance(length, str) or length.strip().lower() not in _SUPPORTED_INSIGHT_LENGTHS:
         raise RequestValidationError("insight.length 只能是 brief 或 detailed")
     return {"enabled": enabled, "length": length.strip().lower()}
+
+
+def _validate_presentation(value: object) -> dict[str, str]:
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise RequestValidationError("presentation 必须是 JSON 对象")
+    layout = value.get("layout", "auto")
+    if not isinstance(layout, str) or layout.strip().lower() not in SUPPORTED_LAYOUTS:
+        choices = "、".join(SUPPORTED_LAYOUTS)
+        raise RequestValidationError(f"presentation.layout 只能是 {choices}")
+    return {"layout": layout.strip().lower()}
 
 
 def _validate_unmatched(value: object) -> list[str]:

@@ -157,3 +157,42 @@ def test_requested_metric_scope_excludes_unrequested_scores_from_llm_payload():
     assert "pod" not in captured["messages"][1]["content"]
     assert "far" not in captured["messages"][1]["content"]
     assert "bias_score" not in captured["messages"][1]["content"]
+
+
+def test_figure_catalog_is_numbered_and_safe_for_llm_references():
+    result = _result()
+    result["figure_metadata"] = {
+        "view_01": {"type": "score_time_series", "metric": "csi"},
+        "view_02": {"type": "reflectivity_comparison", "lead": 6},
+    }
+    result["animation_metadata"] = {
+        "animation_01": {
+            "type": "reflectivity_animation",
+            "lead_range_minutes": {"start": 6, "end": 24},
+            "fps": 2,
+        }
+    }
+    facts = build_insight_facts(result, requested_metrics=["csi"])
+    assert facts["figure_catalog"] == [
+        {
+            "type": "score_time_series",
+            "label": "CSI 随预报时效变化曲线",
+            "metric": "CSI",
+            "id": "view_01",
+            "number": 1,
+        },
+        {
+            "type": "reflectivity_comparison",
+            "label": "6 分钟预报与观测反射率对比",
+            "lead_minutes": 6,
+            "id": "view_02",
+            "number": 2,
+        },
+        {
+            "type": "reflectivity_animation",
+            "label": "6—24 分钟预报与观测反射率动画",
+            "lead_range_minutes": {"start": 6, "end": 24},
+            "id": "animation_01",
+            "number": 3,
+        },
+    ]

@@ -53,10 +53,13 @@ def test_phase3_result_has_browser_downloads_and_releases_figures(tmp_path, monk
     fenglei_dir, radar_dir = _write_app_case(tmp_path)
     monkeypatch.setenv("FENGLEI_CASE_DIR", str(fenglei_dir))
     monkeypatch.setenv("RADAR_OBS_DIR", str(radar_dir))
+    monkeypatch.setattr(agent, "generate_insight", lambda *_args, **_kwargs: "测试解读")
     plt.close("all")
 
     app = AppTest.from_file("app.py", default_timeout=30).run()
     app = _button(app, "使用明确默认方案运行").click().run()
+    assert "确认执行此计划" in {button.label for button in app.button}
+    app = _button(app, "确认执行此计划").click().run()
 
     assert not app.exception
     assert len(app.image) == 1
@@ -88,16 +91,10 @@ def test_failed_ai_retry_is_visible_and_preserves_last_success(tmp_path, monkeyp
 
     app = AppTest.from_file("app.py", default_timeout=30).run()
     app = _button(app, "使用明确默认方案运行").click().run()
-    consent = next(
-        item
-        for item in app.checkbox
-        if item.label == "允许将汇总指标发送给 DeepSeek 生成文字解读"
-    )
-    app = consent.set_value(True).run()
-    app = _button(app, "基于当前结果生成 AI 解读").click().run()
-    app = _button(app, "重新生成 AI 解读").click().run()
+    app = _button(app, "确认执行此计划").click().run()
+    app = _button(app, "重新生成解读").click().run()
 
     assert not app.exception
     assert calls == 2
-    assert any("第一次成功生成的解读" in item.value for item in app.info)
-    assert any("仍保留上一次成功的版本" in item.value for item in app.warning)
+    assert any("第一次成功生成的解读" in item.value for item in app.markdown)
+    assert any("仍保留上一次成功" in item.value for item in app.warning)

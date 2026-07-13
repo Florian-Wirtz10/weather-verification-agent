@@ -24,7 +24,8 @@ def test_default_request_is_complete_and_returns_fresh_data():
             "requested_date": None,
         },
         "views": [{"type": "score_time_series", "metric": "csi"}],
-        "insight": {"enabled": True, "length": "brief"},
+        "presentation": {"layout": "auto"},
+        "insight": {"enabled": True, "length": "detailed"},
         "unmatched_requests": [],
         "notes": "",
     }
@@ -224,3 +225,41 @@ def test_spatial_view_count_is_bounded_for_memory_safety():
 
     with pytest.raises(RequestValidationError, match="空间图最多允许 6 张"):
         validate_request({"views": views})
+
+
+def test_animation_and_presentation_are_declarative_and_strictly_bounded():
+    result = validate_request(
+        {
+            "views": [
+                {
+                    "type": "reflectivity_animation",
+                    "lead_range_minutes": {"start": 6, "end": 24},
+                    "fps": 2,
+                }
+            ],
+            "presentation": {"layout": "animation_focus"},
+        }
+    )
+    assert result["views"] == [
+        {
+            "type": "reflectivity_animation",
+            "lead_range_minutes": {"start": 6, "end": 24},
+            "fps": 2,
+        }
+    ]
+    assert result["presentation"] == {"layout": "animation_focus"}
+
+    with pytest.raises(RequestValidationError):
+        validate_request(
+            {
+                "views": [
+                    {
+                        "type": "reflectivity_animation",
+                        "lead_range_minutes": {"start": 6, "end": 24},
+                        "fps": 5,
+                    }
+                ]
+            }
+        )
+    with pytest.raises(RequestValidationError):
+        validate_request({"presentation": {"layout": "arbitrary_css"}})

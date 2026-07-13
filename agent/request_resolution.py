@@ -94,6 +94,7 @@ def resolve_request(
             "lead_range": request["filters"]["lead_range_minutes"],
             "views": views,
             "insight": request["insight"],
+            "presentation": request.get("presentation", {"layout": "auto"}),
         },
     )
 

@@ -29,7 +29,7 @@ load_dotenv()
 st.set_page_config(page_title="Weather Verification Agent", layout="wide")
 st.title("Weather Verification Agent")
 
-tab_synthetic, tab_real_case = st.tabs(["Phase 1: 合成数据 demo", "Phase 3: 风雷检验助手"])
+tab_synthetic, tab_real_case = st.tabs(["Phase 1: 合成数据 demo", "Phase 4: 风雷检验助手"])
 
 with tab_synthetic:
     st.caption("Phase 1: synthetic precipitation fields, categorical + continuous verification metrics.")
@@ -83,7 +83,6 @@ def _execute_real_case_request(
     fenglei_dir,
     radar_dir,
     bbox,
-    allow_llm_insight,
 ):
     """Resolve, execute and interpret one validated request without silent fallbacks."""
     decision = resolve_request(
@@ -137,11 +136,10 @@ def _execute_real_case_request(
     deterministic_summary = render_deterministic_summary(facts)
     ai_insight = None
     insight_error = None
-    if execution["insight"]["enabled"] and allow_llm_insight:
-        try:
-            ai_insight = generate_insight(facts, length=execution["insight"]["length"])
-        except Exception as exc:
-            insight_error = str(exc)
+    try:
+        ai_insight = generate_insight(facts, length=execution["insight"]["length"])
+    except Exception as exc:
+        insight_error = str(exc)
 
     metric_rows = _metric_rows(result, requested_metrics)
     try:
@@ -203,6 +201,100 @@ def _metric_rows(result, requested_metrics):
     return rows
 
 
+def _render_professional_insight(attempt, result, metric_rows, downloads):
+    """Render the always-present, evidence-bounded interpretation sidebar."""
+    st.subheader("专业解读")
+    st.caption("仅基于本次确定性评分、样本数与图表目录生成；不读取原始网格或图片。")
+    if st.button("重新生成解读", key=f"insight_{result['context']['case_id']}"):
+        with st.spinner("正在基于当前确定性事实生成专业解读……"):
+            previous_insight = attempt.get("ai_insight")
+            try:
+                candidate_insight = generate_insight(
+                    attempt["facts"], length=attempt["request"]["insight"]["length"]
+                )
+                candidate_downloads = build_case_download_artifacts(
+                    result=result,
+                    request=attempt["request"],
+                    metric_rows=metric_rows,
+                    facts=attempt["facts"],
+                    deterministic_summary=attempt["deterministic_summary"],
+                    ai_insight=candidate_insight,
+                    execution_status=attempt["decision"]["status"],
+                    rendered_images=downloads["images"],
+                )
+            except Exception as exc:
+                attempt["insight_error"] = str(exc)
+                attempt["insight_retry_failed"] = previous_insight is not None
+            else:
+                attempt["ai_insight"] = candidate_insight
+                attempt["insight_error"] = None
+                attempt["insight_retry_failed"] = False
+                attempt["downloads"] = candidate_downloads
+            st.session_state["fenglei_attempt"] = attempt
+            st.rerun()
+    if attempt.get("ai_insight"):
+        st.markdown(attempt["ai_insight"])
+    else:
+        st.info("确定性专业摘要")
+        st.write(attempt["deterministic_summary"])
+    if attempt.get("insight_retry_failed"):
+        st.warning("重新生成失败，页面和下载包仍保留上一次成功解读。")
+    elif attempt.get("insight_error"):
+        st.caption("AI 解读暂不可用；已保留确定性专业摘要。")
+
+
+def _render_requested_media(result, downloads, request):
+    """Display pre-rendered bytes in one of the schema-approved layouts."""
+    layout = request.get("presentation", {}).get("layout", "auto")
+    static_items = [
+        ("image", key, item, result["figure_metadata"][key])
+        for key, item in downloads["images"].items()
+    ]
+    animation_items = [
+        ("animation", key, item, result["animation_metadata"][key])
+        for key, item in downloads.get("animations", {}).items()
+    ]
+    items = animation_items + static_items if layout == "animation_focus" else static_items + animation_items
+    if not items:
+        st.info("本次请求未生成可展示的图表或动画。")
+        return
+
+    threshold_text = "、".join(f"{float(value):g}" for value in request["filters"]["thresholds_dbz"])
+
+    def show_item(index, item):
+        kind, key, media, view = item
+        caption = [f"第 {index}/{len(items)} 项", describe_view(view)]
+        if view["type"] == "score_time_series":
+            caption.append(f"阈值 {threshold_text} dBZ")
+        caption.append(f"起报 {result['context']['init_time']:%Y-%m-%d %H:%M} UTC")
+        st.caption("｜".join(caption))
+        st.image(media["data"])
+        extension, mime, label = (
+            ("gif", "image/gif", "下载该动画（GIF）")
+            if kind == "animation"
+            else ("png", "image/png", "下载这张图（PNG）")
+        )
+        st.download_button(
+            label,
+            data=media["data"],
+            file_name=media["file_name"],
+            mime=mime,
+            key=f"{extension}_{downloads['base_name']}_{key}",
+            on_click="ignore",
+        )
+
+    if layout in {"two_column", "grid_2x2", "animation_focus"}:
+        for start in range(0, len(items), 2):
+            columns = st.columns(2)
+            for offset, column in enumerate(columns):
+                if start + offset < len(items):
+                    with column:
+                        show_item(start + offset + 1, items[start + offset])
+    else:
+        for index, item in enumerate(items, start=1):
+            show_item(index, item)
+
+
 with tab_real_case:
     st.caption(
         "受限的风雷 V1.0 REFMOSAIC 反射率预报检验助手：自然语言只生成经过白名单验证的"
@@ -210,7 +302,7 @@ with tab_real_case:
     )
 
     with st.sidebar:
-        st.header("Phase 3 个例设置")
+        st.header("Phase 4 个例设置")
         fenglei_dir = st.text_input(
             "风雷 REFMOSAIC 目录", value=os.getenv("FENGLEI_CASE_DIR", "")
         )
@@ -221,11 +313,6 @@ with tab_real_case:
         lat_max = st.number_input("lat_max", value=35.0)
         lon_min = st.number_input("lon_min", value=108.0)
         lon_max = st.number_input("lon_max", value=118.0)
-        allow_llm_insight = st.checkbox(
-            "允许将汇总指标发送给 DeepSeek 生成文字解读",
-            value=False,
-            help="只发送白名单事实摘要，不发送路径、文件名、原始网格或图片。",
-        )
 
     cases = []
     catalog_error = None
@@ -275,14 +362,26 @@ with tab_real_case:
     previous_attempt = st.session_state.get("fenglei_attempt")
     if previous_attempt is not None and previous_attempt.get("scope") != current_scope:
         st.session_state.pop("fenglei_attempt", None)
+    pending_plan = st.session_state.get("fenglei_pending_plan")
+    if pending_plan is not None and pending_plan.get("scope") != current_scope:
+        st.session_state.pop("fenglei_pending_plan", None)
+        pending_plan = None
 
     if parse_clicked or manual_clicked:
         st.session_state.pop("fenglei_attempt", None)
+        st.session_state.pop("fenglei_pending_plan", None)
         run_attempt: dict
         try:
             with st.spinner("正在解析检验要求……"):
+                previous_request = (
+                    previous_attempt.get("request")
+                    if isinstance(previous_attempt, dict)
+                    else None
+                )
                 request = default_request() if manual_clicked else parse_request(
-                    nl_request, available_cases=cases
+                    nl_request,
+                    available_cases=cases,
+                    previous_request=previous_request,
                 )
         except (RequestValidationError, ValueError, KeyError, TypeError) as exc:
             run_attempt = {
@@ -294,6 +393,32 @@ with tab_real_case:
         except Exception as exc:
             run_attempt = {"decision": {"status": "parser_error", "message": str(exc)}}
         else:
+            decision = resolve_request(request, cases, selected_case_id=selected_case_id)
+            run_attempt = {"request": request, "decision": decision}
+            if decision["status"] in {"ready", "partial"}:
+                st.session_state["fenglei_pending_plan"] = {
+                    **run_attempt,
+                    "scope": current_scope,
+                    "submitted_prompt": None if manual_clicked else nl_request,
+                }
+            else:
+                run_attempt["scope"] = current_scope
+                run_attempt["submitted_prompt"] = None if manual_clicked else nl_request
+                st.session_state["fenglei_attempt"] = run_attempt
+        if run_attempt["decision"]["status"] == "parser_error":
+            run_attempt["scope"] = current_scope
+            run_attempt["submitted_prompt"] = None if manual_clicked else nl_request
+            st.session_state["fenglei_attempt"] = run_attempt
+
+    pending_plan = st.session_state.get("fenglei_pending_plan")
+    if pending_plan is not None:
+        pending_decision = pending_plan["decision"]
+        st.info("检验计划已生成；请确认后再读取资料、计算指标和绘图。")
+        with st.expander("查看待执行的规范化请求与执行口径", expanded=True):
+            st.json(pending_plan["request"])
+            st.json(pending_decision["execution"])
+        if st.button("确认执行此计划", type="primary", width="stretch"):
+            request = pending_plan["request"]
             try:
                 with st.spinner("正在索引资料、计算指标并生成图表……"):
                     run_attempt = _execute_real_case_request(
@@ -303,7 +428,6 @@ with tab_real_case:
                         fenglei_dir=fenglei_dir,
                         radar_dir=radar_dir,
                         bbox=(lat_min, lat_max, lon_min, lon_max),
-                        allow_llm_insight=allow_llm_insight,
                     )
             except NoDataError as exc:
                 run_attempt = {
@@ -325,9 +449,11 @@ with tab_real_case:
                     "request": request,
                     "decision": {"status": "execution_error", "message": str(exc)},
                 }
-        run_attempt["scope"] = current_scope
-        run_attempt["submitted_prompt"] = None if manual_clicked else nl_request
-        st.session_state["fenglei_attempt"] = run_attempt
+            run_attempt["scope"] = current_scope
+            run_attempt["submitted_prompt"] = pending_plan["submitted_prompt"]
+            st.session_state["fenglei_attempt"] = run_attempt
+            st.session_state.pop("fenglei_pending_plan", None)
+            st.rerun()
 
     attempt = st.session_state.get("fenglei_attempt")
     if attempt is None:
@@ -368,126 +494,53 @@ with tab_real_case:
             coverage = result["coverage"]
             metric_rows = attempt["metric_rows"]
             downloads = attempt["downloads"]
-            if allow_llm_insight and attempt["request"]["insight"]["enabled"]:
-                insight_button_label = (
-                    "重新生成 AI 解读"
-                    if attempt.get("ai_insight")
-                    else "基于当前结果生成 AI 解读"
+            result_column, insight_column = st.columns([2.2, 1], gap="large")
+            with insight_column:
+                _render_professional_insight(attempt, result, metric_rows, downloads)
+            with result_column:
+                missing_leads = coverage["missing_leads"]
+                missing_text = "无" if not missing_leads else f"{len(missing_leads)} 个"
+                st.write(
+                    f"**匹配 {len(coverage['selected_leads'])} 个时效**｜"
+                    f"范围 {coverage['selected_leads'][0]}–{coverage['selected_leads'][-1]} 分钟｜"
+                    f"缺失 {missing_text}"
                 )
-                if st.button(
-                    insight_button_label,
-                    key=f"insight_{result['context']['case_id']}",
-                ):
-                    with st.spinner("正在基于现有指标生成解读，不会重新计算资料……"):
-                        previous_insight = attempt.get("ai_insight")
-                        try:
-                            candidate_insight = generate_insight(
-                                attempt["facts"],
-                                length=attempt["request"]["insight"]["length"],
-                            )
-                            candidate_downloads = build_case_download_artifacts(
-                                result=result,
-                                request=attempt["request"],
-                                metric_rows=metric_rows,
-                                facts=attempt["facts"],
-                                deterministic_summary=attempt["deterministic_summary"],
-                                ai_insight=candidate_insight,
-                                execution_status=attempt["decision"]["status"],
-                                rendered_images=downloads["images"],
-                            )
-                        except Exception as exc:
-                            attempt["insight_error"] = str(exc)
-                            attempt["insight_retry_failed"] = previous_insight is not None
-                        else:
-                            attempt["ai_insight"] = candidate_insight
-                            attempt["insight_error"] = None
-                            attempt["insight_retry_failed"] = False
-                            attempt["downloads"] = candidate_downloads
-                        downloads = attempt["downloads"]
-                        st.session_state["fenglei_attempt"] = attempt
-                        st.rerun()
-            missing_leads = coverage["missing_leads"]
-            missing_text = "无" if not missing_leads else f"{len(missing_leads)} 个"
-            st.write(
-                f"**匹配 {len(coverage['selected_leads'])} 个时效**｜"
-                f"范围 {coverage['selected_leads'][0]}–{coverage['selected_leads'][-1]} 分钟｜"
-                f"缺失 {missing_text}"
-            )
-            with st.expander("查看完整时效覆盖"):
-                st.write("实际时效（分钟）：", coverage["selected_leads"])
-                st.write("缺失时效（分钟）：", missing_leads or "无")
-            st.subheader("结果解读")
-            st.text(attempt["deterministic_summary"])
-            if attempt.get("ai_insight"):
-                st.info("AI 解读（基于上述确定性事实）\n\n" + attempt["ai_insight"])
-            if attempt.get("insight_retry_failed"):
-                st.warning(
-                    "本次重新生成 AI 解读失败，页面和下载报告仍保留上一次成功的版本："
-                    + attempt["insight_error"]
-                )
-            elif attempt.get("insight_error"):
-                st.caption("DeepSeek 解读不可用，已保留确定性摘要：" + attempt["insight_error"])
+                with st.expander("查看完整时效覆盖"):
+                    st.write("实际时效（分钟）：", coverage["selected_leads"])
+                    st.write("缺失时效（分钟）：", missing_leads or "无")
 
-            st.subheader("下载结果")
-            download_col1, download_col2, download_col3 = st.columns(3)
-            download_col1.download_button(
-                "下载已生成的部分结果 ZIP" if status == "partial" else "下载完整结果包 ZIP",
-                data=downloads["bundle"]["data"],
-                file_name=downloads["bundle"]["file_name"],
-                mime="application/zip",
-                key=f"bundle_{downloads['base_name']}",
-                on_click="ignore",
-                type="primary",
-                width="stretch",
-            )
-            download_col2.download_button(
-                "下载本次请求指标 CSV",
-                data=downloads["metrics"]["data"],
-                file_name=downloads["metrics"]["file_name"],
-                mime="text/csv",
-                key=f"metrics_{downloads['base_name']}",
-                on_click="ignore",
-                width="stretch",
-            )
-            download_col3.download_button(
-                "下载结果解读 Markdown",
-                data=downloads["summary"]["data"],
-                file_name=downloads["summary"]["file_name"],
-                mime="text/markdown",
-                key=f"summary_{downloads['base_name']}",
-                on_click="ignore",
-                width="stretch",
-            )
-
-            st.subheader("按请求生成的图表")
-            image_count = len(downloads["images"])
-            for image_index, (key, image_download) in enumerate(
-                downloads["images"].items(), start=1
-            ):
-                view = result["figure_metadata"][key]
-                threshold_text = "、".join(
-                    f"{float(value):g}"
-                    for value in attempt["request"]["filters"]["thresholds_dbz"]
-                )
-                caption_parts = [
-                    f"第 {image_index}/{image_count} 张",
-                    describe_view(view),
-                ]
-                if view["type"] == "score_time_series":
-                    caption_parts.append(f"阈值 {threshold_text} dBZ")
-                caption_parts.append(
-                    f"起报 {result['context']['init_time']:%Y-%m-%d %H:%M} UTC"
-                )
-                st.caption("｜".join(caption_parts))
-                st.image(image_download["data"])
-                st.download_button(
-                    "下载这张图（PNG）",
-                    data=image_download["data"],
-                    file_name=image_download["file_name"],
-                    mime="image/png",
-                    key=f"png_{downloads['base_name']}_{key}",
+                st.subheader("下载结果")
+                download_col1, download_col2, download_col3 = st.columns(3)
+                download_col1.download_button(
+                    "下载已生成的部分结果 ZIP" if status == "partial" else "下载完整结果包 ZIP",
+                    data=downloads["bundle"]["data"],
+                    file_name=downloads["bundle"]["file_name"],
+                    mime="application/zip",
+                    key=f"bundle_{downloads['base_name']}",
                     on_click="ignore",
+                    type="primary",
+                    width="stretch",
+                )
+                download_col2.download_button(
+                    "下载本次请求指标 CSV",
+                    data=downloads["metrics"]["data"],
+                    file_name=downloads["metrics"]["file_name"],
+                    mime="text/csv",
+                    key=f"metrics_{downloads['base_name']}",
+                    on_click="ignore",
+                    width="stretch",
+                )
+                download_col3.download_button(
+                    "下载结果解读 Markdown",
+                    data=downloads["summary"]["data"],
+                    file_name=downloads["summary"]["file_name"],
+                    mime="text/markdown",
+                    key=f"summary_{downloads['base_name']}",
+                    on_click="ignore",
+                    width="stretch",
                 )
 
-            st.subheader("本次请求指标与样本数")
-            st.dataframe(pd.DataFrame(metric_rows), width="stretch")
+                st.subheader("按请求生成的图表与动画")
+                _render_requested_media(result, downloads, attempt["request"])
+                st.subheader("本次请求指标与样本数")
+                st.dataframe(pd.DataFrame(metric_rows), width="stretch")

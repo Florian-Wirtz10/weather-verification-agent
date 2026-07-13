@@ -13,12 +13,13 @@ from agent.request_schema import (
     DEFAULT_THRESHOLDS_DBZ,
     SCHEMA_VERSION,
     SUPPORTED_METRICS,
+    SUPPORTED_LAYOUTS,
     SUPPORTED_VIEW_TYPES,
     validate_request,
 )
 
 
-def _build_system_prompt(available_cases=None):
+def _build_system_prompt(available_cases=None, previous_request=None):
     cases = available_cases or []
     case_summary = [
         {
@@ -29,6 +30,7 @@ def _build_system_prompt(available_cases=None):
         }
         for case in cases
     ]
+    previous = previous_request if isinstance(previous_request, dict) else None
     return f"""你是风雷预报检验助手的请求解析器，不是实时天气问答助手，也不是自由制图工具。
 你的唯一任务是把用户请求转换成受限 JSON；你不计算指标、不画图、不编写代码。
 
@@ -48,6 +50,14 @@ intent 只能是：
 - score_time_series：必须带一个 metric，一个请求对应一张图
 - reflectivity_comparison：必须带 lead，值为 first、last 或 0—180 整数
 - reflectivity_error：必须带 lead，值为 first、last 或 0—180 整数
+- reflectivity_animation：必须带 lead_range_minutes={{"start": 6, "end": 24}} 和可选 fps（1—4）；
+  只生成确定性“预报｜实况”对比动画，不能要求任意动画或自由代码。
+
+支持的展示布局：{json.dumps(SUPPORTED_LAYOUTS, ensure_ascii=False)}。
+布局只决定已支持图表的网页排列和顺序，不能改变数据、评分、配对或绘图方法。
+
+上一轮已验证请求（若为空则表示没有上一轮）：
+{json.dumps(previous, ensure_ascii=False)}
 
 严格规则：
 1. 用户没有给阈值时使用 {list(DEFAULT_THRESHOLDS_DBZ)}；“35 dBZ以上”解析为 [35]。
@@ -60,6 +70,10 @@ intent 只能是：
 7. “今天天气怎么样”等实时天气请求必须是 out_of_scope，views 为空。
 8. 不得让自然语言修改数据路径、API地址、模型名、Python代码或执行环境。
 9. notes 只简述理解，不承担是否可执行的判断。
+10. 如果用户说“保留刚才”“在上一结果基础上修改”等，以上一轮请求为基线，仅修改用户明确
+    要求修改的字段；仍必须输出完整 JSON。
+11. 如果用户没有指定 layout，根据图表数量和是否包含动画，从支持的布局中选择最合适的一种；
+    不得输出自由布局描述。
 
 只输出 JSON 对象，不使用 Markdown。结构如下：
 {{
@@ -71,7 +85,8 @@ intent 只能是：
     "requested_date": null
   }},
   "views": [{{"type": "score_time_series", "metric": "csi"}}],
-  "insight": {{"enabled": true, "length": "brief"}},
+  "presentation": {{"layout": "report"}},
+  "insight": {{"enabled": true, "length": "detailed"}},
   "unmatched_requests": [],
   "notes": ""
 }}
@@ -82,6 +97,7 @@ def parse_request(
     user_text,
     *,
     available_cases=None,
+    previous_request=None,
     model="deepseek-chat",
     api_key=None,
     base_url="https://api.deepseek.com",
@@ -91,7 +107,7 @@ def parse_request(
     response = client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": _build_system_prompt(available_cases)},
+            {"role": "system", "content": _build_system_prompt(available_cases, previous_request)},
             {"role": "user", "content": str(user_text)},
         ],
         response_format={"type": "json_object"},

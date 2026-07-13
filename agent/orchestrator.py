@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from agent.errors import AmbiguousCaseError, DataContractError, NoDataError
-from agent.request_schema import MAX_SPATIAL_VIEWS, MAX_VIEWS
+from agent.request_schema import MAX_ANIMATION_FRAMES, MAX_SPATIAL_VIEWS, MAX_VIEWS
 from data_io.fenglei_mosaic import read_swan_mosaic, read_swan_mosaic_metadata
 from data_io.grid import GriddedField, align_pair
 from data_io.radar_obs import index_cref_files, read_cref
@@ -19,6 +19,7 @@ from visualization.plots import (
     plot_reflectivity_comparison,
     plot_reflectivity_error,
     plot_score_time_series,
+    render_reflectivity_animation,
 )
 
 
@@ -157,6 +158,30 @@ def _normalize_execution_views(views, selected_leads):
                 unavailable.append({"type": view_type, "lead": selection})
             else:
                 normalized.append({"type": view_type, "lead": lead})
+        elif view_type == "reflectivity_animation":
+            lead_range = view.get("lead_range_minutes")
+            if not isinstance(lead_range, dict):
+                raise DataContractError("reflectivity_animation requires lead_range_minutes")
+            start = lead_range.get("start")
+            end = lead_range.get("end")
+            if not isinstance(start, int) or not isinstance(end, int) or start > end:
+                raise DataContractError("invalid reflectivity_animation lead range")
+            animation_leads = [lead for lead in selected_leads if start <= lead <= end]
+            if not animation_leads:
+                unavailable.append({"type": view_type, "lead_range_minutes": lead_range})
+            elif len(animation_leads) > MAX_ANIMATION_FRAMES:
+                raise DataContractError(
+                    f"reflectivity animation supports at most {MAX_ANIMATION_FRAMES} matched frames"
+                )
+            else:
+                normalized.append(
+                    {
+                        "type": view_type,
+                        "lead_range_minutes": {"start": start, "end": end},
+                        "leads": animation_leads,
+                        "fps": view.get("fps", 2),
+                    }
+                )
         else:
             raise DataContractError(f"unsupported view type: {view_type!r}")
     if not normalized:
@@ -221,7 +246,11 @@ def run_fenglei_case_verification(
     resolved_views, unavailable_views = _normalize_execution_views(views, selected_leads)
     needed_frame_leads = {
         view["lead"] for view in resolved_views if view["type"] != "score_time_series"
+        and view["type"] != "reflectivity_animation"
     }
+    for view in resolved_views:
+        if view["type"] == "reflectivity_animation":
+            needed_frame_leads.update(view["leads"])
 
     per_lead = []
     frames: dict[int, VerificationFrame] = {}
@@ -258,6 +287,8 @@ def run_fenglei_case_verification(
 
     figures = {}
     figure_metadata = {}
+    animations = {}
+    animation_metadata = {}
     for index, view in enumerate(resolved_views, start=1):
         key = f"view_{index:02d}"
         view_type = view["type"]
@@ -277,14 +308,24 @@ def run_fenglei_case_verification(
                 frame["obs"],
                 title=f"Forecast vs observation — lead {view['lead']} min",
             )
-        else:
+        elif view_type == "reflectivity_error":
             frame = frames[view["lead"]]
             figures[key] = plot_reflectivity_error(
                 frame["forecast"],
                 frame["obs"],
                 title=f"Forecast - observation — lead {view['lead']} min",
             )
-        figure_metadata[key] = view
+        elif view_type == "reflectivity_animation":
+            animation_key = f"animation_{len(animations) + 1:02d}"
+            animation_frames = [frames[lead] for lead in view["leads"]]
+            animations[animation_key] = render_reflectivity_animation(
+                animation_frames, fps=view["fps"]
+            )
+            animation_metadata[animation_key] = view
+        else:
+            raise DataContractError(f"unsupported resolved view type: {view_type!r}")
+        if view_type != "reflectivity_animation":
+            figure_metadata[key] = view
 
     warnings = []
     if missing_leads:
@@ -320,5 +361,7 @@ def run_fenglei_case_verification(
         "lead_minutes": selected_leads,
         "figures": figures,
         "figure_metadata": figure_metadata,
+        "animations": animations,
+        "animation_metadata": animation_metadata,
         "warnings": warnings,
     }

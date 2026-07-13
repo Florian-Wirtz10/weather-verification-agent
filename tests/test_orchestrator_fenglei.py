@@ -82,6 +82,31 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
     assert result["coverage"]["missing_leads"] == []
     assert result["per_lead"][0]["contingency"][20]["valid_count"] > 0
 
+    animated = run_fenglei_case_verification(
+        fenglei_dir=fenglei_dir,
+        radar_dir=radar_dir,
+        bbox=(29.9, 30.1, 109.9, 110.1),
+        thresholds=(20,),
+        lead_range=(0, 12),
+        views=[
+            {
+                "type": "reflectivity_animation",
+                "lead_range_minutes": {"start": 6, "end": 12},
+                "fps": 2,
+            }
+        ],
+    )
+    assert animated["figures"] == {}
+    assert animated["animation_metadata"] == {
+        "animation_01": {
+            "type": "reflectivity_animation",
+            "lead_range_minutes": {"start": 6, "end": 12},
+            "leads": [6, 12],
+            "fps": 2,
+        }
+    }
+    assert animated["animations"]["animation_01"].startswith(b"GIF89a")
+
     cases = discover_fenglei_cases(fenglei_dir, radar_dir)
     assert len(cases) == 1
     assert cases[0]["available_leads"] == [6, 12]

@@ -4,10 +4,13 @@ Real-data plots are deterministic renderers selected through the Phase 3
 request schema; the language model never writes plotting code.
 """
 
+from io import BytesIO
+
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap
 from matplotlib.ticker import MultipleLocator
+from PIL import Image
 
 
 def plot_field(array, title, cmap="Blues"):
@@ -193,6 +196,47 @@ def plot_reflectivity_error(forecast_field, obs_field, title="Forecast - Obs (dB
     ax.set_ylabel("Latitude")
     plt.colorbar(im, ax=ax, label="dBZ error (display floor: 0)")
     return fig
+
+
+def render_reflectivity_animation(frames, *, fps=2):
+    """Render deterministic forecast/observation comparison frames to an in-memory GIF.
+
+    ``frames`` is an ordered sequence of mappings with ``lead_minutes``,
+    ``forecast`` and ``obs`` entries.  The caller decides which already-matched
+    frames are allowed; this renderer never reads data or chooses times.
+    """
+    if not frames:
+        raise ValueError("reflectivity animation requires at least one frame")
+    if isinstance(fps, bool) or not isinstance(fps, int) or not 1 <= fps <= 4:
+        raise ValueError("fps must be an integer from 1 to 4")
+
+    images = []
+    for frame in frames:
+        lead = frame["lead_minutes"]
+        figure = plot_reflectivity_comparison(
+            frame["forecast"],
+            frame["obs"],
+            title=f"Forecast vs observation — lead {lead} min",
+        )
+        buffer = BytesIO()
+        try:
+            figure.savefig(buffer, format="png", dpi=110, bbox_inches="tight", facecolor="white")
+            with Image.open(BytesIO(buffer.getvalue())) as image:
+                images.append(image.convert("P", palette=Image.Palette.ADAPTIVE))
+        finally:
+            plt.close(figure)
+
+    output = BytesIO()
+    images[0].save(
+        output,
+        format="GIF",
+        save_all=True,
+        append_images=images[1:],
+        duration=round(1000 / fps),
+        loop=0,
+        disposal=2,
+    )
+    return output.getvalue()
 
 
 def plot_score_time_series(lead_minutes, scores_by_threshold, score_name, title=None):

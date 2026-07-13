@@ -140,6 +140,32 @@ def test_download_bundle_contains_images_csv_report_and_safe_metadata():
         assert "/secret/free-text" not in report
 
 
+def test_download_bundle_exports_valid_animation_gif():
+    result, request, rows, facts = _download_inputs()
+    result["animations"] = {"animation_01": b"GIF89a" + b"test"}
+    result["animation_metadata"] = {
+        "animation_01": {
+            "type": "reflectivity_animation",
+            "lead_range_minutes": {"start": 6, "end": 24},
+            "fps": 2,
+        }
+    }
+    request["presentation"] = {"layout": "animation_focus"}
+    request["views"].append(result["animation_metadata"]["animation_01"])
+
+    artifacts = build_case_download_artifacts(
+        result=result,
+        request=request,
+        metric_rows=rows,
+        facts=facts,
+        deterministic_summary="测试。",
+        ai_insight=None,
+    )
+    assert artifacts["animations"]["animation_01"]["file_name"].endswith(".gif")
+    with ZipFile(BytesIO(artifacts["bundle"]["data"])) as archive:
+        assert any(name.startswith("animations/") and name.endswith(".gif") for name in archive.namelist())
+
+
 def test_downloads_can_reuse_pngs_and_request_fingerprint_avoids_name_collision():
     result, request, rows, facts = _download_inputs()
     first = build_case_download_artifacts(

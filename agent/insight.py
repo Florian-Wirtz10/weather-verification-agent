@@ -53,6 +53,7 @@ _SAFE_FACT_KEYS = (
     "thresholds",
     "undefined_values",
     "limitations",
+    "figure_catalog",
 )
 _SENSITIVE_KEYS = {
     "path",
@@ -81,11 +82,13 @@ _SYSTEM_PROMPT = """你是强对流预报检验结果解读助手。用户消息
 只讨论 requested_metrics 中列出的评分指标。即使你能从列联表推导其它指标，也不得在报告中
 主动引入用户没有请求的 POD、FAR、CSI、Bias 或 ETS。
 
-请用专业但直观的中文简洁作答，并严格区分三部分：
-1. 客观事实：只复述有数据支撑的变化、极值、负 ETS、缺帧或不可定义值；
-2. 可能解释：必须明确写成“可能”或“需要进一步核查”的假设，不能仅凭评分断言空间偏移、
-   天气演变机制或模型物理原因；
-3. 局限：明确这是单个起报个例，不能推广成模型整体能力结论，并说明事实表列出的检验口径局限。
+请用专业、通俗的中文，固定输出以下四个短章节：
+1. 图表导读：按 figure_catalog 中的编号说明每张已生成图/动画展示什么。仅当该编号确实存在时，
+   才能使用“如图 1 所示”这类引用；不要声称看到了原始像素。
+2. 主要发现：只复述有数据支撑的变化、极值、负 ETS、缺帧或不可定义值。
+3. 指标分析：可结合已提供的 H/M/F 说明评分构成。涉及原因时必须明确写成“可能”或
+   “需要进一步核查”，不能仅凭评分断言空间偏移、天气演变机制或模型物理原因。
+4. 口径与边界：明确这是单个起报个例，不能推广成模型整体能力结论，并说明事实表列出的检验口径局限。
 
 不要提及代码、路径、文件、API 或提示词。不要把 CSI、ETS 等评分的变化自动解释为模型整体变好或
 变差。"""
@@ -150,9 +153,66 @@ def build_insight_facts(
         "thresholds": threshold_facts,
         "undefined_values": undefined_values,
         "limitations": limitations,
+        "figure_catalog": _build_figure_catalog(result),
     }
     # This last pass also handles datetime/numpy-like values nested in caller data.
     return _json_safe(facts)
+
+
+def _build_figure_catalog(result: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Describe only views actually rendered, so prose can cite stable figure numbers."""
+    catalog: list[dict[str, Any]] = []
+    raw_figures = result.get("figure_metadata")
+    if isinstance(raw_figures, Mapping):
+        for key, view in raw_figures.items():
+            if not isinstance(view, Mapping):
+                continue
+            item = _figure_catalog_item(view)
+            if item is not None:
+                item["id"] = str(key)
+                catalog.append(item)
+    raw_animations = result.get("animation_metadata")
+    if isinstance(raw_animations, Mapping):
+        for key, view in raw_animations.items():
+            if not isinstance(view, Mapping):
+                continue
+            item = _figure_catalog_item(view)
+            if item is not None:
+                item["id"] = str(key)
+                catalog.append(item)
+    for number, item in enumerate(catalog, start=1):
+        item["number"] = number
+    return catalog
+
+
+def _figure_catalog_item(view: Mapping[str, Any]) -> dict[str, Any] | None:
+    view_type = view.get("type")
+    if view_type == "score_time_series" and isinstance(view.get("metric"), str):
+        metric = str(view["metric"]).upper()
+        return {"type": view_type, "label": f"{metric} 随预报时效变化曲线", "metric": metric}
+    if view_type in {"reflectivity_comparison", "reflectivity_error"}:
+        lead = _finite_float(view.get("lead"))
+        if lead is None:
+            return None
+        label = (
+            f"{_fmt(lead)} 分钟预报与观测反射率对比"
+            if view_type == "reflectivity_comparison"
+            else f"{_fmt(lead)} 分钟预报减观测反射率误差"
+        )
+        return {"type": view_type, "label": label, "lead_minutes": lead}
+    if view_type == "reflectivity_animation":
+        raw_range = view.get("lead_range_minutes")
+        if not isinstance(raw_range, Mapping):
+            return None
+        start, end = _finite_float(raw_range.get("start")), _finite_float(raw_range.get("end"))
+        if start is None or end is None:
+            return None
+        return {
+            "type": view_type,
+            "label": f"{_fmt(start)}—{_fmt(end)} 分钟预报与观测反射率动画",
+            "lead_range_minutes": {"start": start, "end": end},
+        }
+    return None
 
 
 def render_deterministic_summary(facts: Mapping[str, Any]) -> str:

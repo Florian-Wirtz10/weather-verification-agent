@@ -16,11 +16,13 @@ import pandas as pd
 
 
 MAX_EXPORT_IMAGES = 12
+MAX_EXPORT_ANIMATIONS = 3
 MAX_EXPORT_BYTES = 100 * 1024 * 1024
 _ALLOWED_VIEW_TYPES = {
     "score_time_series",
     "reflectivity_comparison",
     "reflectivity_error",
+    "reflectivity_animation",
 }
 _ALLOWED_METRICS = {"csi", "pod", "far", "bias_score", "ets"}
 _METRIC_ROW_COLUMNS = (
@@ -84,6 +86,14 @@ def describe_view(view: Mapping[str, Any]) -> str:
         return f"{lead} 分钟预报与观测反射率对比"
     if view_type == "reflectivity_error":
         return f"{lead} 分钟预报减观测反射率误差"
+    if view_type == "reflectivity_animation":
+        lead_range = view.get("lead_range_minutes")
+        if isinstance(lead_range, Mapping):
+            return (
+                f"{lead_range.get('start')}—{lead_range.get('end')} 分钟"
+                "预报与观测反射率动画"
+            )
+        return "预报与观测反射率动画"
     return "检验图表"
 
 
@@ -113,6 +123,7 @@ def build_case_download_artifacts(
     base_name = _artifact_base_name(context, coverage, request, execution_status)
 
     images: dict[str, dict[str, Any]] = {}
+    animations: dict[str, dict[str, Any]] = {}
     figures = result.get("figures")
     figure_metadata = result.get("figure_metadata")
     if not isinstance(figure_metadata, Mapping):
@@ -148,6 +159,24 @@ def build_case_download_artifacts(
     else:
         raise ValueError("figures must be a mapping when rendered_images is absent")
 
+    raw_animations = result.get("animations", {})
+    raw_animation_metadata = result.get("animation_metadata", {})
+    if not isinstance(raw_animations, Mapping) or not isinstance(raw_animation_metadata, Mapping):
+        raise ValueError("animations and animation_metadata must be mappings")
+    if set(raw_animations) != set(raw_animation_metadata):
+        raise ValueError("animation keys must exactly match animation metadata")
+    if len(raw_animations) > MAX_EXPORT_ANIMATIONS:
+        raise ValueError(f"at most {MAX_EXPORT_ANIMATIONS} animations can be exported")
+    for index, (key, data) in enumerate(raw_animations.items(), start=1):
+        view = _validated_view(raw_animation_metadata[key])
+        if not isinstance(data, bytes) or not data.startswith((b"GIF87a", b"GIF89a")):
+            raise ValueError("animation data must be GIF bytes")
+        animations[str(key)] = {
+            "file_name": f"{base_name}_{index:02d}_{_safe_filename(view['type'])}.gif",
+            "label": describe_view(view),
+            "data": data,
+        }
+
     metrics_name = f"{base_name}_metrics.csv"
     metrics_data = (
         _metric_frame(metric_rows, context)
@@ -181,12 +210,21 @@ def build_case_download_artifacts(
                     "sha256": hashlib.sha256(item["data"]).hexdigest(),
                 }
                 for item in images.values()
+            ]
+            + [
+                {
+                    "file_name": item["file_name"],
+                    "label": item["label"],
+                    "sha256": hashlib.sha256(item["data"]).hexdigest(),
+                }
+                for item in animations.values()
             ],
         }
     )
 
     total_bytes = (
         sum(len(item["data"]) for item in images.values())
+        + sum(len(item["data"]) for item in animations.values())
         + len(metrics_data)
         + len(summary_data)
         + len(request_data)
@@ -200,6 +238,8 @@ def build_case_download_artifacts(
     with ZipFile(bundle_buffer, "w", compression=ZIP_DEFLATED) as archive:
         for item in images.values():
             archive.writestr(f"figures/{item['file_name']}", item["data"])
+        for item in animations.values():
+            archive.writestr(f"animations/{item['file_name']}", item["data"])
         archive.writestr(f"tables/{metrics_name}", metrics_data)
         archive.writestr(f"reports/{summary_name}", summary_data)
         archive.writestr("metadata/execution_request.json", request_data)
@@ -209,6 +249,7 @@ def build_case_download_artifacts(
     return {
         "base_name": base_name,
         "images": images,
+        "animations": animations,
         "metrics": {"file_name": metrics_name, "data": metrics_data},
         "summary": {"file_name": summary_name, "data": summary_data},
         "bundle": {
@@ -276,6 +317,27 @@ def _validated_view(value: Any) -> dict[str, Any]:
         if metric not in _ALLOWED_METRICS:
             raise ValueError(f"unsupported export metric: {metric!r}")
         return {"type": view_type, "metric": metric}
+    if view_type == "reflectivity_animation":
+        lead_range = value.get("lead_range_minutes")
+        fps = value.get("fps")
+        if not isinstance(lead_range, Mapping):
+            raise ValueError("invalid animation lead range")
+        start, end = lead_range.get("start"), lead_range.get("end")
+        if (
+            isinstance(start, bool)
+            or isinstance(end, bool)
+            or not isinstance(start, int)
+            or not isinstance(end, int)
+            or not 0 <= start <= end <= 180
+        ):
+            raise ValueError("invalid animation lead range")
+        if isinstance(fps, bool) or not isinstance(fps, int) or not 1 <= fps <= 4:
+            raise ValueError("invalid animation fps")
+        return {
+            "type": view_type,
+            "lead_range_minutes": {"start": start, "end": end},
+            "fps": fps,
+        }
     lead = value.get("lead")
     if isinstance(lead, bool) or not isinstance(lead, int) or not 0 <= lead <= 180:
         raise ValueError(f"invalid export lead: {lead!r}")
@@ -404,13 +466,14 @@ def _safe_request(value: Mapping[str, Any]) -> dict[str, Any]:
             ("thresholds_dbz", "lead_range_minutes", "requested_date"),
         ),
         "views": [
-            _safe_pick(view, ("type", "metric", "lead"))
+            _safe_pick(view, ("type", "metric", "lead", "lead_range_minutes", "fps"))
             for view in views
             if isinstance(view, Mapping)
         ]
         if isinstance(views, Sequence) and not isinstance(views, (str, bytes))
         else [],
         "insight": _safe_pick(insight, ("enabled", "length")),
+        "presentation": _safe_pick(value.get("presentation"), ("layout",)),
     }
 
 
@@ -424,6 +487,7 @@ def _safe_facts(value: Mapping[str, Any]) -> dict[str, Any]:
             "thresholds",
             "undefined_values",
             "limitations",
+            "figure_catalog",
         ),
     )
     return _drop_sensitive(selected)
