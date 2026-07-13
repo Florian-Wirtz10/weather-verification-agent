@@ -55,6 +55,9 @@ intent 只能是：
 
 支持的展示布局：{json.dumps(SUPPORTED_LAYOUTS, ensure_ascii=False)}。
 布局只决定已支持图表的网页排列和顺序，不能改变数据、评分、配对或绘图方法。
+支持的展示策略：auto、separate_media、linked_score_animation。
+linked_score_animation 只用于“空间回波演变与某一评分变化之间的关系”：它要求同时提出
+一个 reflectivity_animation 和对应的 score_time_series，并在 presentation.metric 中指定该评分。
 
 上一轮已验证请求（若为空则表示没有上一轮）：
 {json.dumps(previous, ensure_ascii=False)}
@@ -77,6 +80,9 @@ intent 只能是：
 12. 用户明确要看空间回波的“演变、过程、动态、逐时变化”时，应提出一个
     reflectivity_animation（使用其时效范围，默认 fps=2）；普通 CSI/ETS 等评分时序曲线
     仍应保持 score_time_series，不能仅因横轴是时效就擅自增加动画。
+13. 用户要求把空间演变与 CSI、ETS 等某项评分联系起来、同屏对应或解释两者关系时，设置
+    strategy="linked_score_animation" 和对应 metric。其它情形 strategy="auto"；不得把多个
+    评分曲线或未请求的指标塞进联动动画。
 
 只输出 JSON 对象，不使用 Markdown。结构如下：
 {{
@@ -88,7 +94,7 @@ intent 只能是：
     "requested_date": null
   }},
   "views": [{{"type": "score_time_series", "metric": "csi"}}],
-  "presentation": {{"layout": "auto"}},
+  "presentation": {{"layout": "auto", "strategy": "auto", "metric": null}},
   "insight": {{"enabled": true, "length": "detailed"}},
   "unmatched_requests": [],
   "notes": ""

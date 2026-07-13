@@ -207,11 +207,17 @@ def _figure_catalog_item(view: Mapping[str, Any]) -> dict[str, Any] | None:
         start, end = _finite_float(raw_range.get("start")), _finite_float(raw_range.get("end"))
         if start is None or end is None:
             return None
-        return {
+        linked_metric = view.get("linked_metric")
+        label = f"{_fmt(start)}—{_fmt(end)} 分钟预报与观测反射率动画"
+        item = {
             "type": view_type,
-            "label": f"{_fmt(start)}—{_fmt(end)} 分钟预报与观测反射率动画",
+            "label": label,
             "lead_range_minutes": {"start": start, "end": end},
         }
+        if isinstance(linked_metric, str) and linked_metric in _METRIC_ORDER:
+            item["linked_metric"] = linked_metric.upper()
+            item["label"] = f"{label}与 {linked_metric.upper()} 联动展示"
+        return item
     return None
 
 

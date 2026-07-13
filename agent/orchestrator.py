@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import TypedDict
 
 from agent.errors import AmbiguousCaseError, DataContractError, NoDataError
-from agent.request_schema import MAX_ANIMATION_FRAMES, MAX_SPATIAL_VIEWS, MAX_VIEWS
+from agent.request_schema import (
+    MAX_ANIMATION_FRAMES,
+    MAX_SPATIAL_VIEWS,
+    MAX_VIEWS,
+    SUPPORTED_PRESENTATION_STRATEGIES,
+)
 from data_io.fenglei_mosaic import read_swan_mosaic, read_swan_mosaic_metadata
 from data_io.grid import GriddedField, align_pair
 from data_io.radar_obs import index_cref_files, read_cref
@@ -19,6 +24,7 @@ from visualization.plots import (
     plot_reflectivity_comparison,
     plot_reflectivity_error,
     plot_score_time_series,
+    render_linked_score_animation,
     render_reflectivity_animation,
 )
 
@@ -189,6 +195,49 @@ def _normalize_execution_views(views, selected_leads):
     return normalized, unavailable
 
 
+def _resolve_presentation_strategy(presentation, resolved_views):
+    """Validate the planner's strategy and deterministically resolve fallbacks."""
+    raw = presentation if isinstance(presentation, dict) else {}
+    strategy = raw.get("strategy", "auto")
+    if not isinstance(strategy, str) or strategy not in SUPPORTED_PRESENTATION_STRATEGIES:
+        raise DataContractError(f"unsupported presentation strategy: {strategy!r}")
+    metric = raw.get("metric")
+    plan = {
+        "requested_strategy": strategy,
+        "resolved_strategy": "separate_media",
+        "metric": metric if isinstance(metric, str) else None,
+    }
+    if strategy != "linked_score_animation":
+        return plan
+
+    if metric not in CATEGORICAL_SCORES:
+        raise DataContractError("linked_score_animation requires a supported score metric")
+    score_indices = [
+        index
+        for index, view in enumerate(resolved_views)
+        if view["type"] == "score_time_series" and view["metric"] == metric
+    ]
+    animation_indices = [
+        index
+        for index, view in enumerate(resolved_views)
+        if view["type"] == "reflectivity_animation"
+    ]
+    if len(score_indices) == 1 and animation_indices:
+        plan.update(
+            {
+                "resolved_strategy": "linked_score_animation",
+                "score_index": score_indices[0],
+                "animation_index": animation_indices[0],
+            }
+        )
+    else:
+        plan["fallback_reason"] = (
+            "联动动画需要同时具有一个指定评分曲线和至少一个空间动画；"
+            "本次条件不满足，已分别展示已生成媒体。"
+        )
+    return plan
+
+
 def run_fenglei_case_verification(
     fenglei_dir,
     radar_dir,
@@ -198,6 +247,7 @@ def run_fenglei_case_verification(
     init_time=None,
     lead_range=(0, 180),
     views=None,
+    presentation=None,
     fenglei_pattern="*REFMOSAIC*MIN.bz2",
 ):
     """Verify one explicitly resolved REFMOSAIC initialization against exact CREF times.
@@ -244,6 +294,7 @@ def run_fenglei_case_verification(
     )
     missing_leads = [lead for lead in expected_leads if lead not in available_leads]
     resolved_views, unavailable_views = _normalize_execution_views(views, selected_leads)
+    presentation_plan = _resolve_presentation_strategy(presentation, resolved_views)
     needed_frame_leads = {
         view["lead"] for view in resolved_views if view["type"] != "score_time_series"
         and view["type"] != "reflectivity_animation"
@@ -289,10 +340,16 @@ def run_fenglei_case_verification(
     figure_metadata = {}
     animations = {}
     animation_metadata = {}
-    for index, view in enumerate(resolved_views, start=1):
+    for zero_index, view in enumerate(resolved_views):
+        index = zero_index + 1
         key = f"view_{index:02d}"
         view_type = view["type"]
         if view_type == "score_time_series":
+            if (
+                presentation_plan["resolved_strategy"] == "linked_score_animation"
+                and zero_index == presentation_plan["score_index"]
+            ):
+                continue
             metric = view["metric"]
             scores_by_threshold = {
                 threshold: [entry["categorical"][threshold][metric] for entry in per_lead]
@@ -318,10 +375,28 @@ def run_fenglei_case_verification(
         elif view_type == "reflectivity_animation":
             animation_key = f"animation_{len(animations) + 1:02d}"
             animation_frames = [frames[lead] for lead in view["leads"]]
-            animations[animation_key] = render_reflectivity_animation(
-                animation_frames, fps=view["fps"]
-            )
-            animation_metadata[animation_key] = view
+            if (
+                presentation_plan["resolved_strategy"] == "linked_score_animation"
+                and zero_index == presentation_plan["animation_index"]
+            ):
+                metric = presentation_plan["metric"]
+                scores_by_threshold = {
+                    threshold: [entry["categorical"][threshold][metric] for entry in per_lead]
+                    for threshold in thresholds
+                }
+                animations[animation_key] = render_linked_score_animation(
+                    animation_frames,
+                    lead_minutes=selected_leads,
+                    scores_by_threshold=scores_by_threshold,
+                    score_name=metric,
+                    fps=view["fps"],
+                )
+                animation_metadata[animation_key] = {**view, "linked_metric": metric}
+            else:
+                animations[animation_key] = render_reflectivity_animation(
+                    animation_frames, fps=view["fps"]
+                )
+                animation_metadata[animation_key] = view
         else:
             raise DataContractError(f"unsupported resolved view type: {view_type!r}")
         if view_type != "reflectivity_animation":
@@ -336,6 +411,8 @@ def run_fenglei_case_verification(
         warnings.append(
             f"有 {len(unavailable_views)} 张空间图没有对应的精确预报时效，已不生成这些图。"
         )
+    if "fallback_reason" in presentation_plan:
+        warnings.append(presentation_plan["fallback_reason"])
 
     return {
         "context": {
@@ -363,5 +440,6 @@ def run_fenglei_case_verification(
         "figure_metadata": figure_metadata,
         "animations": animations,
         "animation_metadata": animation_metadata,
+        "presentation": presentation_plan,
         "warnings": warnings,
     }

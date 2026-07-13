@@ -148,6 +148,7 @@ def test_download_bundle_exports_valid_animation_gif():
             "type": "reflectivity_animation",
             "lead_range_minutes": {"start": 6, "end": 24},
             "fps": 2,
+            "linked_metric": "csi",
         }
     }
     request["presentation"] = {"layout": "animation_focus"}
@@ -162,6 +163,7 @@ def test_download_bundle_exports_valid_animation_gif():
         ai_insight=None,
     )
     assert artifacts["animations"]["animation_01"]["file_name"].endswith(".gif")
+    assert "CSI" in artifacts["animations"]["animation_01"]["label"]
     with ZipFile(BytesIO(artifacts["bundle"]["data"])) as archive:
         assert any(name.startswith("animations/") and name.endswith(".gif") for name in archive.namelist())
 

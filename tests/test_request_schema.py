@@ -24,7 +24,7 @@ def test_default_request_is_complete_and_returns_fresh_data():
             "requested_date": None,
         },
         "views": [{"type": "score_time_series", "metric": "csi"}],
-        "presentation": {"layout": "auto"},
+        "presentation": {"layout": "auto", "strategy": "auto", "metric": None},
         "insight": {"enabled": True, "length": "detailed"},
         "unmatched_requests": [],
         "notes": "",
@@ -247,7 +247,29 @@ def test_animation_and_presentation_are_declarative_and_strictly_bounded():
             "fps": 2,
         }
     ]
-    assert result["presentation"] == {"layout": "animation_focus"}
+    assert result["presentation"] == {
+        "layout": "animation_focus",
+        "strategy": "auto",
+        "metric": None,
+    }
+
+    linked = validate_request(
+        {
+            "views": [
+                {"type": "score_time_series", "metric": "csi"},
+                {
+                    "type": "reflectivity_animation",
+                    "lead_range_minutes": {"start": 6, "end": 24},
+                },
+            ],
+            "presentation": {"strategy": "linked_score_animation", "metric": "csi"},
+        }
+    )
+    assert linked["presentation"] == {
+        "layout": "auto",
+        "strategy": "linked_score_animation",
+        "metric": "csi",
+    }
 
     with pytest.raises(RequestValidationError):
         validate_request(
@@ -263,3 +285,5 @@ def test_animation_and_presentation_are_declarative_and_strictly_bounded():
         )
     with pytest.raises(RequestValidationError):
         validate_request({"presentation": {"layout": "arbitrary_css"}})
+    with pytest.raises(RequestValidationError):
+        validate_request({"presentation": {"strategy": "linked_score_animation"}})

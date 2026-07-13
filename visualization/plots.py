@@ -210,7 +210,7 @@ def render_reflectivity_animation(frames, *, fps=2):
     if isinstance(fps, bool) or not isinstance(fps, int) or not 1 <= fps <= 4:
         raise ValueError("fps must be an integer from 1 to 4")
 
-    images = []
+    figures = []
     for frame in frames:
         lead = frame["lead_minutes"]
         figure = plot_reflectivity_comparison(
@@ -218,6 +218,50 @@ def render_reflectivity_animation(frames, *, fps=2):
             frame["obs"],
             title=f"Forecast vs observation — lead {lead} min",
         )
+        figures.append(figure)
+    return _figures_to_gif(figures, fps=fps)
+
+
+def render_linked_score_animation(
+    frames,
+    *,
+    lead_minutes,
+    scores_by_threshold,
+    score_name,
+    fps=2,
+):
+    """Render one GIF linking spatial evolution to a fixed score curve.
+
+    Every frame contains forecast/observation panels plus the complete selected
+    score time series.  A vertical cursor and highlighted points identify the
+    exact lead represented by the spatial fields, so the relationship is
+    explicit without relying on a separate neighbouring chart.
+    """
+    if not frames:
+        raise ValueError("linked score animation requires at least one frame")
+    if isinstance(fps, bool) or not isinstance(fps, int) or not 1 <= fps <= 4:
+        raise ValueError("fps must be an integer from 1 to 4")
+    expected_leads = [frame["lead_minutes"] for frame in frames]
+    if any(lead not in lead_minutes for lead in expected_leads):
+        raise ValueError("linked animation frames must occur on the score time axis")
+
+    figures = []
+    for frame in frames:
+        figures.append(
+            _plot_linked_score_frame(
+                frame,
+                lead_minutes=lead_minutes,
+                scores_by_threshold=scores_by_threshold,
+                score_name=score_name,
+            )
+        )
+    return _figures_to_gif(figures, fps=fps)
+
+
+def _figures_to_gif(figures, *, fps):
+    """Encode and close a sequence of equally sized Matplotlib figures."""
+    images = []
+    for figure in figures:
         buffer = BytesIO()
         try:
             figure.savefig(buffer, format="png", dpi=110, bbox_inches="tight", facecolor="white")
@@ -237,6 +281,64 @@ def render_reflectivity_animation(frames, *, fps=2):
         disposal=2,
     )
     return output.getvalue()
+
+
+def _plot_linked_score_frame(frame, *, lead_minutes, scores_by_threshold, score_name):
+    """Build one deterministic spatial-plus-score storyboard frame."""
+    forecast, obs = frame["forecast"], frame["obs"]
+    extent = (
+        float(obs.lon.min()), float(obs.lon.max()), float(obs.lat.min()), float(obs.lat.max())
+    )
+    cmap, norm = _reflectivity_cmap_norm()
+    fig, axes = plt.subplots(
+        1, 3, figsize=(17, 5.4), gridspec_kw={"width_ratios": [1, 1, 1.28]}
+    )
+    image = None
+    for axis, field, title in (
+        (axes[0], forecast, "Forecast"),
+        (axes[1], obs, "Observation"),
+    ):
+        image = axis.imshow(
+            _reflectivity_display_data(field.data), cmap=cmap, norm=norm,
+            origin="lower", extent=extent, aspect="auto",
+        )
+        axis.set_title(title)
+        axis.set_xlabel("Longitude")
+        axis.set_ylabel("Latitude")
+    if image is not None:
+        fig.colorbar(
+            image, ax=list(axes[:2]), label="dBZ (display floor: 0)",
+            ticks=_REFLECTIVITY_BOUNDS[::2], shrink=0.9, pad=0.03,
+        )
+
+    score_axis = axes[2]
+    current_lead = frame["lead_minutes"]
+    for index, threshold in enumerate(sorted(scores_by_threshold)):
+        values = np.asarray(scores_by_threshold[threshold], dtype=float)
+        color = CATEGORICAL_COLORS[index % len(CATEGORICAL_COLORS)]
+        score_axis.plot(
+            lead_minutes, values, marker="o", markersize=4, linewidth=2,
+            color=color, label=f"{threshold:g} dBZ",
+        )
+        current_index = list(lead_minutes).index(current_lead)
+        if np.isfinite(values[current_index]):
+            score_axis.scatter(
+                [current_lead], [values[current_index]], s=70, color=color,
+                edgecolors="black", linewidths=0.8, zorder=3,
+            )
+    score_axis.axvline(current_lead, color="#424242", linestyle="--", linewidth=1.4)
+    score_axis.set_title(f"{score_name.upper()} vs lead time")
+    score_axis.set_xlabel("Forecast lead time (min)")
+    score_axis.set_ylabel(score_name.upper())
+    score_axis.xaxis.set_major_locator(MultipleLocator(30))
+    _style_axes(score_axis)
+    score_axis.legend(title="Threshold", frameon=False, fontsize=8)
+    fig.suptitle(
+        f"Forecast / observation and {score_name.upper()} — lead {current_lead} min",
+        fontsize=13,
+    )
+    fig.subplots_adjust(left=0.05, right=0.97, bottom=0.13, top=0.82, wspace=0.34)
+    return fig
 
 
 def plot_score_time_series(lead_minutes, scores_by_threshold, score_name, title=None):

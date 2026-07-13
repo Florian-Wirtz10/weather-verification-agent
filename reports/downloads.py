@@ -89,6 +89,12 @@ def describe_view(view: Mapping[str, Any]) -> str:
     if view_type == "reflectivity_animation":
         lead_range = view.get("lead_range_minutes")
         if isinstance(lead_range, Mapping):
+            linked_metric = view.get("linked_metric")
+            if isinstance(linked_metric, str) and linked_metric in _ALLOWED_METRICS:
+                return (
+                    f"{lead_range.get('start')}—{lead_range.get('end')} 分钟"
+                    f"预报观测与 {linked_metric.upper()} 联动动画"
+                )
             return (
                 f"{lead_range.get('start')}—{lead_range.get('end')} 分钟"
                 "预报与观测反射率动画"
@@ -333,11 +339,17 @@ def _validated_view(value: Any) -> dict[str, Any]:
             raise ValueError("invalid animation lead range")
         if isinstance(fps, bool) or not isinstance(fps, int) or not 1 <= fps <= 4:
             raise ValueError("invalid animation fps")
-        return {
+        linked_metric = value.get("linked_metric")
+        if linked_metric is not None and linked_metric not in _ALLOWED_METRICS:
+            raise ValueError("invalid linked animation metric")
+        validated = {
             "type": view_type,
             "lead_range_minutes": {"start": start, "end": end},
             "fps": fps,
         }
+        if linked_metric is not None:
+            validated["linked_metric"] = linked_metric
+        return validated
     lead = value.get("lead")
     if isinstance(lead, bool) or not isinstance(lead, int) or not 0 <= lead <= 180:
         raise ValueError(f"invalid export lead: {lead!r}")
@@ -473,7 +485,7 @@ def _safe_request(value: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(views, Sequence) and not isinstance(views, (str, bytes))
         else [],
         "insight": _safe_pick(insight, ("enabled", "length")),
-        "presentation": _safe_pick(value.get("presentation"), ("layout",)),
+        "presentation": _safe_pick(value.get("presentation"), ("layout", "strategy", "metric")),
     }
 
 

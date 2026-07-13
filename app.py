@@ -120,6 +120,7 @@ def _execute_real_case_request(
         init_time=execution["init_time"],
         lead_range=(lead_filter["start"], lead_filter["end"]),
         views=execution["views"],
+        presentation=execution["presentation"],
     )
     coverage_reasons = []
     if result["coverage"]["missing_leads"]:

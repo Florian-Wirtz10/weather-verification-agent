@@ -36,6 +36,11 @@ SUPPORTED_LAYOUTS = (
     "report",
     "animation_focus",
 )
+SUPPORTED_PRESENTATION_STRATEGIES = (
+    "auto",
+    "separate_media",
+    "linked_score_animation",
+)
 
 _SUPPORTED_INTENTS = {
     "verify_case",
@@ -67,7 +72,7 @@ def default_request() -> dict[str, Any]:
             "requested_date": None,
         },
         "views": [{"type": "score_time_series", "metric": "csi"}],
-        "presentation": {"layout": "auto"},
+        "presentation": {"layout": "auto", "strategy": "auto", "metric": None},
         "insight": {"enabled": True, "length": "detailed"},
         "unmatched_requests": [],
         "notes": "",
@@ -324,7 +329,7 @@ def _validate_insight(value: object) -> dict[str, Any]:
     return {"enabled": enabled, "length": length.strip().lower()}
 
 
-def _validate_presentation(value: object) -> dict[str, str]:
+def _validate_presentation(value: object) -> dict[str, str | None]:
     if value is None:
         value = {}
     if not isinstance(value, dict):
@@ -333,7 +338,19 @@ def _validate_presentation(value: object) -> dict[str, str]:
     if not isinstance(layout, str) or layout.strip().lower() not in SUPPORTED_LAYOUTS:
         choices = "、".join(SUPPORTED_LAYOUTS)
         raise RequestValidationError(f"presentation.layout 只能是 {choices}")
-    return {"layout": layout.strip().lower()}
+    strategy = value.get("strategy", "auto")
+    if not isinstance(strategy, str) or strategy.strip().lower() not in SUPPORTED_PRESENTATION_STRATEGIES:
+        choices = "、".join(SUPPORTED_PRESENTATION_STRATEGIES)
+        raise RequestValidationError(f"presentation.strategy 只能是 {choices}")
+    strategy = strategy.strip().lower()
+    metric = value.get("metric")
+    if strategy == "linked_score_animation":
+        if not isinstance(metric, str) or metric.strip().lower() not in SUPPORTED_METRICS:
+            raise RequestValidationError("linked_score_animation 必须指定受支持的 metric")
+        metric = metric.strip().lower()
+    elif metric is not None:
+        raise RequestValidationError("presentation.metric 只用于 linked_score_animation")
+    return {"layout": layout.strip().lower(), "strategy": strategy, "metric": metric}
 
 
 def _validate_unmatched(value: object) -> list[str]:
