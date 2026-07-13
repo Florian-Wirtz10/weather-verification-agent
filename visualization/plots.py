@@ -59,12 +59,26 @@ _REFLECTIVITY_COLORS = [
     "#fdf802", "#e5bc00", "#fd9500", "#fd0000", "#d40000", "#bc0000", "#f800fd",
     "#9854c6", "#fdfdfd", "#000000",
 ]
+_REFLECTIVITY_DISPLAY_FLOOR_DBZ = 0.0
 
 
 def _reflectivity_cmap_norm():
     cmap = ListedColormap(_REFLECTIVITY_COLORS)
     norm = BoundaryNorm(_REFLECTIVITY_BOUNDS, len(_REFLECTIVITY_COLORS))
     return cmap, norm
+
+
+def _reflectivity_display_data(data):
+    """Return a visual-only reflectivity representation on a common no-echo scale.
+
+    The 风雷 REFMOSAIC product encodes its no-echo background as a negative
+    sentinel (currently -18 dBZ), while CREF uses 0 dBZ.  Floor negative
+    values to 0 solely for spatial display and display-error rendering so the
+    two panels use the same no-echo convention.  Verification data and scores
+    are deliberately left unchanged.
+    """
+    values = np.asarray(np.ma.filled(data, np.nan), dtype=float)
+    return np.maximum(values, _REFLECTIVITY_DISPLAY_FLOOR_DBZ)
 
 
 def _diverging_cmap():
@@ -93,11 +107,23 @@ def plot_reflectivity_field(field, title=None):
     )
 
     fig, ax = plt.subplots()
-    im = ax.imshow(field.data, cmap=cmap, norm=norm, origin="lower", extent=extent, aspect="auto")
+    im = ax.imshow(
+        _reflectivity_display_data(field.data),
+        cmap=cmap,
+        norm=norm,
+        origin="lower",
+        extent=extent,
+        aspect="auto",
+    )
     ax.set_title(title or f"{field.product} ({field.valid_time:%Y-%m-%d %H:%M} UTC)")
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
-    plt.colorbar(im, ax=ax, label="dBZ", ticks=_REFLECTIVITY_BOUNDS[::2])
+    plt.colorbar(
+        im,
+        ax=ax,
+        label="dBZ (display floor: 0)",
+        ticks=_REFLECTIVITY_BOUNDS[::2],
+    )
     return fig
 
 
@@ -117,7 +143,7 @@ def plot_reflectivity_comparison(forecast_field, obs_field, title=None):
         (axes[1], obs_field, "Observation"),
     ):
         im = ax.imshow(
-            field.data,
+            _reflectivity_display_data(field.data),
             cmap=cmap,
             norm=norm,
             origin="lower",
@@ -128,7 +154,12 @@ def plot_reflectivity_comparison(forecast_field, obs_field, title=None):
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
     if im is not None:
-        plt.colorbar(im, ax=list(axes), label="dBZ", ticks=_REFLECTIVITY_BOUNDS[::2])
+        plt.colorbar(
+            im,
+            ax=list(axes),
+            label="dBZ (display floor: 0)",
+            ticks=_REFLECTIVITY_BOUNDS[::2],
+        )
     fig.suptitle(
         title
         or f"Forecast vs observation ({forecast_field.valid_time:%Y-%m-%d %H:%M} UTC)"
@@ -139,7 +170,9 @@ def plot_reflectivity_comparison(forecast_field, obs_field, title=None):
 def plot_reflectivity_error(forecast_field, obs_field, title="Forecast - Obs (dBZ)"):
     """Render the forecast-minus-obs reflectivity error, cropped/regridded onto the
     same grid (see data_io.grid.align_pair), with a zero-centered diverging colormap."""
-    diff = forecast_field.data - obs_field.data
+    diff = _reflectivity_display_data(forecast_field.data) - _reflectivity_display_data(
+        obs_field.data
+    )
     finite_diff = diff[np.isfinite(diff)]
     limit = float(np.max(np.abs(finite_diff))) if finite_diff.size else 1.0
     limit = limit or 1.0
@@ -158,7 +191,7 @@ def plot_reflectivity_error(forecast_field, obs_field, title="Forecast - Obs (dB
     ax.set_title(title)
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
-    plt.colorbar(im, ax=ax, label="dBZ error")
+    plt.colorbar(im, ax=ax, label="dBZ error (display floor: 0)")
     return fig
 
 

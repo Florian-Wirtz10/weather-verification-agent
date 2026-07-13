@@ -6,9 +6,17 @@ import pytest
 from data_io.grid import GriddedField
 from visualization.plots import (
     _break_time_gaps,
+    _reflectivity_display_data,
     plot_reflectivity_error,
     plot_score_time_series,
 )
+
+
+def test_reflectivity_display_uses_a_common_zero_no_echo_floor():
+    displayed = _reflectivity_display_data(np.array([[-18.0, -0.5, 0.0, 12.0, np.nan]]))
+
+    np.testing.assert_allclose(displayed[0, :4], [0.0, 0.0, 0.0, 12.0])
+    assert np.isnan(displayed[0, 4])
 
 
 def test_score_series_breaks_missing_native_leads_and_uses_30_minute_ticks():
