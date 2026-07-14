@@ -1,5 +1,6 @@
 """Streamlit entry point for deterministic verification plus constrained LLM I/O."""
 
+import base64
 import os
 
 import matplotlib.pyplot as plt
@@ -291,7 +292,19 @@ def _render_requested_media(result, downloads, request):
             caption.append(f"阈值 {threshold_text} dBZ")
         caption.append(f"起报 {result['context']['init_time']:%Y-%m-%d %H:%M} UTC")
         st.caption("｜".join(caption))
-        st.image(media["data"])
+        if kind == "animation":
+            # st.image resizes wide GIFs through Pillow, which serializes only
+            # the current/first frame.  A browser data URI preserves the exact
+            # original multi-frame GIF and lets CSS handle visual scaling.
+            encoded = base64.b64encode(media["data"]).decode("ascii")
+            st.markdown(
+                '<img alt="预报观测联动动画" '
+                f'src="data:image/gif;base64,{encoded}" '
+                'style="display:block;width:100%;height:auto;" />',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.image(media["data"])
         extension, mime, label = (
             ("gif", "image/gif", "下载该动画（GIF）")
             if kind == "animation"

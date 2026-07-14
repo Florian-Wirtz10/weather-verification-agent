@@ -1,8 +1,11 @@
 """End-to-end test of run_fenglei_case_verification against small synthetic
 fixtures (never the private external/ sample data)."""
 
+from io import BytesIO
+
 import numpy as np
 import pytest
+from PIL import Image
 
 import agent.orchestrator as orchestrator_module
 from agent import (
@@ -127,6 +130,9 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
     assert linked["presentation"]["resolved_strategy"] == "linked_score_animation"
     assert linked["animation_metadata"]["animation_01"]["linked_metric"] == "csi"
     assert linked["animations"]["animation_01"].startswith(b"GIF89a")
+    with Image.open(BytesIO(linked["animations"]["animation_01"])) as linked_gif:
+        assert int(getattr(linked_gif, "n_frames", 1)) == 2
+        assert linked_gif.height > linked_gif.width / 2
 
     cases = discover_fenglei_cases(fenglei_dir, radar_dir)
     assert len(cases) == 1

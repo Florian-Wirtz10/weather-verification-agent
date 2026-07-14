@@ -290,13 +290,20 @@ def _plot_linked_score_frame(frame, *, lead_minutes, scores_by_threshold, score_
         float(obs.lon.min()), float(obs.lon.max()), float(obs.lat.min()), float(obs.lat.max())
     )
     cmap, norm = _reflectivity_cmap_norm()
-    fig, axes = plt.subplots(
-        1, 3, figsize=(17, 5.4), gridspec_kw={"width_ratios": [1, 1, 1.28]}
+    # A two-row storyboard gives each geographic panel useful map area while
+    # keeping the entire score curve readable.  The colourbar has an explicit
+    # GridSpec slot: never create it first and then reposition parent axes.
+    fig = plt.figure(figsize=(14, 8), layout="constrained")
+    grid = fig.add_gridspec(
+        2, 3, width_ratios=(1, 1, 0.055), height_ratios=(1.15, 0.85)
     )
+    map_axes = (fig.add_subplot(grid[0, 0]), fig.add_subplot(grid[0, 1]))
+    colorbar_axis = fig.add_subplot(grid[0, 2])
+    score_axis = fig.add_subplot(grid[1, :])
     image = None
     for axis, field, title in (
-        (axes[0], forecast, "Forecast"),
-        (axes[1], obs, "Observation"),
+        (map_axes[0], forecast, "Forecast"),
+        (map_axes[1], obs, "Observation"),
     ):
         image = axis.imshow(
             _reflectivity_display_data(field.data), cmap=cmap, norm=norm,
@@ -307,11 +314,10 @@ def _plot_linked_score_frame(frame, *, lead_minutes, scores_by_threshold, score_
         axis.set_ylabel("Latitude")
     if image is not None:
         fig.colorbar(
-            image, ax=list(axes[:2]), label="dBZ (display floor: 0)",
-            ticks=_REFLECTIVITY_BOUNDS[::2], shrink=0.9, pad=0.03,
+            image, cax=colorbar_axis, label="dBZ (display floor: 0)",
+            ticks=_REFLECTIVITY_BOUNDS[::2],
         )
 
-    score_axis = axes[2]
     current_lead = frame["lead_minutes"]
     for index, threshold in enumerate(sorted(scores_by_threshold)):
         values = np.asarray(scores_by_threshold[threshold], dtype=float)
@@ -337,7 +343,6 @@ def _plot_linked_score_frame(frame, *, lead_minutes, scores_by_threshold, score_
         f"Forecast / observation and {score_name.upper()} — lead {current_lead} min",
         fontsize=13,
     )
-    fig.subplots_adjust(left=0.05, right=0.97, bottom=0.13, top=0.82, wspace=0.34)
     return fig
 
 
