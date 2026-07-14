@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from data_io.radar_binary import read_cref_binary, read_cref_binary_header
+from data_io.radar_obs import index_radar_observation_files
 
 
 def _write_binary_cref(
@@ -94,3 +95,13 @@ def test_binary_cref_rejects_header_filename_time_disagreement(tmp_path):
 
     with pytest.raises(ValueError, match="header/filename valid time mismatch"):
         read_cref_binary_header(path)
+
+
+def test_generic_observation_index_uses_latest_binary_correction(tmp_path):
+    older = _write_binary_cref(tmp_path, generated="20260407071214")
+    newer = _write_binary_cref(tmp_path, generated="20260407071627")
+
+    index = index_radar_observation_files(tmp_path)
+
+    assert index == {datetime(2026, 4, 7, 10, 54): newer}
+    assert older not in index.values()

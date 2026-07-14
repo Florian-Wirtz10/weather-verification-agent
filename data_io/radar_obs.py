@@ -60,28 +60,33 @@ def index_cref_files(directory, pattern="CREF_with_time_*.nc") -> dict[datetime,
 
 
 def index_radar_observation_files(directory) -> dict[datetime, Path]:
-    """Index NetCDF and MOC-binary CREF files by their verified UTC times."""
+    """Index NetCDF and MOC-binary CREF files by verified UTC time.
+
+    Operational binary deliveries can contain a later correction for the same
+    valid time.  This follows the full-day catalog's explicit policy: retain
+    the latest generation, with filename as a deterministic tie-breaker.
+    """
     directory = Path(directory)
     paths = sorted(
         path
         for pattern in ("*.nc", "*.bin")
         for path in directory.glob(pattern)
     )
-    index: dict[datetime, Path] = {}
+    candidates: dict[datetime, tuple[datetime, Path]] = {}
     for path in paths:
         if path.suffix.lower() == ".bin":
-            from data_io.radar_binary import read_cref_binary_valid_time
+            from data_io.radar_binary import read_cref_binary_header
 
-            valid_time = read_cref_binary_valid_time(path)
+            header = read_cref_binary_header(path)
+            valid_time = header.valid_time_utc
+            generation_time = header.generated_time_bjt
         else:
             valid_time = read_cref_valid_time(path)
-        if valid_time in index:
-            raise ValueError(
-                f"duplicate radar observations for {valid_time:%Y-%m-%d %H:%M:%S} UTC: "
-                f"{index[valid_time]} and {path}"
-            )
-        index[valid_time] = path
-    return index
+            generation_time = valid_time + _CREF_TIME_IS_BEIJING
+        current = candidates.get(valid_time)
+        if current is None or (generation_time, path.name) > (current[0], current[1].name):
+            candidates[valid_time] = (generation_time, path)
+    return {valid_time: item[1] for valid_time, item in candidates.items()}
 
 
 def read_cref(path):
