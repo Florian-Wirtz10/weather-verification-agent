@@ -14,6 +14,7 @@ from data_io.fenglei_mosaic import (
 from data_io.grid import GriddedField
 from data_io.radar_obs import (
     index_cref_files,
+    index_radar_observation_files,
     nearest_in_time,
     read_cref,
     read_cref_series,
@@ -31,6 +32,7 @@ __all__ = [
     "read_cref",
     "read_cref_valid_time",
     "index_cref_files",
+    "index_radar_observation_files",
     "read_cref_series",
     "nearest_in_time",
 ]

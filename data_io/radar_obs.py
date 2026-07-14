@@ -59,6 +59,31 @@ def index_cref_files(directory, pattern="CREF_with_time_*.nc") -> dict[datetime,
     return index
 
 
+def index_radar_observation_files(directory) -> dict[datetime, Path]:
+    """Index NetCDF and MOC-binary CREF files by their verified UTC times."""
+    directory = Path(directory)
+    paths = sorted(
+        path
+        for pattern in ("*.nc", "*.bin")
+        for path in directory.glob(pattern)
+    )
+    index: dict[datetime, Path] = {}
+    for path in paths:
+        if path.suffix.lower() == ".bin":
+            from data_io.radar_binary import read_cref_binary_valid_time
+
+            valid_time = read_cref_binary_valid_time(path)
+        else:
+            valid_time = read_cref_valid_time(path)
+        if valid_time in index:
+            raise ValueError(
+                f"duplicate radar observations for {valid_time:%Y-%m-%d %H:%M:%S} UTC: "
+                f"{index[valid_time]} and {path}"
+            )
+        index[valid_time] = path
+    return index
+
+
 def read_cref(path):
     """Read a single-timestep CREF observation NetCDF file into a GriddedField."""
     from data_io.grid import GriddedField

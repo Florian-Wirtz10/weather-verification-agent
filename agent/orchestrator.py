@@ -20,7 +20,7 @@ from data_io.fenglei_mosaic import (
     read_swan_mosaic_metadata,
 )
 from data_io.grid import GriddedField, align_pair
-from data_io.radar_obs import index_cref_files, read_cref
+from data_io.radar_obs import index_radar_observation_files, read_radar_observation
 from data_io.synthetic import generate_synthetic_fields
 from verification.metrics import CATEGORICAL_SCORES, compute_all_metrics, contingency_table
 from visualization.plots import (
@@ -99,7 +99,7 @@ def _index_fenglei_cases(fenglei_dir, radar_dir, fenglei_pattern):
     payloads.  Files with non-standard names retain the conservative
     header-reading fallback.
     """
-    obs_files = index_cref_files(radar_dir)
+    obs_files = index_radar_observation_files(radar_dir)
     if not obs_files:
         raise NoDataError(f"no radar observation files found under {radar_dir}")
 
@@ -362,7 +362,7 @@ def run_fenglei_case_verification(
             or forecast.lead_minutes != expected_lead
         ):
             raise DataContractError(f"forecast filename/header mismatch: {path}")
-        obs = read_cref(obs_files[expected_valid])
+        obs = read_radar_observation(obs_files[expected_valid])
         forecast_on_grid, obs_crop = align_pair(
             forecast, obs, lat_min, lat_max, lon_min, lon_max
         )
