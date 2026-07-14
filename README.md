@@ -114,10 +114,10 @@ streamlit run app.py
 
 ```dotenv
 DEEPSEEK_API_KEY=...
-FENGLEI_CASE_DIR=external/smoke_data/fenglei
-RADAR_OBS_DIR=external/smoke_data/radar
-FENGLEI_DAILY_DIR=external/储海后给的资料/20260407
-RADAR_DAILY_DIR=external/20260407雷达观测资料
+FENGLEI_CASE_DIR=external/20250411风雷预测资料
+RADAR_OBS_DIR=external/20250411观测资料
+FENGLEI_DAILY_DIR=external/20260407风雷预测资料
+RADAR_DAILY_DIR=external/20260407观测资料
 ```
 
 页面始终显示确定性摘要；配置 `DEEPSEEK_API_KEY` 后，会自动把白名单事实摘要发送给 DeepSeek 生成专业解读。不会发送路径、文件名、原始网格、图片或代码；API 不可用时自动回退到确定性摘要。
