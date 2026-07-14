@@ -297,12 +297,18 @@ def _render_requested_media(result, downloads, request):
             # the current/first frame.  A browser data URI preserves the exact
             # original multi-frame GIF and lets CSS handle visual scaling.
             encoded = base64.b64encode(media["data"]).decode("ascii")
+            gif_url = f"data:image/gif;base64,{encoded}"
             st.markdown(
-                '<img alt="预报观测联动动画" '
-                f'src="data:image/gif;base64,{encoded}" '
-                'style="display:block;width:100%;height:auto;" />',
+                '<a href="'
+                + gif_url
+                + '" target="_blank" rel="noopener" title="点击在新标签放大查看原始 GIF">'
+                '<img alt="预报观测联动动画" src="'
+                + gif_url
+                + '" style="display:block;width:100%;height:auto;cursor:zoom-in;" />'
+                "</a>",
                 unsafe_allow_html=True,
             )
+            st.caption("点击动画可在新标签打开原始 GIF，并使用浏览器缩放查看。")
         else:
             st.image(media["data"])
         extension, mime, label = (
@@ -497,7 +503,7 @@ with tab_real_case:
             coverage = result["coverage"]
             metric_rows = attempt["metric_rows"]
             downloads = attempt["downloads"]
-            result_column, insight_column = st.columns([2.2, 1], gap="large")
+            result_column, insight_column = st.columns([3.2, 1], gap="large")
             with insight_column:
                 _render_professional_insight(attempt, result, metric_rows, downloads)
             with result_column:
