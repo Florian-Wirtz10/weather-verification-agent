@@ -5,7 +5,7 @@ import pytest
 
 from data_io.catalog import build_daily_catalog
 from tests.test_radar_binary import _write_binary_cref
-from tests.test_real_data_io import _make_swan_mosaic_bytes
+from tests.test_real_data_io import _make_cref_nc, _make_swan_mosaic_bytes
 
 
 def _write_forecast(root, *, init_bjt="202604071848", lead=6):
@@ -33,6 +33,35 @@ def _write_forecast(root, *, init_bjt="202604071848", lead=6):
     path = root / (
         f"Z_SEVP_C_BABJ_20260407190510_P_FENGL-V11-REFMOSAIC-"
         f"{init_bjt}-{lead:03d}MIN.bz2"
+    )
+    path.write_bytes(blob)
+    return path
+
+
+def _write_legacy_forecast(root, *, init_utc="202504110212", lead=6):
+    blob = _make_swan_mosaic_bytes(
+        nx=4,
+        ny=3,
+        cell_bytes=1,
+        scale=0.5,
+        offset=-33.0,
+        values=np.zeros((3, 4), dtype="u1"),
+        header_overrides={
+            "year": int(init_utc[:4]),
+            "month": int(init_utc[4:6]),
+            "day": int(init_utc[6:8]),
+            "hour": int(init_utc[8:10]),
+            "minute": int(init_utc[10:12]),
+            "interval": lead,
+            "StartLon": 116.0,
+            "StartLat": 30.0,
+            "XReso": 4.0 / 3.0,
+            "YReso": 1.0,
+        },
+    )
+    path = root / (
+        f"Z_SEVP_C_BABJ_20250411022000_P_FENGL-REFMOSAIC-"
+        f"{init_utc}-{lead:03d}MIN.bz2"
     )
     path.write_bytes(blob)
     return path
@@ -99,3 +128,31 @@ def test_daily_catalog_duplicate_error_policy(tmp_path):
             duplicate_policy="error",
             cache_dir=tmp_path / "cache",
         )
+
+
+def test_daily_catalog_matches_legacy_netcdf_observation(tmp_path):
+    forecast_dir = tmp_path / "forecast"
+    obs_dir = tmp_path / "obs"
+    forecast_dir.mkdir()
+    obs_dir.mkdir()
+    forecast = _write_legacy_forecast(forecast_dir)
+    observation = obs_dir / "CREF_with_time_20250411_1018.nc"
+    _make_cref_nc(
+        observation,
+        lat=np.array([28.0, 28.1], dtype="f4"),
+        lon=np.array([116.0, 116.1], dtype="f4"),
+        data=np.zeros((2, 2), dtype="f4"),
+        valid_time_str="2025-04-11 10:18:00",
+    )
+
+    catalog = build_daily_catalog(
+        forecast_dir,
+        obs_dir,
+        "2025-04-11",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert catalog.forecasts[0].path == forecast
+    assert catalog.observations[0].path == observation
+    assert catalog.forecasts[0].valid_time_utc == catalog.observations[0].valid_time_utc
+    assert catalog.matched_forecasts == catalog.forecasts

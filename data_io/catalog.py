@@ -13,8 +13,9 @@ from typing import Literal
 
 from data_io.fenglei_mosaic import read_swan_mosaic_metadata
 from data_io.radar_binary import read_cref_binary_header
+from data_io.radar_obs import read_cref_valid_time
 
-CATALOG_VERSION = 1
+CATALOG_VERSION = 2
 _BEIJING_OFFSET = timedelta(hours=8)
 _FORECAST_RE = re.compile(
     r"Z_SEVP_C_BABJ_(?P<generated>\d{14})_P_FENGL(?P<v11>-V11)?-REFMOSAIC-"
@@ -24,6 +25,7 @@ _OBS_RE = re.compile(
     r"Z_RADA_C_BABJ_(?P<generated>\d{14})_P_DOR_ACHN_CREF_"
     r"(?P<date>\d{8})_(?P<time>\d{6})\.bin\Z"
 )
+_CREF_NETCDF_RE = re.compile(r"CREF_with_time_(?P<date>\d{8})_(?P<time>\d{4})\.nc\Z")
 DuplicatePolicy = Literal["latest_generation", "earliest_generation", "error"]
 
 
@@ -75,12 +77,19 @@ class DailyCatalog:
         return tuple(record for record in self.forecasts if record.valid_time_utc in times)
 
 
-def _files_and_fingerprint(root: Path, pattern: str) -> tuple[list[Path], str]:
+def _files_and_fingerprint(
+    root: Path, patterns: str | tuple[str, ...]
+) -> tuple[list[Path], str]:
     if not root.is_dir():
         raise ValueError(f"data directory does not exist: {root}")
-    paths = sorted(path for path in root.rglob(pattern) if path.is_file())
+    if isinstance(patterns, str):
+        patterns = (patterns,)
+    paths = sorted(
+        {path for pattern in patterns for path in root.rglob(pattern) if path.is_file()}
+    )
     digest = hashlib.sha256()
     digest.update(f"catalog-v{CATALOG_VERSION}\0{root.resolve()}\0".encode())
+    digest.update("\0".join(patterns).encode())
     for path in paths:
         stat = path.stat()
         digest.update(str(path.relative_to(root)).encode("utf-8"))
@@ -140,19 +149,42 @@ def _parse_observations(
 ) -> tuple[list[ObservationRecord], list[DuplicateObservation]]:
     groups: dict[datetime, list[ObservationRecord]] = defaultdict(list)
     for path in paths:
-        match = _OBS_RE.fullmatch(path.name)
-        if match is None:
+        if path.suffix.lower() == ".bin":
+            match = _OBS_RE.fullmatch(path.name)
+            if match is None:
+                continue
+            valid_bjt = datetime.strptime(
+                match.group("date") + match.group("time"), "%Y%m%d%H%M%S"
+            )
+            generated_bjt = datetime.strptime(
+                match.group("generated"), "%Y%m%d%H%M%S"
+            )
+        elif path.suffix.lower() == ".nc":
+            match = _CREF_NETCDF_RE.fullmatch(path.name)
+            if match is None:
+                continue
+            valid_bjt = read_cref_valid_time(path) + _BEIJING_OFFSET
+            filename_time = datetime.strptime(
+                match.group("date") + match.group("time"), "%Y%m%d%H%M"
+            )
+            if valid_bjt != filename_time:
+                raise ValueError(
+                    f"observation filename/header mismatch: {path}: "
+                    f"{filename_time} BJT versus {valid_bjt} BJT"
+                )
+            # Legacy NetCDF CREF files do not carry a correction-generation
+            # label.  Their valid time is deterministic and suitable for the
+            # common duplicate-policy ordering.
+            generated_bjt = valid_bjt
+        else:
             continue
-        valid_bjt = datetime.strptime(
-            match.group("date") + match.group("time"), "%Y%m%d%H%M%S"
-        )
         if valid_bjt.date() != case_date_bjt:
             continue
         record = ObservationRecord(
             path=path,
             valid_time_utc=valid_bjt - _BEIJING_OFFSET,
             valid_time_bjt=valid_bjt,
-            generated_time_bjt=datetime.strptime(match.group("generated"), "%Y%m%d%H%M%S"),
+            generated_time_bjt=generated_bjt,
         )
         groups[valid_bjt].append(record)
 
@@ -247,8 +279,13 @@ def _validate_samples(
         ):
             raise ValueError(f"forecast filename/header mismatch: {record.path}")
     for record in obs_samples:
-        header = read_cref_binary_header(record.path)
-        if header.valid_time_utc != record.valid_time_utc:
+        if record.path.suffix.lower() == ".bin":
+            valid_time_utc = read_cref_binary_header(record.path).valid_time_utc
+        elif record.path.suffix.lower() == ".nc":
+            valid_time_utc = read_cref_valid_time(record.path)
+        else:
+            raise ValueError(f"unsupported observation format: {record.path}")
+        if valid_time_utc != record.valid_time_utc:
             raise ValueError(f"observation filename/header mismatch: {record.path}")
 
 
@@ -270,7 +307,7 @@ def build_daily_catalog(
     observation_root = Path(observation_dir)
     forecast_paths, forecast_fingerprint = _files_and_fingerprint(forecast_root, "*.bz2")
     observation_paths, observation_fingerprint = _files_and_fingerprint(
-        observation_root, "*.bin"
+        observation_root, ("*.bin", "*.nc")
     )
 
     cache_name = hashlib.sha256(

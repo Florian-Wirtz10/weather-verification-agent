@@ -338,6 +338,8 @@ def run_daily_fenglei_verification(
         connection.close()
 
     summary = _aggregate_scores(per_case)
+    matched_valid_times = [record.valid_time_bjt for record in catalog.matched_forecasts]
+    matched_init_times = [record.init_time_bjt for record in catalog.matched_forecasts]
     return {
         "context": {
             "case_date_bjt": catalog.case_date_bjt.isoformat(),
@@ -356,6 +358,26 @@ def run_daily_fenglei_verification(
             "indexed_forecasts": len(catalog.forecasts),
             "unique_observations": len(catalog.observations),
             "matched_pairs_available": len(catalog.matched_forecasts),
+            "matched_valid_start_bjt": (
+                min(matched_valid_times).isoformat(timespec="seconds")
+                if matched_valid_times
+                else None
+            ),
+            "matched_valid_end_bjt": (
+                max(matched_valid_times).isoformat(timespec="seconds")
+                if matched_valid_times
+                else None
+            ),
+            "matched_init_start_bjt": (
+                min(matched_init_times).isoformat(timespec="seconds")
+                if matched_init_times
+                else None
+            ),
+            "matched_init_end_bjt": (
+                max(matched_init_times).isoformat(timespec="seconds")
+                if matched_init_times
+                else None
+            ),
             "selected_pairs": len(records),
             "completed_pairs": int(completed_total),
             "duplicate_observation_times": len(catalog.duplicates),

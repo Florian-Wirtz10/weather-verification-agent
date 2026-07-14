@@ -660,18 +660,44 @@ with tab_daily:
         "对同一北京时间自然日内的所有起报做公平检验：严格匹配有效时刻，统一观测、区域、"
         "最近邻空间配准、有效掩膜、阈值与评分公式；平台不预设哪个模型更好。"
     )
+    daily_cases = {
+        "2026-04-07": {
+            "label": "2026-04-07｜CREF 二进制观测",
+            "forecast_dir": os.getenv("FENGLEI_DAILY_DIR", ""),
+            "observation_dir": os.getenv("RADAR_DAILY_DIR", ""),
+        },
+        "2025-04-11": {
+            "label": "2025-04-11｜CREF NetCDF 观测",
+            "forecast_dir": os.getenv("FENGLEI_CASE_DIR", ""),
+            "observation_dir": os.getenv("RADAR_OBS_DIR", ""),
+        },
+    }
     with st.sidebar:
         st.header("Phase 5 全天资料")
+        daily_case_key = st.selectbox(
+            "全天个例",
+            options=list(daily_cases),
+            format_func=lambda key: daily_cases[key]["label"],
+            help="两个案例共用同一检验口径；可在下方临时修改目录。",
+        )
+        daily_case = daily_cases[daily_case_key]
         daily_forecast_dir = st.text_input(
             "全天风雷 REFMOSAIC 目录",
-            value=os.getenv("FENGLEI_DAILY_DIR", ""),
+            value=daily_case["forecast_dir"],
+            key=f"daily_forecast_dir_{daily_case_key}",
         )
         daily_observation_dir = st.text_input(
-            "全天雷达 CREF .bin 目录",
-            value=os.getenv("RADAR_DAILY_DIR", ""),
+            "全天雷达 CREF 观测目录（.bin 或 .nc）",
+            value=daily_case["observation_dir"],
+            key=f"daily_observation_dir_{daily_case_key}",
         )
-        daily_date_raw = st.date_input("个例日期（北京时间）", value=date(2026, 4, 7))
-        daily_date = daily_date_raw if isinstance(daily_date_raw, date) else date(2026, 4, 7)
+        daily_default_date = date.fromisoformat(daily_case_key)
+        daily_date_raw = st.date_input(
+            "个例日期（北京时间）",
+            value=daily_default_date,
+            key=f"daily_date_{daily_case_key}",
+        )
+        daily_date = daily_date_raw if isinstance(daily_date_raw, date) else daily_default_date
         daily_lat_min = st.number_input("全天 lat_min", value=28.0)
         daily_lat_max = st.number_input("全天 lat_max", value=35.0)
         daily_lon_min = st.number_input("全天 lon_min", value=116.5)
@@ -681,10 +707,11 @@ with tab_daily:
     daily_prompt = st.text_area(
         "用自然语言描述全天检验要求",
         value=(
-            "检验2026年4月7日全天风雷预报，使用5、15、25、35 dBZ阈值，查看6—180分钟"
+            f"检验{daily_date:%Y年%m月%d日}全天风雷预报，使用5、15、25、35 dBZ阈值，查看6—180分钟"
             "CSI曲线；再用15 dBZ画起报时刻×时效热力图和跨起报分布图，并诊断异常时段。"
         ),
         help="当前支持全天曲线、热力图和分布图；不支持项会明确保留，不会自动替换。",
+        key=f"daily_prompt_{daily_case_key}",
     )
     daily_col1, daily_col2 = st.columns(2)
     daily_parse_clicked = daily_col1.button(
@@ -787,6 +814,12 @@ with tab_daily:
                     f"订正时刻 {coverage['duplicate_observation_times']} 个｜"
                     f"本次复用缓存 {cache['metric_pairs_reused']} 对"
                 )
+                if coverage["matched_valid_start_bjt"]:
+                    st.caption(
+                        "可用严格匹配样本的有效时刻覆盖（北京时间）："
+                        f"{coverage['matched_valid_start_bjt']} 至 "
+                        f"{coverage['matched_valid_end_bjt']}。"
+                    )
                 st.caption(
                     "全天曲线按每个时效汇总 H/M/F/CN 后重新计算指标；"
                     "不是把各起报评分做简单平均。"
