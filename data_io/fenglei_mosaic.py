@@ -100,7 +100,7 @@ def read_swan_mosaic_valid_time(path) -> datetime:
     return read_swan_mosaic_metadata(path).valid_time
 
 
-def read_swan_mosaic(path):
+def read_swan_mosaic(path, *, bbox=None):
     """Read one bz2-compressed SWAN/diamond-131 mosaic file into a GriddedField.
 
     Returns a GriddedField with `data` scaled to physical units (dBZ for
@@ -127,16 +127,7 @@ def read_swan_mosaic(path):
         )
     dtype = _WIDTH_TO_DTYPE[width]
 
-    raw_values = np.frombuffer(body, dtype=dtype, count=cell_count).reshape(nz, ny, nx)
-    raw_values = raw_values[0]  # drop the singleton z dimension
-
-    scale = float(header["scale"])
-    offset = float(header["offset"])
-    values = raw_values.astype(np.float32) * scale + offset
-
-    # Stored north-to-south; flip to south-to-north so lat ends up ascending.
-    values = np.flipud(values)
-
+    raw_values = np.frombuffer(body, dtype=dtype, count=cell_count).reshape(nz, ny, nx)[0]
     start_lon = float(header["StartLon"])
     start_lat = float(header["StartLat"])
     dx = float(header["XReso"])
@@ -144,6 +135,27 @@ def read_swan_mosaic(path):
     lon = start_lon + dx * np.arange(nx, dtype=np.float64)
     lat_north_to_south = start_lat - dy * np.arange(ny, dtype=np.float64)
     lat = lat_north_to_south[::-1]
+    # Stored north-to-south; flip to south-to-north so lat ends up ascending.
+    raw_values = raw_values[::-1, :]
+
+    if bbox is not None:
+        lat_min, lat_max, lon_min, lon_max = map(float, bbox)
+        if lat_min >= lat_max or lon_min >= lon_max:
+            raise ValueError(f"invalid bbox: {bbox!r}")
+        lat_idx = np.flatnonzero((lat >= lat_min) & (lat <= lat_max))
+        lon_idx = np.flatnonzero((lon >= lon_min) & (lon <= lon_max))
+        if lat_idx.size == 0 or lon_idx.size == 0:
+            raise ValueError(f"bbox {bbox!r} does not intersect forecast grid")
+        raw_values = raw_values[
+            lat_idx[0] : lat_idx[-1] + 1,
+            lon_idx[0] : lon_idx[-1] + 1,
+        ]
+        lat = lat[lat_idx[0] : lat_idx[-1] + 1]
+        lon = lon[lon_idx[0] : lon_idx[-1] + 1]
+
+    scale = float(header["scale"])
+    offset = float(header["offset"])
+    values = raw_values.astype(np.float32) * scale + offset
 
     init_time = datetime(
         int(header["year"]), int(header["month"]), int(header["day"]),

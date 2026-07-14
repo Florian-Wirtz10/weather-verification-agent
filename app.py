@@ -1,6 +1,8 @@
 """Streamlit entry point for deterministic verification plus constrained LLM I/O."""
 
+from datetime import date
 import os
+from typing import Any
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -13,17 +15,28 @@ from agent import (
     NoDataError,
     RequestValidationError,
     build_insight_facts,
+    build_daily_insight_facts,
+    default_daily_request,
     default_request,
     discover_fenglei_cases,
     generate_insight,
+    generate_daily_insight,
+    parse_daily_request,
     parse_request,
     resolve_media_layout,
     render_deterministic_summary,
+    render_daily_deterministic_summary,
     resolve_request,
     run_fenglei_case_verification,
     run_verification,
 )
-from reports import build_case_download_artifacts, describe_view, save_report
+from reports import build_case_download_artifacts, describe_view, figure_to_png, save_report
+from verification.batch import run_daily_fenglei_verification
+from visualization.batch_plots import (
+    plot_daily_score_curves,
+    plot_daily_score_distribution,
+    plot_daily_score_heatmap,
+)
 
 load_dotenv()
 
@@ -45,7 +58,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab_synthetic, tab_real_case = st.tabs(["Phase 1: 合成数据 demo", "Phase 4: 风雷检验助手"])
+tab_synthetic, tab_real_case, tab_daily = st.tabs(
+    ["Phase 1: 合成数据 demo", "Phase 4: 单起报检验", "Phase 5: 全天公平检验"]
+)
 
 with tab_synthetic:
     st.caption("Phase 1: synthetic precipitation fields, categorical + continuous verification metrics.")
@@ -541,3 +556,301 @@ with tab_real_case:
                 _render_requested_media(result, downloads, attempt["request"])
                 st.subheader("本次请求指标与样本数")
                 st.dataframe(pd.DataFrame(metric_rows), width="stretch")
+
+
+def _daily_media(result, request):
+    """Render only schema-approved full-day plots and retain browser-safe PNG bytes."""
+    media = {}
+    metric = request["metric"]
+    threshold = request["diagnostic_threshold_dbz"]
+    factories = {
+        "daily_score_curve": lambda number: plot_daily_score_curves(
+            result["summary"], metric, figure_number=number
+        ),
+        "daily_score_heatmap": lambda number: plot_daily_score_heatmap(
+            result["per_case"], metric, threshold, figure_number=number
+        ),
+        "score_distribution": lambda number: plot_daily_score_distribution(
+            result["per_case"], metric, threshold, figure_number=number
+        ),
+    }
+    labels = {
+        "daily_score_curve": f"全天汇总 {metric.upper()} 随预报时效曲线",
+        "daily_score_heatmap": f"{threshold:g} dBZ 起报时刻×时效热力图",
+        "score_distribution": f"{threshold:g} dBZ 跨起报样本分布图",
+    }
+    for number, view in enumerate(request["views"], start=1):
+        figure = factories[view](number)
+        try:
+            media[view] = {
+                "number": number,
+                "label": labels[view],
+                "data": figure_to_png(figure),
+                "file_name": (
+                    f"phase5_{result['context']['case_date_bjt']}_{metric}_{number:02d}_{view}.png"
+                ),
+            }
+        finally:
+            plt.close(figure)
+    return media
+
+
+def _execute_daily_request(
+    request,
+    *,
+    forecast_dir,
+    observation_dir,
+    fallback_date,
+    bbox,
+    force,
+    progress_callback,
+):
+    if not request["views"]:
+        return {
+            "status": "unsupported",
+            "message": "本次请求没有已实现的全天视图，因此没有执行计算。",
+            "request": request,
+        }
+    requested_date = request["requested_date"] or fallback_date
+    lead_range = request["lead_range_minutes"]
+    result = run_daily_fenglei_verification(
+        forecast_dir=forecast_dir,
+        observation_dir=observation_dir,
+        case_date_bjt=requested_date,
+        bbox=bbox,
+        thresholds=request["thresholds_dbz"],
+        lead_range=(lead_range["start"], lead_range["end"]),
+        force=force,
+        progress_callback=progress_callback,
+    )
+    media = _daily_media(result, request)
+    facts = build_daily_insight_facts(
+        result,
+        metric=request["metric"],
+        diagnostic_threshold_dbz=request["diagnostic_threshold_dbz"],
+        views=request["views"],
+    )
+    deterministic_summary = render_daily_deterministic_summary(facts)
+    ai_insight = None
+    insight_error = None
+    try:
+        ai_insight = generate_daily_insight(facts)
+    except Exception as exc:
+        insight_error = str(exc)
+    status = "partial" if request["unmatched_requests"] else "ready"
+    return {
+        "status": status,
+        "message": (
+            "已执行全部支持的全天诊断；未支持项已保留在规范化请求中。"
+            if status == "partial"
+            else "全天严格匹配、评分、缓存与诊断图已完成。"
+        ),
+        "request": request,
+        "result": result,
+        "media": media,
+        "facts": facts,
+        "deterministic_summary": deterministic_summary,
+        "ai_insight": ai_insight,
+        "insight_error": insight_error,
+    }
+
+
+with tab_daily:
+    st.caption(
+        "对同一北京时间自然日内的所有起报做公平检验：严格匹配有效时刻，统一观测、区域、"
+        "最近邻空间配准、有效掩膜、阈值与评分公式；平台不预设哪个模型更好。"
+    )
+    with st.sidebar:
+        st.header("Phase 5 全天资料")
+        daily_forecast_dir = st.text_input(
+            "全天风雷 REFMOSAIC 目录",
+            value=os.getenv("FENGLEI_DAILY_DIR", ""),
+        )
+        daily_observation_dir = st.text_input(
+            "全天雷达 CREF .bin 目录",
+            value=os.getenv("RADAR_DAILY_DIR", ""),
+        )
+        daily_date_raw = st.date_input("个例日期（北京时间）", value=date(2026, 4, 7))
+        daily_date = daily_date_raw if isinstance(daily_date_raw, date) else date(2026, 4, 7)
+        daily_lat_min = st.number_input("全天 lat_min", value=28.0)
+        daily_lat_max = st.number_input("全天 lat_max", value=35.0)
+        daily_lon_min = st.number_input("全天 lon_min", value=116.5)
+        daily_lon_max = st.number_input("全天 lon_max", value=123.5)
+        daily_force = st.checkbox("忽略已有指标缓存并重新计算", value=False)
+
+    daily_prompt = st.text_area(
+        "用自然语言描述全天检验要求",
+        value=(
+            "检验2026年4月7日全天风雷预报，使用5、15、25、35 dBZ阈值，查看6—180分钟"
+            "CSI曲线；再用15 dBZ画起报时刻×时效热力图和跨起报分布图，并诊断异常时段。"
+        ),
+        help="当前支持全天曲线、热力图和分布图；不支持项会明确保留，不会自动替换。",
+    )
+    daily_col1, daily_col2 = st.columns(2)
+    daily_parse_clicked = daily_col1.button(
+        "解析并运行全天检验", type="primary", width="stretch"
+    )
+    daily_manual_clicked = daily_col2.button("使用全天默认方案运行", width="stretch")
+    daily_scope = (
+        daily_forecast_dir,
+        daily_observation_dir,
+        daily_date.isoformat(),
+        float(daily_lat_min),
+        float(daily_lat_max),
+        float(daily_lon_min),
+        float(daily_lon_max),
+    )
+    previous_daily = st.session_state.get("daily_attempt")
+    if previous_daily is not None and previous_daily.get("scope") != daily_scope:
+        st.session_state.pop("daily_attempt", None)
+
+    if daily_parse_clicked or daily_manual_clicked:
+        daily_run_attempt: dict[str, Any]
+        progress = st.progress(0.0, text="准备全天资料索引……")
+
+        def update_daily_progress(done, total, label):
+            step = max(1, total // 100)
+            if done == total or done == 1 or done % step == 0:
+                progress.progress(done / total, text=f"{done}/{total}｜{label}")
+
+        try:
+            request = (
+                default_daily_request(daily_date.isoformat())
+                if daily_manual_clicked
+                else parse_daily_request(daily_prompt)
+            )
+        except Exception as exc:
+            daily_run_attempt = {
+                "status": "parser_error",
+                "message": str(exc),
+            }
+        else:
+            try:
+                daily_run_attempt = _execute_daily_request(
+                    request,
+                    forecast_dir=daily_forecast_dir,
+                    observation_dir=daily_observation_dir,
+                    fallback_date=daily_date.isoformat(),
+                    bbox=(daily_lat_min, daily_lat_max, daily_lon_min, daily_lon_max),
+                    force=daily_force,
+                    progress_callback=update_daily_progress,
+                )
+            except Exception as exc:
+                daily_run_attempt = {
+                    "status": "execution_error",
+                    "message": str(exc),
+                    "request": request,
+                }
+        finally:
+            progress.empty()
+        daily_run_attempt["scope"] = daily_scope
+        daily_run_attempt["submitted_prompt"] = None if daily_manual_clicked else daily_prompt
+        st.session_state["daily_attempt"] = daily_run_attempt
+
+    daily_attempt = st.session_state.get("daily_attempt")
+    if daily_attempt is None:
+        st.info(
+            "目录准备好后运行。首次全天计算会逐文件流式处理；中断后再次使用同一参数会从指标缓存续跑。"
+        )
+    else:
+        daily_status = daily_attempt["status"]
+        if daily_status == "ready":
+            st.success(daily_attempt["message"])
+        elif daily_status == "partial":
+            st.warning(daily_attempt["message"])
+        else:
+            st.error(daily_attempt["message"])
+        if "request" in daily_attempt:
+            with st.expander("查看全天规范化请求与未支持项", expanded=daily_status == "partial"):
+                st.json(daily_attempt["request"])
+
+        daily_result = daily_attempt.get("result")
+        if daily_result is not None:
+            main_column, ai_column = st.columns([3.2, 1], gap="large")
+            with ai_column:
+                st.markdown('<span class="ai-insight-anchor"></span>', unsafe_allow_html=True)
+                st.subheader("AI 解读")
+                with st.container(height=680, border=False):
+                    st.caption("只读取全天汇总、分位数、异常样本和图表目录，不读取原始网格或图片。")
+                    if daily_attempt.get("ai_insight"):
+                        st.markdown(daily_attempt["ai_insight"])
+                    else:
+                        st.write(daily_attempt["deterministic_summary"])
+                        if daily_attempt.get("insight_error"):
+                            st.caption("AI 解读暂不可用；已显示确定性摘要。")
+            with main_column:
+                coverage = daily_result["coverage"]
+                cache = daily_result["cache"]
+                st.write(
+                    f"**完成 {coverage['completed_pairs']}/{coverage['selected_pairs']} 对严格匹配样本**｜"
+                    f"唯一观测 {coverage['unique_observations']} 帧｜"
+                    f"订正时刻 {coverage['duplicate_observation_times']} 个｜"
+                    f"本次复用缓存 {cache['metric_pairs_reused']} 对"
+                )
+                st.caption(
+                    "全天曲线按每个时效汇总 H/M/F/CN 后重新计算指标；"
+                    "不是把各起报评分做简单平均。"
+                )
+                media_items = list(daily_attempt["media"].values())
+                for start in range(0, len(media_items), 2):
+                    columns = st.columns(2)
+                    for offset, column in enumerate(columns):
+                        if start + offset >= len(media_items):
+                            continue
+                        item = media_items[start + offset]
+                        with column:
+                            st.caption(f"图{item['number']}｜{item['label']}")
+                            st.image(item["data"])
+                            st.download_button(
+                                "下载这张全天图（PNG）",
+                                data=item["data"],
+                                file_name=item["file_name"],
+                                mime="image/png",
+                                key=f"daily_{item['file_name']}",
+                                on_click="ignore",
+                            )
+                st.subheader("下载全天结果")
+                csv_col1, csv_col2, csv_col3 = st.columns(3)
+                csv_col1.download_button(
+                    "下载逐起报指标 CSV",
+                    data=daily_result["per_case"].to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"phase5_{daily_result['context']['case_date_bjt']}_per_case.csv",
+                    mime="text/csv",
+                    on_click="ignore",
+                    width="stretch",
+                )
+                csv_col2.download_button(
+                    "下载全天汇总指标 CSV",
+                    data=daily_result["summary"].to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"phase5_{daily_result['context']['case_date_bjt']}_summary.csv",
+                    mime="text/csv",
+                    on_click="ignore",
+                    width="stretch",
+                )
+                daily_report = (
+                    f"# Phase 5 全天检验解读\n\n"
+                    f"{daily_attempt.get('ai_insight') or daily_attempt['deterministic_summary']}\n\n"
+                    "## 确定性摘要\n\n"
+                    f"{daily_attempt['deterministic_summary']}\n"
+                )
+                csv_col3.download_button(
+                    "下载全天解读 Markdown",
+                    data=daily_report.encode("utf-8"),
+                    file_name=f"phase5_{daily_result['context']['case_date_bjt']}_insight.md",
+                    mime="text/markdown",
+                    on_click="ignore",
+                    width="stretch",
+                )
+                with st.expander("查看重复观测订正版审计"):
+                    duplicate_rows = [
+                        {
+                            "valid_time_bjt": item.valid_time_bjt,
+                            "selected": item.selected.name,
+                            "discarded": ", ".join(path.name for path in item.discarded),
+                            "policy": item.policy,
+                        }
+                        for item in daily_result["catalog"].duplicates
+                    ]
+                    st.dataframe(pd.DataFrame(duplicate_rows), width="stretch")
+                st.subheader("全天汇总指标与样本数")
+                st.dataframe(daily_result["summary"], width="stretch")

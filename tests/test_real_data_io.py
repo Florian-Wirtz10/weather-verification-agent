@@ -90,6 +90,30 @@ def test_read_swan_mosaic_two_byte_precip(tmp_path):
     assert field.units == "mm"
 
 
+def test_read_swan_mosaic_can_crop_before_float_conversion(tmp_path):
+    nx, ny = 5, 4
+    raw = np.arange(nx * ny, dtype="u1").reshape(ny, nx)
+    path = tmp_path / "sample-REFMOSAIC-202504110212-006MIN.bz2"
+    path.write_bytes(
+        _make_swan_mosaic_bytes(
+            nx=nx,
+            ny=ny,
+            cell_bytes=1,
+            scale=0.5,
+            offset=-33.0,
+            values=raw,
+        )
+    )
+
+    full = read_swan_mosaic(path)
+    cropped = read_swan_mosaic(path, bbox=(29.98, 29.99, 110.01, 110.03))
+    expected = full.crop(29.98, 29.99, 110.01, 110.03)
+
+    np.testing.assert_array_equal(cropped.data, expected.data)
+    np.testing.assert_array_equal(cropped.lat, expected.lat)
+    np.testing.assert_array_equal(cropped.lon, expected.lon)
+
+
 def test_read_swan_mosaic_rejects_unresolvable_cell_width(tmp_path):
     nx, ny = 3, 3
     blob_header = np.zeros(1, dtype=SwanHdr)[0]

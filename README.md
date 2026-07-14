@@ -10,7 +10,19 @@
 - Phase 1（tag `v1.0-phase1`）：合成降水场、基础指标、绘图和 Streamlit demo。
 - Phase 2（tag `v2.0-phase2`）：接入风雷 V1.0 REFMOSAIC、雷达 CREF、DeepSeek 单轮选图。
 - Phase 3（tag `v3.0-phase3`）：可信的单轮检验助手。
-- Phase 4（当前）：受控呈现与专业解读。
+- Phase 4（tag `v4.0-phase4`）：受控呈现与专业解读。
+- Phase 5（当前）：全天公平检验、业务二进制 CREF、快速索引与断点指标缓存。
+
+Phase 5 在不改变 Phase 4 单起报链路的前提下新增：
+
+- 直接解析天气雷达拼图系统 V3.0 的 256 字节 `MOC/CREF` 头和 BZ2 压缩 `int16` 网格；按头字段校验文件长度、产品、坐标、时间、网格、压缩方式与缩放因子；
+- 支持 2026-04-07 全天 7200 个风雷 REFMOSAIC 文件和 249 个 CREF `.bin` 交付文件；快速索引得到 240 个唯一观测时刻及 6735 对严格匹配样本；
+- 同一有效时刻有多个观测版本时，默认选择生成时间最新的订正版，并在页面保留被替代版本审计；
+- 文件名快速索引带指纹缓存，只抽查文件头；真实目录第二次索引无需逐个解压；
+- 全天计算逐预报流式解压、逐有效时刻复用一帧观测，并把每个完成样本立即提交到 SQLite；中断后同配置可续算，完成后可直接读取指标缓存；
+- 全天汇总按每个时效、阈值先合并 H/M/F/CN，再重新计算评分，而不是简单平均单样本分数；
+- 新增全天评分曲线、起报时刻×时效热力图、跨起报样本分布图，以及只读取结构化事实的全天 AI 诊断；
+- Phase 5 平台固定双方共同检验口径，不预设风雷或未来上游模型谁好谁坏。
 
 Phase 4 在 Phase 3 基础上新增：
 
@@ -78,6 +90,8 @@ Phase 3 的主要能力：
 ```
 
 - 风雷头时间按 UTC；雷达文件头北京时统一转换为 UTC；
+- 2026-04-07 CREF 二进制交付的 `TimeZone` 字段实际为 0，但文件名有效时刻、头中观测时刻与风雷有效时刻共同表明其业务时钟为北京时间；解析器要求文件名和头时间严格一致后再减 8 小时，未知命名或不一致会拒绝；
+- CREF 二进制原始值除以头中缩放因子 10；`int16` 最小值作为缺测，其它负值保留为低于正阈值的无回波编码；
 - 只接受有效时间完全相等的预报—观测对；
 - 风雷场通过最近邻重采样到雷达网格；完整风雷范围外填为缺测；
 - 指标只使用预报和观测均为有限值的公共格点；
@@ -102,6 +116,8 @@ streamlit run app.py
 DEEPSEEK_API_KEY=...
 FENGLEI_CASE_DIR=external/smoke_data/fenglei
 RADAR_OBS_DIR=external/smoke_data/radar
+FENGLEI_DAILY_DIR=external/储海后给的资料/20260407
+RADAR_DAILY_DIR=external/20260407雷达观测资料
 ```
 
 页面始终显示确定性摘要；配置 `DEEPSEEK_API_KEY` 后，会自动把白名单事实摘要发送给 DeepSeek 生成专业解读。不会发送路径、文件名、原始网格、图片或代码；API 不可用时自动回退到确定性摘要。
@@ -125,12 +141,14 @@ agent/
 ├── nl_parser.py            # DeepSeek 只负责提出请求 JSON
 ├── orchestrator.py         # 单起报、按时效流式计算、按请求渲染
 ├── insight.py              # 确定性事实摘要 + 可选 LLM 文字组织
+├── daily_request.py        # 全天曲线/热力图/分布图的受限请求 Schema
+├── daily_insight.py        # 全天结构化诊断事实 + 可选 LLM 解读
 ├── presentation.py         # 按实际媒体确定自动、安全的页面布局
 └── errors.py               # no-data / ambiguous-case / data-contract 错误
 
-data_io/                    # 风雷、雷达读取与网格对齐
-verification/               # 列联表和检验指标纯函数
-visualization/              # 确定性 Matplotlib 图表
+data_io/                    # 风雷、NetCDF/BIN 雷达读取、快速目录索引与网格对齐
+verification/               # 列联表、指标纯函数、全天流式评分与 SQLite 缓存
+visualization/              # 单起报和全天确定性 Matplotlib 图表
 reports/                    # 报告输出
 tests/                      # Schema、拒绝状态、科学计算、端到端测试
 app.py                      # Streamlit UI
@@ -138,5 +156,6 @@ app.py                      # Streamlit UI
 
 ## 下一阶段候选
 
-后续再考虑多个历史个例、持续性基线、FSS/邻域检验和 V1.1 降水适配；
-通用声明式制图、跨个例批处理与上游任务调度放到更后续阶段。
+后续接入上游模型时，应复用 Phase 5 已固定的观测选择、时间匹配、区域、网格配准、有效掩膜、
+阈值和汇总口径，再并排展示两套结果。之后再考虑 2025-04-11 全天观测、跨多日统计、
+持续性基线、FSS/邻域检验和 V1.1 降水适配。

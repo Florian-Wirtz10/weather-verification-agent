@@ -100,6 +100,21 @@ def read_cref_series(directory, pattern="CREF_with_time_*.nc"):
     return fields
 
 
+def read_radar_observation(path, *, bbox=None):
+    """Read either the legacy NetCDF CREF or MOC V3.0 binary CREF product."""
+    path = Path(path)
+    if path.suffix.lower() == ".bin":
+        from data_io.radar_binary import read_cref_binary
+
+        return read_cref_binary(path, bbox=bbox)
+    if path.suffix.lower() != ".nc":
+        raise ValueError(f"unsupported radar observation format: {path.suffix or path}")
+    field = read_cref(path)
+    if bbox is not None:
+        return field.crop(*bbox)
+    return field
+
+
 def nearest_in_time(fields, target_time, tolerance=timedelta(minutes=3)):
     """Return the field in `fields` closest to `target_time`, within `tolerance`."""
     best = min(fields, key=lambda field: abs(field.valid_time - target_time))

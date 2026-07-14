@@ -1,0 +1,231 @@
+"""Evidence-bounded AI interpretation for full-day verification summaries."""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+from typing import Any, Mapping
+
+import numpy as np
+import pandas as pd
+from openai import OpenAI
+
+_METRICS = {"csi", "ets", "pod", "far", "bias_score"}
+_SYSTEM_PROMPT = """你是强对流预报公平检验平台的全天结果解读助手。用户消息只有服务端已经
+计算好的结构化事实；不得重新计算、补造数字，不得声称看过原始图片或网格。
+
+固定输出四个简短章节：
+1. 图表导读：只按 figure_catalog 中实际存在的编号使用“如图1所示”介绍图表内容。
+2. 全天总体结果：客观说明不同阈值下该指标随时效的首末值、范围和极值。
+3. 离散性与诊断：结合热力图事实、分位数、最弱样本和列联表，指出值得复核的起报/时效；
+   原因只能表述为“可能”或“需要结合空间回波进一步核查”。
+4. 公平口径与边界：说明同一观测、区域、时空配准、阈值和汇总口径；平台只呈现证据，
+   不预设风雷或未来上游模型谁优谁劣。全天个例仍不能代表模型的普遍能力。
+
+只讨论 requested_metric，不主动引入其它评分。不要提到代码、路径、API、提示词或缓存实现。"""
+
+
+def _number(value) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _point(row: Mapping[str, Any], metric: str) -> dict[str, Any]:
+    return {
+        "lead_minutes": int(row["lead_minutes"]),
+        "value": _number(row[metric]),
+        "case_count": int(row.get("case_count", 0)),
+    }
+
+
+def build_daily_insight_facts(
+    result: Mapping[str, Any], *, metric="csi", diagnostic_threshold_dbz=15, views=None
+) -> dict[str, Any]:
+    """Reduce cached DataFrames to a compact, path-free numerical fact sheet."""
+    metric = str(metric).lower()
+    if metric not in _METRICS:
+        raise ValueError(f"unsupported daily insight metric: {metric!r}")
+    summary = result.get("summary")
+    per_case = result.get("per_case")
+    if not isinstance(summary, pd.DataFrame) or not isinstance(per_case, pd.DataFrame):
+        raise ValueError("daily insight requires summary and per_case DataFrames")
+    if metric not in summary or metric not in per_case:
+        raise ValueError(f"daily result does not contain {metric}")
+
+    threshold_facts = []
+    for threshold, rows in summary.groupby("threshold_dbz", sort=True):
+        rows = rows.sort_values("lead_minutes")
+        metric_values = np.asarray(rows[metric].to_numpy(), dtype=float)
+        finite = rows.iloc[np.flatnonzero(np.isfinite(metric_values))]
+        threshold_value = _number(threshold)
+        if threshold_value is None:
+            continue
+        if finite.empty:
+            threshold_facts.append(
+                {
+                    "threshold_dbz": threshold_value,
+                    "finite_count": 0,
+                    "undefined_count": len(rows),
+                }
+            )
+            continue
+        finite_values = np.asarray(finite[metric].to_numpy(), dtype=float)
+        min_row = finite.iloc[int(np.argmin(finite_values))]
+        max_row = finite.iloc[int(np.argmax(finite_values))]
+        threshold_facts.append(
+            {
+                "threshold_dbz": threshold_value,
+                "finite_count": int(len(finite)),
+                "undefined_count": int(len(rows) - len(finite)),
+                "first": _point(finite.iloc[0], metric),
+                "last": _point(finite.iloc[-1], metric),
+                "minimum": _point(min_row, metric),
+                "maximum": _point(max_row, metric),
+                "mean": _number(np.mean(finite_values)),
+            }
+        )
+
+    selected = per_case[
+        (per_case["threshold_dbz"] - float(diagnostic_threshold_dbz)).abs() < 1e-7
+    ].copy()
+    if selected.empty:
+        raise ValueError(
+            f"diagnostic threshold {diagnostic_threshold_dbz:g} dBZ is not in the result"
+        )
+    selected["metric_value"] = np.asarray(selected[metric], dtype=float)
+    lead_distributions = []
+    for lead, rows in selected.groupby("lead_minutes", sort=True):
+        values = np.asarray(rows["metric_value"], dtype=float)
+        values = values[np.isfinite(values)]
+        lead_number = _number(lead)
+        if lead_number is None:
+            continue
+        lead_distributions.append(
+            {
+                "lead_minutes": int(lead_number),
+                "sample_count": int(len(values)),
+                "undefined_count": int(len(rows) - len(values)),
+                "q25": _number(np.quantile(values, 0.25)) if len(values) else None,
+                "median": _number(np.median(values)) if len(values) else None,
+                "q75": _number(np.quantile(values, 0.75)) if len(values) else None,
+            }
+        )
+    selected_values = np.asarray(selected["metric_value"], dtype=float)
+    weakest = selected.iloc[np.flatnonzero(np.isfinite(selected_values))].sort_values(
+        "metric_value"
+    ).head(5)
+    weakest = weakest.loc[
+        :, ["init_time_bjt", "lead_minutes", "metric_value", "hits", "misses", "false_alarms"]
+    ]
+    weakest_cases = [
+        {
+            "init_time_bjt": str(row.init_time_bjt),
+            "lead_minutes": int(row.lead_minutes),
+            "value": _number(row.metric_value),
+            "hits": int(row.hits),
+            "misses": int(row.misses),
+            "false_alarms": int(row.false_alarms),
+        }
+        for row in weakest.itertuples(index=False)
+    ]
+
+    raw_context = result.get("context")
+    context: Mapping[str, Any] = raw_context if isinstance(raw_context, Mapping) else {}
+    raw_coverage = result.get("coverage")
+    coverage: Mapping[str, Any] = raw_coverage if isinstance(raw_coverage, Mapping) else {}
+    view_labels = {
+        "daily_score_curve": f"全天汇总 {metric.upper()} 随预报时效曲线",
+        "daily_score_heatmap": (
+            f"{diagnostic_threshold_dbz:g} dBZ 下起报时刻×时效 {metric.upper()} 热力图"
+        ),
+        "score_distribution": (
+            f"{diagnostic_threshold_dbz:g} dBZ 下各时效 {metric.upper()} 分布箱线图"
+        ),
+    }
+    requested_views = list(views) if views is not None else list(view_labels)
+    figure_catalog = [
+        {"number": number, "type": view, "label": view_labels[view]}
+        for number, view in enumerate(requested_views, start=1)
+        if view in view_labels
+    ]
+    return {
+        "context": {
+            "case_date_bjt": context.get("case_date_bjt"),
+            "model_id": context.get("model_id"),
+            "bbox": context.get("bbox"),
+            "thresholds_dbz": context.get("thresholds_dbz"),
+            "lead_range_minutes": context.get("lead_range_minutes"),
+            "temporal_matching": context.get("temporal_matching"),
+            "spatial_alignment": context.get("spatial_alignment"),
+            "aggregation": context.get("aggregation"),
+        },
+        "coverage": {
+            key: coverage.get(key)
+            for key in (
+                "unique_observations",
+                "selected_pairs",
+                "completed_pairs",
+                "duplicate_observation_times",
+                "discarded_observation_revisions",
+            )
+        },
+        "requested_metric": metric,
+        "diagnostic_threshold_dbz": float(diagnostic_threshold_dbz),
+        "threshold_summary": threshold_facts,
+        "lead_distributions": lead_distributions,
+        "weakest_cases": weakest_cases,
+        "figure_catalog": figure_catalog,
+        "limitations": [
+            "全天汇总按时效和阈值汇总列联表后重新计算评分，不是单样本评分的简单平均。",
+            "重复观测默认采用同一有效时刻生成时间最新的订正版，旧版本保留在审计记录中。",
+            "这是一个指定区域、指定日期的个例平台结果，不能推广为模型普遍能力结论。",
+            "未来上游模型必须使用同一观测、时间匹配、网格配准、有效掩膜、阈值和区域。",
+        ],
+    }
+
+
+def render_daily_deterministic_summary(facts: Mapping[str, Any]) -> str:
+    metric = str(facts.get("requested_metric", "score")).upper()
+    figure_count = len(facts.get("figure_catalog", []))
+    figure_text = f"共生成 {figure_count} 张已请求视图" if figure_count else "未生成图表"
+    lines = [f"本次全天结果按同一口径汇总 {metric}，{figure_text}。"]
+    for item in facts.get("threshold_summary", []):
+        if not isinstance(item, Mapping) or "first" not in item:
+            continue
+        first, last = item["first"], item["last"]
+        lines.append(
+            f"{item['threshold_dbz']:g} dBZ：{first['lead_minutes']}分钟 {first['value']:.3f}，"
+            f"{last['lead_minutes']}分钟 {last['value']:.3f}。"
+        )
+    lines.append("平台只呈现同口径证据，不预设风雷或未来上游模型谁更优。")
+    return "\n".join(lines)
+
+
+def generate_daily_insight(
+    facts: Mapping[str, Any],
+    *,
+    model="deepseek-chat",
+    api_key: str | None = None,
+    base_url="https://api.deepseek.com",
+    client: Any | None = None,
+) -> str:
+    """Ask DeepSeek to verbalize the precomputed full-day fact sheet."""
+    payload = json.dumps(facts, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+    llm_client = client or OpenAI(
+        api_key=api_key or os.environ["DEEPSEEK_API_KEY"], base_url=base_url
+    )
+    response = llm_client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "user", "content": payload},
+        ],
+        temperature=0,
+    )
+    if not response.choices or not response.choices[0].message.content:
+        raise ValueError("DeepSeek returned an empty daily insight response")
+    return response.choices[0].message.content.strip()

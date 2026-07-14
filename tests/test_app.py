@@ -4,6 +4,8 @@ from streamlit.testing.v1 import AppTest
 
 import agent
 from tests.test_real_data_io import _make_cref_nc, _make_swan_mosaic_bytes
+from tests.test_catalog import _write_forecast
+from tests.test_radar_binary import _write_binary_cref
 
 
 def _write_app_case(tmp_path):
@@ -96,3 +98,27 @@ def test_failed_ai_retry_is_visible_and_preserves_last_success(tmp_path, monkeyp
     assert calls == 2
     assert any("第一次成功生成的解读" in item.value for item in app.markdown)
     assert any("仍保留上一次成功" in item.value for item in app.warning)
+
+
+def test_phase5_full_day_result_has_three_diagnostics_and_downloads(tmp_path, monkeypatch):
+    forecast_dir = tmp_path / "daily-forecast"
+    obs_dir = tmp_path / "daily-obs"
+    forecast_dir.mkdir()
+    obs_dir.mkdir()
+    _write_forecast(forecast_dir)
+    _write_binary_cref(obs_dir)
+    monkeypatch.setenv("FENGLEI_DAILY_DIR", str(forecast_dir))
+    monkeypatch.setenv("RADAR_DAILY_DIR", str(obs_dir))
+    monkeypatch.setattr(agent, "generate_daily_insight", lambda *_args, **_kwargs: "全天测试解读")
+
+    app = AppTest.from_file("app.py", default_timeout=30).run()
+    app = _button(app, "使用全天默认方案运行").click().run()
+
+    assert not app.exception
+    assert len(app.image) == 3
+    download_labels = [button.label for button in app.download_button]
+    assert download_labels.count("下载这张全天图（PNG）") == 3
+    assert "下载逐起报指标 CSV" in download_labels
+    assert "下载全天汇总指标 CSV" in download_labels
+    assert "下载全天解读 Markdown" in download_labels
+    assert any("完成 1/1 对严格匹配样本" in item.value for item in app.markdown)
