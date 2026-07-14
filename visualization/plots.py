@@ -54,20 +54,28 @@ _GRIDLINE = "#e1e0d9"
 _AXIS = "#c3c2b7"
 _MUTED = "#898781"
 
-# Standard 18-level radar reflectivity color table (5 dBZ bins, -10..75 dBZ) —
-# the convention meteorologists expect for dBZ fields, not a generic palette.
-_REFLECTIVITY_BOUNDS = np.arange(-10, 76, 5)
+# Common threshold reflectivity colour table supplied by the course reference:
+# 1, 5, 10, 15 ... 75 dBZ. Values below 1 dBZ (including the display-floor
+# 0 dBZ no-echo background) are deliberately white, matching the reference.
+_REFLECTIVITY_BOUNDS = np.array(
+    [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75], dtype=float
+)
 _REFLECTIVITY_COLORS = [
-    "#646464", "#04e9e7", "#019ff4", "#0300f4", "#02fd02", "#01c501", "#008e00",
-    "#fdf802", "#e5bc00", "#fd9500", "#fd0000", "#d40000", "#bc0000", "#f800fd",
-    "#9854c6", "#fdfdfd", "#000000",
+    "#94f75f", "#62d53f", "#3f8e27", "#ffff54", "#ffe400", "#e1c140",
+    "#fbaa41", "#f98921", "#fd6841", "#ea3323", "#c4291c", "#b02418",
+    "#ea33e8", "#891aae", "#a891ea",
 ]
 _REFLECTIVITY_DISPLAY_FLOOR_DBZ = 0.0
 
 
 def _reflectivity_cmap_norm():
-    cmap = ListedColormap(_REFLECTIVITY_COLORS)
-    norm = BoundaryNorm(_REFLECTIVITY_BOUNDS, len(_REFLECTIVITY_COLORS))
+    cmap = ListedColormap(
+        _REFLECTIVITY_COLORS,
+        under="#ffffff",
+        over=_REFLECTIVITY_COLORS[-1],
+        bad="#ffffff",
+    )
+    norm = BoundaryNorm(_REFLECTIVITY_BOUNDS, len(_REFLECTIVITY_COLORS), clip=False)
     return cmap, norm
 
 
@@ -125,7 +133,7 @@ def plot_reflectivity_field(field, title=None):
         im,
         ax=ax,
         label="dBZ (display floor: 0)",
-        ticks=_REFLECTIVITY_BOUNDS[::2],
+        ticks=_REFLECTIVITY_BOUNDS,
     )
     return fig
 
@@ -161,7 +169,7 @@ def plot_reflectivity_comparison(forecast_field, obs_field, title=None):
             im,
             ax=list(axes),
             label="dBZ (display floor: 0)",
-            ticks=_REFLECTIVITY_BOUNDS[::2],
+            ticks=_REFLECTIVITY_BOUNDS,
         )
     fig.suptitle(
         title
@@ -317,7 +325,7 @@ def _plot_linked_score_frame(frame, *, lead_minutes, scores_by_threshold, score_
     if image is not None:
         fig.colorbar(
             image, cax=colorbar_axis, label="dBZ (display floor: 0)",
-            ticks=_REFLECTIVITY_BOUNDS[::2],
+            ticks=_REFLECTIVITY_BOUNDS,
         )
 
     current_lead = frame["lead_minutes"]

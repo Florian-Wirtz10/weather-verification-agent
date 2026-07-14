@@ -5,7 +5,9 @@ import pytest
 
 from data_io.grid import GriddedField
 from visualization.plots import (
+    _REFLECTIVITY_BOUNDS,
     _break_time_gaps,
+    _reflectivity_cmap_norm,
     _reflectivity_display_data,
     plot_reflectivity_error,
     plot_score_time_series,
@@ -17,6 +19,18 @@ def test_reflectivity_display_uses_a_common_zero_no_echo_floor():
 
     np.testing.assert_allclose(displayed[0, :4], [0.0, 0.0, 0.0, 12.0])
     assert np.isnan(displayed[0, 4])
+
+
+def test_reflectivity_colour_table_matches_the_course_threshold_reference():
+    cmap, norm = _reflectivity_cmap_norm()
+
+    np.testing.assert_allclose(
+        _REFLECTIVITY_BOUNDS,
+        [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75],
+    )
+    np.testing.assert_allclose(cmap.get_under(), (1.0, 1.0, 1.0, 1.0))
+    np.testing.assert_allclose(cmap(norm(2.0)), (148 / 255, 247 / 255, 95 / 255, 1.0))
+    np.testing.assert_allclose(cmap(norm(72.0)), (168 / 255, 145 / 255, 234 / 255, 1.0))
 
 
 def test_score_series_breaks_missing_native_leads_and_uses_30_minute_ticks():
