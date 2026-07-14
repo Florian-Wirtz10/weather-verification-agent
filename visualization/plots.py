@@ -264,7 +264,7 @@ def _figures_to_gif(figures, *, fps):
     for figure in figures:
         buffer = BytesIO()
         try:
-            figure.savefig(buffer, format="png", dpi=110, bbox_inches="tight", facecolor="white")
+            figure.savefig(buffer, format="png", dpi=100, facecolor="white")
             with Image.open(BytesIO(buffer.getvalue())) as image:
                 images.append(image.convert("P", palette=Image.Palette.ADAPTIVE))
         finally:
@@ -293,7 +293,9 @@ def _plot_linked_score_frame(frame, *, lead_minutes, scores_by_threshold, score_
     # A two-row storyboard gives each geographic panel useful map area while
     # keeping the entire score curve readable.  The colourbar has an explicit
     # GridSpec slot: never create it first and then reposition parent axes.
-    fig = plt.figure(figsize=(14, 8), layout="constrained")
+    # Keep the encoded GIF below Streamlit's 1200 px resize threshold. The
+    # browser can then stretch the original multi-frame GIF without flattening.
+    fig = plt.figure(figsize=(10, 7), layout="constrained")
     grid = fig.add_gridspec(
         2, 3, width_ratios=(1, 1, 0.055), height_ratios=(1.15, 0.85)
     )

@@ -1,6 +1,5 @@
 """Streamlit entry point for deterministic verification plus constrained LLM I/O."""
 
-import base64
 import os
 
 import matplotlib.pyplot as plt
@@ -293,22 +292,10 @@ def _render_requested_media(result, downloads, request):
         caption.append(f"起报 {result['context']['init_time']:%Y-%m-%d %H:%M} UTC")
         st.caption("｜".join(caption))
         if kind == "animation":
-            # st.image resizes wide GIFs through Pillow, which serializes only
-            # the current/first frame.  A browser data URI preserves the exact
-            # original multi-frame GIF and lets CSS handle visual scaling.
-            encoded = base64.b64encode(media["data"]).decode("ascii")
-            gif_url = f"data:image/gif;base64,{encoded}"
-            st.markdown(
-                '<a href="'
-                + gif_url
-                + '" target="_blank" rel="noopener" title="点击在新标签放大查看原始 GIF">'
-                '<img alt="预报观测联动动画" src="'
-                + gif_url
-                + '" style="display:block;width:100%;height:auto;cursor:zoom-in;" />'
-                "</a>",
-                unsafe_allow_html=True,
-            )
-            st.caption("点击动画可在新标签打开原始 GIF，并使用浏览器缩放查看。")
+            # Source GIFs are rendered at <=1200 px wide, so Streamlit can use
+            # its native image viewer (including fullscreen) without resizing
+            # and flattening the animation to its first frame.
+            st.image(media["data"], width="stretch")
         else:
             st.image(media["data"])
         extension, mime, label = (

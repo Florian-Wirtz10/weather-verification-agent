@@ -132,6 +132,7 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
     assert linked["animations"]["animation_01"].startswith(b"GIF89a")
     with Image.open(BytesIO(linked["animations"]["animation_01"])) as linked_gif:
         assert int(getattr(linked_gif, "n_frames", 1)) == 2
+        assert linked_gif.width <= 1_200
         assert linked_gif.height > linked_gif.width / 2
 
     cases = discover_fenglei_cases(fenglei_dir, radar_dir)
