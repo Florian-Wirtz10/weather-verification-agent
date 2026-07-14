@@ -1,9 +1,10 @@
 """Deterministic execution layer for synthetic and real-data verification."""
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import math
 from pathlib import Path
+import re
 from typing import TypedDict
 
 from agent.errors import AmbiguousCaseError, DataContractError, NoDataError
@@ -13,7 +14,11 @@ from agent.request_schema import (
     MAX_VIEWS,
     SUPPORTED_PRESENTATION_STRATEGIES,
 )
-from data_io.fenglei_mosaic import read_swan_mosaic, read_swan_mosaic_metadata
+from data_io.fenglei_mosaic import (
+    SwanMosaicMetadata,
+    read_swan_mosaic,
+    read_swan_mosaic_metadata,
+)
 from data_io.grid import GriddedField, align_pair
 from data_io.radar_obs import index_cref_files, read_cref
 from data_io.synthetic import generate_synthetic_fields
@@ -39,6 +44,10 @@ class VerificationFrame(TypedDict):
 
 _DEFAULT_VIEWS = ({"type": "score_time_series", "metric": "csi"},)
 _NATIVE_LEAD_STEP_MINUTES = 6
+_FILENAME_FORECAST_RE = re.compile(
+    r"(?:FENGL(?P<v11>-V11)?-)?REFMOSAIC-"
+    r"(?P<init>\d{12})-(?P<lead>\d{3})MIN\.bz2\Z"
+)
 
 
 def run_verification(shape=(64, 64), seed=None, thresholds=(1, 5, 10)):
@@ -60,8 +69,36 @@ def run_verification(shape=(64, 64), seed=None, thresholds=(1, 5, 10)):
     }
 
 
+def _metadata_from_forecast_filename(path: Path):
+    """Return timing from a standard REFMOSAIC filename, if it is unambiguous.
+
+    The operational filename is sufficient for discovery.  Full SWAN-header
+    validation is deliberately deferred to the selected files at execution
+    time, rather than bzip-reading every file on every Streamlit rerun.
+    """
+    match = _FILENAME_FORECAST_RE.search(path.name)
+    if match is None:
+        return None
+    init_time = datetime.strptime(match.group("init"), "%Y%m%d%H%M")
+    # V1.1 delivery filenames use BJT; their SWAN headers remain UTC.
+    if match.group("v11"):
+        init_time -= timedelta(hours=8)
+    lead_minutes = int(match.group("lead"))
+    return SwanMosaicMetadata(
+        init_time=init_time,
+        valid_time=init_time + timedelta(minutes=lead_minutes),
+        lead_minutes=lead_minutes,
+        product="REFMOSAIC (filename-indexed)",
+    )
+
+
 def _index_fenglei_cases(fenglei_dir, radar_dir, fenglei_pattern):
-    """Return radar paths and exactly time-matched forecast files grouped by init."""
+    """Return radar paths and exactly time-matched forecast files grouped by init.
+
+    Standard operational filenames are indexed without opening compressed
+    payloads.  Files with non-standard names retain the conservative
+    header-reading fallback.
+    """
     obs_files = index_cref_files(radar_dir)
     if not obs_files:
         raise NoDataError(f"no radar observation files found under {radar_dir}")
@@ -74,17 +111,25 @@ def _index_fenglei_cases(fenglei_dir, radar_dir, fenglei_pattern):
 
     cases = defaultdict(dict)
     for path in forecast_paths:
-        metadata = read_swan_mosaic_metadata(path)
-        if metadata.valid_time not in obs_files:
+        filename_metadata = _metadata_from_forecast_filename(path)
+        metadata = (
+            read_swan_mosaic_metadata(path)
+            if filename_metadata is None
+            else filename_metadata
+        )
+        init_time = metadata.init_time
+        valid_time = metadata.valid_time
+        lead_minutes = metadata.lead_minutes
+        if valid_time not in obs_files:
             continue
-        lead_map = cases[metadata.init_time]
-        if metadata.lead_minutes in lead_map:
-            previous = lead_map[metadata.lead_minutes][1]
+        lead_map = cases[init_time]
+        if lead_minutes in lead_map:
+            previous = lead_map[lead_minutes][1]
             raise DataContractError(
-                f"duplicate forecast lead {metadata.lead_minutes} minutes for init "
-                f"{metadata.init_time:%Y-%m-%d %H:%M} UTC: {previous} and {path}"
+                f"duplicate forecast lead {lead_minutes} minutes for init "
+                f"{init_time:%Y-%m-%d %H:%M} UTC: {previous} and {path}"
             )
-        lead_map[metadata.lead_minutes] = (metadata, path)
+        lead_map[lead_minutes] = (metadata, path)
     return obs_files, cases
 
 
@@ -308,7 +353,16 @@ def run_fenglei_case_verification(
     for lead_minutes in selected_leads:
         metadata, path = case_files[lead_minutes]
         forecast = read_swan_mosaic(path)
-        obs = read_cref(obs_files[metadata.valid_time])
+        expected_init = metadata.init_time
+        expected_valid = metadata.valid_time
+        expected_lead = metadata.lead_minutes
+        if (
+            forecast.init_time != expected_init
+            or forecast.valid_time != expected_valid
+            or forecast.lead_minutes != expected_lead
+        ):
+            raise DataContractError(f"forecast filename/header mismatch: {path}")
+        obs = read_cref(obs_files[expected_valid])
         forecast_on_grid, obs_crop = align_pair(
             forecast, obs, lat_min, lat_max, lon_min, lon_max
         )
@@ -324,7 +378,7 @@ def run_fenglei_case_verification(
         per_lead.append(
             {
                 "lead_minutes": lead_minutes,
-                "valid_time": metadata.valid_time,
+                "valid_time": expected_valid,
                 "categorical": categorical,
                 "contingency": tables,
             }

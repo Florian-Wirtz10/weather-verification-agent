@@ -40,6 +40,13 @@ from visualization.batch_plots import (
 
 load_dotenv()
 
+
+@st.cache_data(show_spinner="正在建立 Phase 4 个例索引（首次或手动刷新时执行）…")
+def _cached_fenglei_cases(fenglei_dir, radar_dir, refresh_generation):
+    """Cache the small case list; full headers are verified when a case runs."""
+    del refresh_generation
+    return discover_fenglei_cases(fenglei_dir, radar_dir)
+
 st.set_page_config(page_title="Weather Verification Agent", layout="wide")
 st.title("Weather Verification Agent")
 st.markdown(
@@ -358,12 +365,21 @@ with tab_real_case:
         lat_max = st.number_input("lat_max", value=35.0)
         lon_min = st.number_input("lon_min", value=108.0)
         lon_max = st.number_input("lon_max", value=118.0)
+        if "phase4_catalog_refresh_generation" not in st.session_state:
+            st.session_state["phase4_catalog_refresh_generation"] = 0
+        if st.button("刷新 Phase 4 资料索引", help="仅在替换或新增资料后使用"):
+            st.session_state["phase4_catalog_refresh_generation"] += 1
+        st.caption("完整资料索引会缓存在当前服务中；日常输入提示词不会重新扫描全部文件。")
 
     cases = []
     catalog_error = None
     if fenglei_dir and radar_dir:
         try:
-            cases = discover_fenglei_cases(fenglei_dir, radar_dir)
+            cases = _cached_fenglei_cases(
+                fenglei_dir,
+                radar_dir,
+                st.session_state["phase4_catalog_refresh_generation"],
+            )
         except Exception as exc:
             catalog_error = str(exc)
 
