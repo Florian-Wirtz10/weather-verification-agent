@@ -667,7 +667,7 @@ with tab_daily:
             "observation_dir": os.getenv("RADAR_DAILY_DIR", ""),
         },
         "2025-04-11": {
-            "label": "2025-04-11｜CREF NetCDF 观测｜08:06—23:54 BJT",
+            "label": "2025-04-11｜CREF NetCDF 观测｜00:06—23:54 UTC",
             "forecast_dir": os.getenv("FENGLEI_CASE_DIR", ""),
             "observation_dir": os.getenv("RADAR_OBS_DIR", ""),
         },
