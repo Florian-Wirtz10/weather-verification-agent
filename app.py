@@ -662,12 +662,12 @@ with tab_daily:
     )
     daily_cases = {
         "2026-04-07": {
-            "label": "2026-04-07｜CREF 二进制观测",
+            "label": "2026-04-07｜CREF 二进制观测｜00:06—23:54 BJT",
             "forecast_dir": os.getenv("FENGLEI_DAILY_DIR", ""),
             "observation_dir": os.getenv("RADAR_DAILY_DIR", ""),
         },
         "2025-04-11": {
-            "label": "2025-04-11｜CREF NetCDF 观测",
+            "label": "2025-04-11｜CREF NetCDF 观测｜08:06—23:54 BJT",
             "forecast_dir": os.getenv("FENGLEI_CASE_DIR", ""),
             "observation_dir": os.getenv("RADAR_OBS_DIR", ""),
         },
