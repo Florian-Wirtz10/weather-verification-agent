@@ -292,10 +292,11 @@ def _render_requested_media(result, downloads, request):
         caption.append(f"起报 {result['context']['init_time']:%Y-%m-%d %H:%M} UTC")
         st.caption("｜".join(caption))
         if kind == "animation":
-            # Source GIFs are rendered at <=1200 px wide, so Streamlit can use
-            # its native image viewer (including fullscreen) without resizing
-            # and flattening the animation to its first frame.
-            st.image(media["data"], width="stretch")
+            # Do not pass a width here: Streamlit's GIF width-processing path
+            # can flatten an animation to its first frame.  The renderer emits
+            # a 1000 px-wide source, which is large enough for this column and
+            # retains Streamlit's native fullscreen viewer at natural size.
+            st.image(media["data"])
         else:
             st.image(media["data"])
         extension, mime, label = (
