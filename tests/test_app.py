@@ -33,7 +33,7 @@ def _write_app_case(tmp_path):
         lat=np.linspace(29.95, 30.0, 6, dtype="f4"),
         lon=np.linspace(110.0, 110.05, 6, dtype="f4"),
         data=obs,
-        valid_time_str="2025-04-11 10:18:00",
+        valid_time_str="2025-04-11 02:18:00",
     )
     return fenglei_dir, radar_dir
 

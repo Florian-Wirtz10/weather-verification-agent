@@ -53,12 +53,14 @@ CASES = {
         "forecast_dir": os.getenv("FENGLEI_DAILY_DIR", ""),
         "observation_dir": os.getenv("RADAR_DAILY_DIR", ""),
         "display_clock": "BJT",
+        "case_time_basis": "bjt",
     },
     "2025-04-11": {
         "label": "2025-04-11｜00:06—23:54 UTC",
         "forecast_dir": os.getenv("FENGLEI_CASE_DIR", ""),
         "observation_dir": os.getenv("RADAR_OBS_DIR", ""),
         "display_clock": "UTC",
+        "case_time_basis": "utc",
     },
 }
 
@@ -149,7 +151,7 @@ def _daily_media(result, request):
                     "number": number,
                     "label": labels[view],
                     "data": figure_to_png(figure),
-                    "file_name": f"{result['context']['case_date_bjt']}_{metric}_{view}.png",
+                    "file_name": f"{result['context']['case_date']}_{metric}_{view}.png",
                 }
             )
         finally:
@@ -164,7 +166,8 @@ def _execute_daily(request, *, config, case_date, bbox, progress_callback):
     result = run_daily_fenglei_verification(
         forecast_dir=config["forecast_dir"],
         observation_dir=config["observation_dir"],
-        case_date_bjt=request["requested_date"] or case_date,
+        case_date=request["requested_date"] or case_date,
+        case_time_basis=config["case_time_basis"],
         bbox=bbox,
         thresholds=request["thresholds_dbz"],
         lead_range=(lead["start"], lead["end"]),
@@ -262,9 +265,9 @@ def _render_daily(attempt):
                     st.image(item["data"])
                     st.download_button("下载 PNG", item["data"], item["file_name"], "image/png", key=f"daily_{item['file_name']}")
         columns = st.columns(3)
-        columns[0].download_button("下载逐起报 CSV", result["per_case"].to_csv(index=False).encode("utf-8-sig"), f"{result['context']['case_date_bjt']}_per_case.csv", "text/csv", width="stretch")
-        columns[1].download_button("下载汇总 CSV", result["summary"].to_csv(index=False).encode("utf-8-sig"), f"{result['context']['case_date_bjt']}_summary.csv", "text/csv", width="stretch")
-        columns[2].download_button("下载解读 Markdown", attempt["deterministic"].encode("utf-8"), f"{result['context']['case_date_bjt']}_insight.md", "text/markdown", width="stretch")
+        columns[0].download_button("下载逐起报 CSV", result["per_case"].to_csv(index=False).encode("utf-8-sig"), f"{result['context']['case_date']}_per_case.csv", "text/csv", width="stretch")
+        columns[1].download_button("下载汇总 CSV", result["summary"].to_csv(index=False).encode("utf-8-sig"), f"{result['context']['case_date']}_summary.csv", "text/csv", width="stretch")
+        columns[2].download_button("下载解读 Markdown", attempt["deterministic"].encode("utf-8"), f"{result['context']['case_date']}_insight.md", "text/markdown", width="stretch")
         with st.expander("查看全天汇总指标"):
             st.dataframe(result["summary"], width="stretch")
 

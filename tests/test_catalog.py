@@ -136,13 +136,13 @@ def test_daily_catalog_matches_legacy_netcdf_observation(tmp_path):
     forecast_dir.mkdir()
     obs_dir.mkdir()
     forecast = _write_legacy_forecast(forecast_dir)
-    observation = obs_dir / "CREF_with_time_20250411_1018.nc"
+    observation = obs_dir / "CREF_with_time_20250411_0218.nc"
     _make_cref_nc(
         observation,
         lat=np.array([28.0, 28.1], dtype="f4"),
         lon=np.array([116.0, 116.1], dtype="f4"),
         data=np.zeros((2, 2), dtype="f4"),
-        valid_time_str="2025-04-11 10:18:00",
+        valid_time_str="2025-04-11 02:18:00",
     )
 
     catalog = build_daily_catalog(
@@ -155,4 +155,34 @@ def test_daily_catalog_matches_legacy_netcdf_observation(tmp_path):
     assert catalog.forecasts[0].path == forecast
     assert catalog.observations[0].path == observation
     assert catalog.forecasts[0].valid_time_utc == catalog.observations[0].valid_time_utc
+    assert catalog.matched_forecasts == catalog.forecasts
+
+
+def test_legacy_case_day_is_filtered_in_utc_across_beijing_midnight(tmp_path):
+    forecast_dir = tmp_path / "forecast"
+    obs_dir = tmp_path / "obs"
+    forecast_dir.mkdir()
+    obs_dir.mkdir()
+    forecast = _write_legacy_forecast(forecast_dir, init_utc="202504112348")
+    observation = obs_dir / "CREF_with_time_20250411_2354.nc"
+    _make_cref_nc(
+        observation,
+        lat=np.array([28.0, 28.1], dtype="f4"),
+        lon=np.array([116.0, 116.1], dtype="f4"),
+        data=np.zeros((2, 2), dtype="f4"),
+        valid_time_str="2025-04-11 23:54:00",
+    )
+
+    catalog = build_daily_catalog(
+        forecast_dir,
+        obs_dir,
+        "2025-04-11",
+        case_time_basis="utc",
+        cache_dir=tmp_path / "cache",
+    )
+
+    assert catalog.case_time_basis == "utc"
+    assert catalog.forecasts[0].path == forecast
+    assert catalog.observations[0].path == observation
+    assert catalog.forecasts[0].valid_time_bjt == datetime(2025, 4, 12, 7, 54)
     assert catalog.matched_forecasts == catalog.forecasts

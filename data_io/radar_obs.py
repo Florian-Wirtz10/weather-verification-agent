@@ -11,17 +11,14 @@ from typing import cast
 
 import netCDF4
 
-# The CREF files' `time` units string encodes Beijing Time (UTC+8), verified
-# against the 2025-04-11 case: file "..._1018.nc" lines up exactly with the
-# 风雷 REFMOSAIC file whose (UTC) header valid time is 02:18 — i.e. the two
-# only match once this offset is applied. 风雷 headers are UTC, so normalize
-# radar observations to UTC here to keep valid_time comparable across readers.
-_CREF_TIME_IS_BEIJING = timedelta(hours=8)
+# The delivered 2025 NetCDF CREF files have no CF timezone marker.  Direct
+# spatial comparisons against same-clock 风雷 headers show that their filename
+# and ``time.units`` clocks are UTC, not BJT.  Preserve that UTC value exactly.
 
 
 def _decode_valid_time(time_var) -> datetime:
-    """Decode a CREF timestamp and normalize Beijing Time to UTC."""
-    valid_time = cast(
+    """Decode the delivered NetCDF CREF UTC timestamp without shifting it."""
+    return cast(
         datetime,
         netCDF4.num2date(
             time_var[0],
@@ -31,7 +28,6 @@ def _decode_valid_time(time_var) -> datetime:
             only_use_python_datetimes=True,
         ),
     )
-    return valid_time - _CREF_TIME_IS_BEIJING
 
 
 def read_cref_valid_time(path) -> datetime:
@@ -82,7 +78,9 @@ def index_radar_observation_files(directory) -> dict[datetime, Path]:
             generation_time = header.generated_time_bjt
         else:
             valid_time = read_cref_valid_time(path)
-            generation_time = valid_time + _CREF_TIME_IS_BEIJING
+            # NetCDF delivery has no revision-generation label.  Its UTC valid
+            # time provides deterministic ordering when a duplicate exists.
+            generation_time = valid_time
         current = candidates.get(valid_time)
         if current is None or (generation_time, path.name) > (current[0], current[1].name):
             candidates[valid_time] = (generation_time, path)

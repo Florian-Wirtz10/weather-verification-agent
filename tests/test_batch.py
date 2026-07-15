@@ -13,7 +13,7 @@ def test_daily_batch_streams_aggregates_and_reuses_metric_cache(tmp_path):
     kwargs = {
         "forecast_dir": forecast_dir,
         "observation_dir": obs_dir,
-        "case_date_bjt": "2026-04-07",
+        "case_date": "2026-04-07",
         "bbox": (28.0, 30.0, 116.0, 120.0),
         "thresholds": (5, 15),
         "catalog_cache_dir": tmp_path / "catalog-cache",
@@ -50,7 +50,7 @@ def test_daily_batch_cache_key_changes_with_scoring_contract(tmp_path):
     common = {
         "forecast_dir": forecast_dir,
         "observation_dir": obs_dir,
-        "case_date_bjt": "2026-04-07",
+        "case_date": "2026-04-07",
         "bbox": (28.0, 30.0, 116.0, 120.0),
         "catalog_cache_dir": tmp_path / "catalog-cache",
         "metric_cache_path": tmp_path / "metrics.sqlite3",

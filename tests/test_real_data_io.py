@@ -147,7 +147,7 @@ def _make_cref_nc(path, *, lat, lon, data, valid_time_str):
         cref_var[:] = data[None, :, :]
 
 
-def test_read_cref_converts_beijing_time_to_utc(tmp_path):
+def test_read_cref_preserves_delivered_utc_time(tmp_path):
     lat = np.array([28.0, 28.01, 28.02], dtype="f4")
     lon = np.array([110.0, 110.01], dtype="f4")
     data = np.array([[0.0, 10.0], [20.0, 30.0], [40.0, 50.0]], dtype="f4")
@@ -156,20 +156,20 @@ def test_read_cref_converts_beijing_time_to_utc(tmp_path):
 
     field = read_cref(path)
 
-    assert field.valid_time == datetime(2025, 4, 11, 2, 18)  # BJT 10:18 -> UTC 02:18
+    assert field.valid_time == datetime(2025, 4, 11, 10, 18)
     assert field.units == "dBZ"
     np.testing.assert_allclose(field.lat, lat)
     np.testing.assert_array_equal(field.data, data)
 
 
-def test_index_cref_files_uses_normalized_valid_times(tmp_path):
+def test_index_cref_files_uses_delivered_utc_valid_times(tmp_path):
     lat = np.array([28.0], dtype="f4")
     lon = np.array([110.0], dtype="f4")
     data = np.array([[20.0]], dtype="f4")
     path = tmp_path / "CREF_with_time_sample.nc"
     _make_cref_nc(path, lat=lat, lon=lon, data=data, valid_time_str="2025-04-11 10:18:00")
 
-    expected = datetime(2025, 4, 11, 2, 18)
+    expected = datetime(2025, 4, 11, 10, 18)
 
     assert read_cref_valid_time(path) == expected
     assert index_cref_files(tmp_path) == {expected: path}

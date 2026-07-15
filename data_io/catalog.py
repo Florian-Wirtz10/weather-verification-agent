@@ -15,7 +15,7 @@ from data_io.fenglei_mosaic import read_swan_mosaic_metadata
 from data_io.radar_binary import read_cref_binary_header
 from data_io.radar_obs import read_cref_valid_time
 
-CATALOG_VERSION = 2
+CATALOG_VERSION = 3
 _BEIJING_OFFSET = timedelta(hours=8)
 _FORECAST_RE = re.compile(
     r"Z_SEVP_C_BABJ_(?P<generated>\d{14})_P_FENGL(?P<v11>-V11)?-REFMOSAIC-"
@@ -27,6 +27,7 @@ _OBS_RE = re.compile(
 )
 _CREF_NETCDF_RE = re.compile(r"CREF_with_time_(?P<date>\d{8})_(?P<time>\d{4})\.nc\Z")
 DuplicatePolicy = Literal["latest_generation", "earliest_generation", "error"]
+CaseTimeBasis = Literal["bjt", "utc"]
 
 
 @dataclass(frozen=True)
@@ -59,7 +60,8 @@ class DuplicateObservation:
 
 @dataclass(frozen=True)
 class DailyCatalog:
-    case_date_bjt: date
+    case_date: date
+    case_time_basis: CaseTimeBasis
     forecasts: tuple[ForecastRecord, ...]
     observations: tuple[ObservationRecord, ...]
     duplicates: tuple[DuplicateObservation, ...]
@@ -97,7 +99,9 @@ def _files_and_fingerprint(
     return paths, digest.hexdigest()
 
 
-def _parse_forecasts(paths: list[Path], case_date_bjt: date) -> list[ForecastRecord]:
+def _parse_forecasts(
+    paths: list[Path], case_date: date, case_time_basis: CaseTimeBasis
+) -> list[ForecastRecord]:
     records = []
     identities: dict[tuple[datetime, int], Path] = {}
     for path in paths:
@@ -116,7 +120,8 @@ def _parse_forecasts(paths: list[Path], case_date_bjt: date) -> list[ForecastRec
             init_utc = filename_init
             init_bjt = filename_init + _BEIJING_OFFSET
             filename_clock = "UTC"
-        if init_bjt.date() != case_date_bjt:
+        init_for_case = init_bjt if case_time_basis == "bjt" else init_utc
+        if init_for_case.date() != case_date:
             continue
         valid_utc = init_utc + timedelta(minutes=lead)
         identity = (init_utc, lead)
@@ -145,7 +150,7 @@ def _parse_forecasts(paths: list[Path], case_date_bjt: date) -> list[ForecastRec
 
 
 def _parse_observations(
-    paths: list[Path], case_date_bjt: date, policy: DuplicatePolicy
+    paths: list[Path], case_date: date, case_time_basis: CaseTimeBasis, policy: DuplicatePolicy
 ) -> tuple[list[ObservationRecord], list[DuplicateObservation]]:
     groups: dict[datetime, list[ObservationRecord]] = defaultdict(list)
     for path in paths:
@@ -156,6 +161,7 @@ def _parse_observations(
             valid_bjt = datetime.strptime(
                 match.group("date") + match.group("time"), "%Y%m%d%H%M%S"
             )
+            valid_utc = valid_bjt - _BEIJING_OFFSET
             generated_bjt = datetime.strptime(
                 match.group("generated"), "%Y%m%d%H%M%S"
             )
@@ -163,26 +169,25 @@ def _parse_observations(
             match = _CREF_NETCDF_RE.fullmatch(path.name)
             if match is None:
                 continue
-            valid_bjt = read_cref_valid_time(path) + _BEIJING_OFFSET
+            valid_utc = read_cref_valid_time(path)
             filename_time = datetime.strptime(
                 match.group("date") + match.group("time"), "%Y%m%d%H%M"
             )
-            if valid_bjt != filename_time:
+            if valid_utc != filename_time:
                 raise ValueError(
                     f"observation filename/header mismatch: {path}: "
-                    f"{filename_time} BJT versus {valid_bjt} BJT"
+                    f"{filename_time} UTC versus {valid_utc} UTC"
                 )
-            # Legacy NetCDF CREF files do not carry a correction-generation
-            # label.  Their valid time is deterministic and suitable for the
-            # common duplicate-policy ordering.
+            valid_bjt = valid_utc + _BEIJING_OFFSET
             generated_bjt = valid_bjt
         else:
             continue
-        if valid_bjt.date() != case_date_bjt:
+        valid_for_case = valid_bjt if case_time_basis == "bjt" else valid_utc
+        if valid_for_case.date() != case_date:
             continue
         record = ObservationRecord(
             path=path,
-            valid_time_utc=valid_bjt - _BEIJING_OFFSET,
+            valid_time_utc=valid_utc,
             valid_time_bjt=valid_bjt,
             generated_time_bjt=generated_bjt,
         )
@@ -222,7 +227,8 @@ def _record_to_json(record) -> dict:
 def _save_cache(
     path: Path,
     *,
-    case_date_bjt: date,
+    case_date: date,
+    case_time_basis: CaseTimeBasis,
     forecast_root: Path,
     observation_root: Path,
     forecast_fingerprint: str,
@@ -232,7 +238,8 @@ def _save_cache(
 ) -> None:
     payload = {
         "version": CATALOG_VERSION,
-        "case_date_bjt": case_date_bjt.isoformat(),
+        "case_date": case_date.isoformat(),
+        "case_time_basis": case_time_basis,
         "forecast_root": str(forecast_root.resolve()),
         "observation_root": str(observation_root.resolve()),
         "forecast_fingerprint": forecast_fingerprint,
@@ -292,15 +299,18 @@ def _validate_samples(
 def build_daily_catalog(
     forecast_dir,
     observation_dir,
-    case_date_bjt: date | str,
+    case_date: date | str,
     *,
+    case_time_basis: CaseTimeBasis = "bjt",
     duplicate_policy: DuplicatePolicy = "latest_generation",
     cache_dir="outputs/cache/catalogs",
     validate_samples: bool = True,
 ) -> DailyCatalog:
-    """Index a Beijing-calendar day without opening every compressed grid."""
-    if isinstance(case_date_bjt, str):
-        case_date_bjt = date.fromisoformat(case_date_bjt)
+    """Index one declared UTC or Beijing-calendar case day without full grid reads."""
+    if isinstance(case_date, str):
+        case_date = date.fromisoformat(case_date)
+    if case_time_basis not in {"bjt", "utc"}:
+        raise ValueError(f"unsupported case_time_basis: {case_time_basis}")
     if duplicate_policy not in {"latest_generation", "earliest_generation", "error"}:
         raise ValueError(f"unsupported duplicate policy: {duplicate_policy}")
     forecast_root = Path(forecast_dir)
@@ -311,7 +321,7 @@ def build_daily_catalog(
     )
 
     cache_name = hashlib.sha256(
-        f"{forecast_root.resolve()}\0{observation_root.resolve()}\0{case_date_bjt}".encode()
+        f"{forecast_root.resolve()}\0{observation_root.resolve()}\0{case_date}\0{case_time_basis}".encode()
     ).hexdigest()[:20]
     cache_path = Path(cache_dir) / f"daily_catalog_{cache_name}.json"
     cache_hit = False
@@ -322,7 +332,8 @@ def build_daily_catalog(
             payload = json.loads(cache_path.read_text(encoding="utf-8"))
             valid_cache = (
                 payload.get("version") == CATALOG_VERSION
-                and payload.get("case_date_bjt") == case_date_bjt.isoformat()
+                and payload.get("case_date") == case_date.isoformat()
+                and payload.get("case_time_basis") == case_time_basis
                 and payload.get("forecast_fingerprint") == forecast_fingerprint
                 and payload.get("observation_fingerprint") == observation_fingerprint
             )
@@ -332,16 +343,17 @@ def build_daily_catalog(
             obs_candidates = [Path(item) for item in payload["observation_candidates"]]
             cache_hit = True
         except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-            forecasts = _parse_forecasts(forecast_paths, case_date_bjt)
+            forecasts = _parse_forecasts(forecast_paths, case_date, case_time_basis)
             obs_candidates = observation_paths
     else:
-        forecasts = _parse_forecasts(forecast_paths, case_date_bjt)
+        forecasts = _parse_forecasts(forecast_paths, case_date, case_time_basis)
         obs_candidates = observation_paths
 
     if not cache_hit:
         _save_cache(
             cache_path,
-            case_date_bjt=case_date_bjt,
+            case_date=case_date,
+            case_time_basis=case_time_basis,
             forecast_root=forecast_root,
             observation_root=observation_root,
             forecast_fingerprint=forecast_fingerprint,
@@ -351,12 +363,13 @@ def build_daily_catalog(
         )
 
     observations, duplicates = _parse_observations(
-        obs_candidates, case_date_bjt, duplicate_policy
+        obs_candidates, case_date, case_time_basis, duplicate_policy
     )
     if validate_samples:
         _validate_samples(forecasts, observations)
     return DailyCatalog(
-        case_date_bjt=case_date_bjt,
+        case_date=case_date,
+        case_time_basis=case_time_basis,
         forecasts=tuple(forecasts),
         observations=tuple(observations),
         duplicates=tuple(duplicates),

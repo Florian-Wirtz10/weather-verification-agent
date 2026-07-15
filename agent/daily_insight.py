@@ -154,7 +154,8 @@ def build_daily_insight_facts(
     ]
     return {
         "context": {
-            "case_date_bjt": context.get("case_date_bjt"),
+            "case_date": context.get("case_date"),
+            "case_time_basis": context.get("case_time_basis"),
             "model_id": context.get("model_id"),
             "bbox": context.get("bbox"),
             "thresholds_dbz": context.get("thresholds_dbz"),

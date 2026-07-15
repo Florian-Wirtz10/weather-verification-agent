@@ -11,13 +11,13 @@ from typing import Callable
 
 import pandas as pd
 
-from data_io.catalog import DailyCatalog, DuplicatePolicy, build_daily_catalog
+from data_io.catalog import CaseTimeBasis, DailyCatalog, DuplicatePolicy, build_daily_catalog
 from data_io.fenglei_mosaic import read_swan_mosaic
 from data_io.grid import regrid_nearest
 from data_io.radar_obs import read_radar_observation
 from verification.metrics import CATEGORICAL_SCORES, contingency_table
 
-BATCH_CACHE_VERSION = 1
+BATCH_CACHE_VERSION = 2
 _COUNT_COLUMNS = (
     "hits",
     "misses",
@@ -58,7 +58,8 @@ def _run_config(
 ) -> dict:
     return {
         "version": BATCH_CACHE_VERSION,
-        "case_date_bjt": catalog.case_date_bjt.isoformat(),
+        "case_date": catalog.case_date.isoformat(),
+        "case_time_basis": catalog.case_time_basis,
         "forecast_fingerprint": catalog.forecast_fingerprint,
         "observation_fingerprint": catalog.observation_fingerprint,
         "bbox": [float(value) for value in bbox],
@@ -75,9 +76,13 @@ def _run_config(
 
 def _connect_cache(path: Path) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
-    connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute("PRAGMA synchronous=NORMAL")
+    connection = sqlite3.connect(path, timeout=30)
+    # `/workspace` is commonly a Docker Desktop bind mount.  WAL relies on
+    # shared-memory/locking semantics that are not consistently reliable on
+    # such mounts, so use SQLite's rollback journal for this persistent cache.
+    connection.execute("PRAGMA journal_mode=DELETE")
+    connection.execute("PRAGMA synchronous=FULL")
+    connection.execute("PRAGMA busy_timeout=30000")
     connection.executescript(
         """
         CREATE TABLE IF NOT EXISTS runs (
@@ -163,20 +168,21 @@ def _load_scores(connection: sqlite3.Connection, run_key: str) -> pd.DataFrame:
 def run_daily_fenglei_verification(
     forecast_dir,
     observation_dir,
-    case_date_bjt,
+    case_date,
     bbox,
     thresholds=(10, 20, 35),
     *,
+    case_time_basis: CaseTimeBasis = "bjt",
     lead_range=(6, 180),
     duplicate_policy: DuplicatePolicy = "latest_generation",
     catalog_cache_dir="outputs/cache/catalogs",
-    metric_cache_path="outputs/cache/phase5_metrics.sqlite3",
+    metric_cache_path="outputs/cache/phase5_metrics_v2.sqlite3",
     model_id="fenglei",
     force=False,
     progress_callback: Callable[[int, int, str], None] | None = None,
     max_pairs: int | None = None,
 ) -> dict:
-    """Score every exactly matched forecast in one Beijing-calendar day.
+    """Score every exactly matched forecast in one declared case-calendar day.
 
     Forecasts are decoded one at a time and observations one valid time at a
     time.  Each completed forecast/observation pair is committed to SQLite, so
@@ -197,7 +203,8 @@ def run_daily_fenglei_verification(
     catalog = build_daily_catalog(
         forecast_dir,
         observation_dir,
-        case_date_bjt,
+        case_date,
+        case_time_basis=case_time_basis,
         duplicate_policy=duplicate_policy,
         cache_dir=catalog_cache_dir,
     )
@@ -338,11 +345,17 @@ def run_daily_fenglei_verification(
         connection.close()
 
     summary = _aggregate_scores(per_case)
-    matched_valid_times = [record.valid_time_bjt for record in catalog.matched_forecasts]
-    matched_init_times = [record.init_time_bjt for record in catalog.matched_forecasts]
+    if catalog.case_time_basis == "bjt":
+        matched_valid_times = [record.valid_time_bjt for record in catalog.matched_forecasts]
+        matched_init_times = [record.init_time_bjt for record in catalog.matched_forecasts]
+    else:
+        matched_valid_times = [record.valid_time_utc for record in catalog.matched_forecasts]
+        matched_init_times = [record.init_time_utc for record in catalog.matched_forecasts]
+    matched_valid_times_bjt = [record.valid_time_bjt for record in catalog.matched_forecasts]
     return {
         "context": {
-            "case_date_bjt": catalog.case_date_bjt.isoformat(),
+            "case_date": catalog.case_date.isoformat(),
+            "case_time_basis": catalog.case_time_basis,
             "model_id": model_id,
             "bbox": [lat_min, lat_max, lon_min, lon_max],
             "thresholds_dbz": list(thresholds),
@@ -358,24 +371,35 @@ def run_daily_fenglei_verification(
             "indexed_forecasts": len(catalog.forecasts),
             "unique_observations": len(catalog.observations),
             "matched_pairs_available": len(catalog.matched_forecasts),
-            "matched_valid_start_bjt": (
+            "case_time_basis": catalog.case_time_basis,
+            "matched_valid_start_case_time": (
                 min(matched_valid_times).isoformat(timespec="seconds")
                 if matched_valid_times
                 else None
             ),
-            "matched_valid_end_bjt": (
+            "matched_valid_end_case_time": (
                 max(matched_valid_times).isoformat(timespec="seconds")
                 if matched_valid_times
                 else None
             ),
-            "matched_init_start_bjt": (
+            "matched_init_start_case_time": (
                 min(matched_init_times).isoformat(timespec="seconds")
                 if matched_init_times
                 else None
             ),
-            "matched_init_end_bjt": (
+            "matched_init_end_case_time": (
                 max(matched_init_times).isoformat(timespec="seconds")
                 if matched_init_times
+                else None
+            ),
+            "matched_valid_start_bjt": (
+                min(matched_valid_times_bjt).isoformat(timespec="seconds")
+                if matched_valid_times_bjt
+                else None
+            ),
+            "matched_valid_end_bjt": (
+                max(matched_valid_times_bjt).isoformat(timespec="seconds")
+                if matched_valid_times_bjt
                 else None
             ),
             "selected_pairs": len(records),

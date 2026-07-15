@@ -13,7 +13,7 @@ from openai import OpenAI
 DAILY_VIEW_TYPES = ("daily_score_curve", "daily_score_heatmap", "score_distribution")
 DAILY_METRICS = ("csi", "ets", "pod", "far", "bias_score")
 _SYSTEM_PROMPT = f"""你是强对流预报公平检验平台 Phase 5 的请求解析器，只输出 JSON。
-平台对一个北京时间自然日内的风雷预报和 CREF 观测做严格同有效时刻、同区域、同网格口径检验。
+平台按页面声明的案例时钟（2025 个例为 UTC、2026 个例为 BJT），对风雷预报和 CREF 观测做严格同有效时刻、同区域、同网格口径检验。
 你只选择参数，不计算、不画图、不写代码，也不能修改数据路径、插值、掩膜、缓存或评分公式。
 
 支持指标：{list(DAILY_METRICS)}

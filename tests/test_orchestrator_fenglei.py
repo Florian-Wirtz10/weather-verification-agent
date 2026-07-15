@@ -48,13 +48,13 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
         # matching obs: same blob location, no lead-shift (perfect obs at valid time)
         obs_data = np.zeros((ny, nx), dtype="f4")
         obs_data[2:4, 2:5] = 40.0
-        valid_time_beijing = f"2025-04-11 10:{12 + lead_minutes:02d}:00"  # BJT = UTC+8 of 02:xx
+        valid_time_utc = f"2025-04-11 02:{12 + lead_minutes:02d}:00"
         _make_cref_nc(
             radar_dir / f"CREF_with_time_{lead_minutes}.nc",
             lat=lat.astype("f4"),
             lon=lon.astype("f4"),
             data=obs_data,
-            valid_time_str=valid_time_beijing,
+            valid_time_str=valid_time_utc,
         )
 
     result = run_fenglei_case_verification(
@@ -228,7 +228,7 @@ def test_run_fenglei_case_never_mixes_initializations(tmp_path):
             lat=lat,
             lon=lon,
             data=np.zeros((2, 2), dtype="f4"),
-            valid_time_str=f"2025-04-11 {hour + 8:02d}:18:00",
+            valid_time_str=f"2025-04-11 {hour:02d}:18:00",
         )
 
     with pytest.raises(AmbiguousCaseError, match="select one forecast initialization"):

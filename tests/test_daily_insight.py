@@ -40,7 +40,8 @@ def _result():
     )
     return {
         "context": {
-            "case_date_bjt": "2026-04-07",
+            "case_date": "2026-04-07",
+            "case_time_basis": "bjt",
             "model_id": "fenglei",
             "bbox": [28, 35, 116.5, 123.5],
             "thresholds_dbz": [5, 15],
