@@ -18,6 +18,7 @@ from data_io.radar_obs import read_radar_observation
 from verification.metrics import CATEGORICAL_SCORES, contingency_table
 
 BATCH_CACHE_VERSION = 2
+_CACHE_COMMIT_INTERVAL = 30
 _COUNT_COLUMNS = (
     "hits",
     "misses",
@@ -185,8 +186,8 @@ def run_daily_fenglei_verification(
     """Score every exactly matched forecast in one declared case-calendar day.
 
     Forecasts are decoded one at a time and observations one valid time at a
-    time.  Each completed forecast/observation pair is committed to SQLite, so
-    an interrupted long run resumes from its last complete pair.
+    time.  Completed pairs are committed to SQLite in small bounded batches,
+    so an interrupted long run resumes with at most a short batch to recompute.
     """
     if not str(forecast_dir).strip() or not str(observation_dir).strip():
         raise ValueError("both full-day forecast and observation directories are required")
@@ -326,10 +327,12 @@ def run_daily_fenglei_verification(
                 rows,
             )
             processed_now += 1
-            connection.commit()
+            if processed_now % _CACHE_COMMIT_INTERVAL == 0:
+                connection.commit()
             if progress_callback is not None:
                 progress_callback(index, total, record.path.name)
 
+        connection.commit()
         completed_total = connection.execute(
             "SELECT COUNT(DISTINCT forecast_path) FROM scores WHERE run_key = ?",
             (run_key,),
