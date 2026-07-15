@@ -75,7 +75,7 @@ def index_radar_observation_files(directory) -> dict[datetime, Path]:
 
             header = read_cref_binary_header(path)
             valid_time = header.valid_time_utc
-            generation_time = header.generated_time_bjt
+            generation_time = header.generated_time_utc
         else:
             valid_time = read_cref_valid_time(path)
             # NetCDF delivery has no revision-generation label.  Its UTC valid

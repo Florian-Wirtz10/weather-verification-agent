@@ -76,19 +76,21 @@ def test_daily_catalog_matches_times_and_chooses_latest_correction(tmp_path):
     forecast = _write_forecast(forecast_dir)
     older = _write_binary_cref(
         obs_dir,
-        valid="20260407_185400",
-        generated="20260407190012",
+        valid="20260407_105400",
+        generated="20260407110012",
     )
     newer = _write_binary_cref(
         obs_dir,
-        valid="20260407_185400",
-        generated="20260407190512",
+        valid="20260407_105400",
+        generated="20260407110512",
     )
 
     catalog = build_daily_catalog(
         forecast_dir,
         obs_dir,
         date(2026, 4, 7),
+        forecast_case_time_basis="bjt",
+        observation_case_time_basis="utc",
         cache_dir=cache_dir,
     )
 
@@ -106,6 +108,8 @@ def test_daily_catalog_matches_times_and_chooses_latest_correction(tmp_path):
         forecast_dir,
         obs_dir,
         "2026-04-07",
+        forecast_case_time_basis="bjt",
+        observation_case_time_basis="utc",
         cache_dir=cache_dir,
     )
     assert cached.cache_hit is True
@@ -117,14 +121,16 @@ def test_daily_catalog_duplicate_error_policy(tmp_path):
     forecast_dir.mkdir()
     obs_dir.mkdir()
     _write_forecast(forecast_dir)
-    _write_binary_cref(obs_dir, generated="20260407190012")
-    _write_binary_cref(obs_dir, generated="20260407190512")
+    _write_binary_cref(obs_dir, generated="20260407110012")
+    _write_binary_cref(obs_dir, generated="20260407110512")
 
     with pytest.raises(ValueError, match="duplicate observations"):
         build_daily_catalog(
             forecast_dir,
             obs_dir,
             "2026-04-07",
+            forecast_case_time_basis="bjt",
+            observation_case_time_basis="utc",
             duplicate_policy="error",
             cache_dir=tmp_path / "cache",
         )
@@ -149,6 +155,8 @@ def test_daily_catalog_matches_legacy_netcdf_observation(tmp_path):
         forecast_dir,
         obs_dir,
         "2025-04-11",
+        forecast_case_time_basis="utc",
+        observation_case_time_basis="utc",
         cache_dir=tmp_path / "cache",
     )
 
@@ -177,11 +185,13 @@ def test_legacy_case_day_is_filtered_in_utc_across_beijing_midnight(tmp_path):
         forecast_dir,
         obs_dir,
         "2025-04-11",
-        case_time_basis="utc",
+        forecast_case_time_basis="utc",
+        observation_case_time_basis="utc",
         cache_dir=tmp_path / "cache",
     )
 
-    assert catalog.case_time_basis == "utc"
+    assert catalog.forecast_case_time_basis == "utc"
+    assert catalog.observation_case_time_basis == "utc"
     assert catalog.forecasts[0].path == forecast
     assert catalog.observations[0].path == observation
     assert catalog.forecasts[0].valid_time_bjt == datetime(2025, 4, 12, 7, 54)

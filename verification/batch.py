@@ -17,7 +17,7 @@ from data_io.grid import regrid_nearest
 from data_io.radar_obs import read_radar_observation
 from verification.metrics import CATEGORICAL_SCORES, contingency_table
 
-BATCH_CACHE_VERSION = 2
+BATCH_CACHE_VERSION = 3
 _CACHE_COMMIT_INTERVAL = 30
 _COUNT_COLUMNS = (
     "hits",
@@ -60,7 +60,8 @@ def _run_config(
     return {
         "version": BATCH_CACHE_VERSION,
         "case_date": catalog.case_date.isoformat(),
-        "case_time_basis": catalog.case_time_basis,
+        "forecast_case_time_basis": catalog.forecast_case_time_basis,
+        "observation_case_time_basis": catalog.observation_case_time_basis,
         "forecast_fingerprint": catalog.forecast_fingerprint,
         "observation_fingerprint": catalog.observation_fingerprint,
         "bbox": [float(value) for value in bbox],
@@ -173,11 +174,12 @@ def run_daily_fenglei_verification(
     bbox,
     thresholds=(10, 20, 35),
     *,
-    case_time_basis: CaseTimeBasis = "bjt",
+    forecast_case_time_basis: CaseTimeBasis = "bjt",
+    observation_case_time_basis: CaseTimeBasis | None = None,
     lead_range=(6, 180),
     duplicate_policy: DuplicatePolicy = "latest_generation",
     catalog_cache_dir="outputs/cache/catalogs",
-    metric_cache_path="outputs/cache/phase5_metrics_v2.sqlite3",
+    metric_cache_path="outputs/cache/phase5_metrics_v3.sqlite3",
     model_id="fenglei",
     force=False,
     progress_callback: Callable[[int, int, str], None] | None = None,
@@ -205,7 +207,8 @@ def run_daily_fenglei_verification(
         forecast_dir,
         observation_dir,
         case_date,
-        case_time_basis=case_time_basis,
+        forecast_case_time_basis=forecast_case_time_basis,
+        observation_case_time_basis=observation_case_time_basis,
         duplicate_policy=duplicate_policy,
         cache_dir=catalog_cache_dir,
     )
@@ -348,17 +351,20 @@ def run_daily_fenglei_verification(
         connection.close()
 
     summary = _aggregate_scores(per_case)
-    if catalog.case_time_basis == "bjt":
+    if catalog.observation_case_time_basis == "bjt":
         matched_valid_times = [record.valid_time_bjt for record in catalog.matched_forecasts]
-        matched_init_times = [record.init_time_bjt for record in catalog.matched_forecasts]
     else:
         matched_valid_times = [record.valid_time_utc for record in catalog.matched_forecasts]
+    if catalog.forecast_case_time_basis == "bjt":
+        matched_init_times = [record.init_time_bjt for record in catalog.matched_forecasts]
+    else:
         matched_init_times = [record.init_time_utc for record in catalog.matched_forecasts]
     matched_valid_times_bjt = [record.valid_time_bjt for record in catalog.matched_forecasts]
     return {
         "context": {
             "case_date": catalog.case_date.isoformat(),
-            "case_time_basis": catalog.case_time_basis,
+            "forecast_case_time_basis": catalog.forecast_case_time_basis,
+            "observation_case_time_basis": catalog.observation_case_time_basis,
             "model_id": model_id,
             "bbox": [lat_min, lat_max, lon_min, lon_max],
             "thresholds_dbz": list(thresholds),
@@ -374,7 +380,8 @@ def run_daily_fenglei_verification(
             "indexed_forecasts": len(catalog.forecasts),
             "unique_observations": len(catalog.observations),
             "matched_pairs_available": len(catalog.matched_forecasts),
-            "case_time_basis": catalog.case_time_basis,
+            "forecast_case_time_basis": catalog.forecast_case_time_basis,
+            "observation_case_time_basis": catalog.observation_case_time_basis,
             "matched_valid_start_case_time": (
                 min(matched_valid_times).isoformat(timespec="seconds")
                 if matched_valid_times

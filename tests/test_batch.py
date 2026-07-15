@@ -16,6 +16,8 @@ def test_daily_batch_streams_aggregates_and_reuses_metric_cache(tmp_path):
         "case_date": "2026-04-07",
         "bbox": (28.0, 30.0, 116.0, 120.0),
         "thresholds": (5, 15),
+        "forecast_case_time_basis": "bjt",
+        "observation_case_time_basis": "utc",
         "catalog_cache_dir": tmp_path / "catalog-cache",
         "metric_cache_path": tmp_path / "metrics.sqlite3",
     }
@@ -52,6 +54,8 @@ def test_daily_batch_cache_key_changes_with_scoring_contract(tmp_path):
         "observation_dir": obs_dir,
         "case_date": "2026-04-07",
         "bbox": (28.0, 30.0, 116.0, 120.0),
+        "forecast_case_time_basis": "bjt",
+        "observation_case_time_basis": "utc",
         "catalog_cache_dir": tmp_path / "catalog-cache",
         "metric_cache_path": tmp_path / "metrics.sqlite3",
     }

@@ -56,18 +56,20 @@ def _cached_cases(forecast_dir: str, observation_dir: str, generation: int):
 
 CASES = {
     "2026-04-07": {
-        "label": "2026-04-07｜00:06—23:54 BJT",
+        "label": "2026-04-07｜观测 UTC 日（严格重叠 08:00—次日 02:54 BJT）",
         "forecast_dir": os.getenv("FENGLEI_DAILY_DIR", ""),
         "observation_dir": os.getenv("RADAR_DAILY_DIR", ""),
         "display_clock": "BJT",
-        "case_time_basis": "bjt",
+        "forecast_case_time_basis": "bjt",
+        "observation_case_time_basis": "utc",
     },
     "2025-04-11": {
         "label": "2025-04-11｜00:06—23:54 UTC",
         "forecast_dir": os.getenv("FENGLEI_CASE_DIR", ""),
         "observation_dir": os.getenv("RADAR_OBS_DIR", ""),
         "display_clock": "UTC",
-        "case_time_basis": "utc",
+        "forecast_case_time_basis": "utc",
+        "observation_case_time_basis": "utc",
     },
 }
 
@@ -174,7 +176,8 @@ def _execute_daily(request, *, config, case_date, bbox, progress_callback):
         forecast_dir=config["forecast_dir"],
         observation_dir=config["observation_dir"],
         case_date=request["requested_date"] or case_date,
-        case_time_basis=config["case_time_basis"],
+        forecast_case_time_basis=config["forecast_case_time_basis"],
+        observation_case_time_basis=config["observation_case_time_basis"],
         bbox=bbox,
         thresholds=request["thresholds_dbz"],
         lead_range=(lead["start"], lead["end"]),

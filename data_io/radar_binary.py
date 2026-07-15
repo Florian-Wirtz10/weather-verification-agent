@@ -5,19 +5,18 @@ by a (usually bzip2-compressed) ``int16`` raster.  Grid values are divided by
 the header scale to recover dBZ.  The storage order is north-to-south and is
 flipped here to the project's common south-to-north convention.
 
-The 2026-04-07 delivery has a known metadata defect: ``TimeZone`` is zero even
-though both timestamps in the BABJ product filename and the header observation
-clock are Beijing Time.  We therefore require the header observation clock to
-agree with the filename valid time and normalize that verified local time to
-UTC.  A changed or unknown naming convention fails closed instead of silently
-shifting observations by eight hours.
+For the 2026-04-07 delivery, ``TimeZone`` is zero and both timestamps in the
+filename and product header are UTC.  ``BABJ`` identifies the issuing centre;
+it does not make the timestamps Beijing Time.  The parser requires the header
+and filename clocks to agree and rejects a non-zero timezone instead of
+silently applying an unsupported offset.
 """
 
 from __future__ import annotations
 
 import bz2
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 import re
 import struct
@@ -27,7 +26,6 @@ import numpy as np
 from data_io.grid import GriddedField
 
 _HEADER_BYTES = 256
-_BEIJING_OFFSET = timedelta(hours=8)
 _MISSING_RAW = np.iinfo(np.int16).min
 _FILENAME_RE = re.compile(
     r"Z_RADA_C_BABJ_(?P<generated>\d{14})_P_DOR_(?P<region>[A-Z0-9]+)_"
@@ -49,9 +47,8 @@ class CrefBinaryHeader:
     block_position: int
     block_bytes: int
     raw_timezone_seconds: int
-    valid_time_bjt: datetime
     valid_time_utc: datetime
-    generated_time_bjt: datetime
+    generated_time_utc: datetime
     south: float
     west: float
     north: float
@@ -82,11 +79,11 @@ def _parse_filename(path: Path) -> tuple[datetime, datetime, str, str]:
     match = _FILENAME_RE.fullmatch(path.name)
     if match is None:
         raise ValueError(f"{path}: unsupported radar binary filename")
-    generated_bjt = datetime.strptime(match.group("generated"), "%Y%m%d%H%M%S")
-    valid_bjt = datetime.strptime(
+    generated_utc = datetime.strptime(match.group("generated"), "%Y%m%d%H%M%S")
+    valid_utc = datetime.strptime(
         match.group("date") + match.group("time"), "%Y%m%d%H%M%S"
     )
-    return generated_bjt, valid_bjt, match.group("region"), match.group("product")
+    return generated_utc, valid_utc, match.group("region"), match.group("product")
 
 
 def read_cref_binary_header(path) -> CrefBinaryHeader:
@@ -112,9 +109,9 @@ def read_cref_binary_header(path) -> CrefBinaryHeader:
     radar_count, uncompressed_bytes = struct.unpack_from("<2i", raw, 168)
     scale = struct.unpack_from("<h", raw, 176)[0]
 
-    generated_bjt, filename_valid_bjt, region, filename_product = _parse_filename(path)
+    generated_utc, filename_valid_utc, region, filename_product = _parse_filename(path)
     try:
-        header_valid_bjt = datetime(year, month, day, hour, minute, second)
+        header_valid_utc = datetime(year, month, day, hour, minute, second)
     except ValueError as exc:
         raise ValueError(f"{path}: invalid observation clock in radar header") from exc
 
@@ -136,10 +133,14 @@ def read_cref_binary_header(path) -> CrefBinaryHeader:
         errors.append(
             f"BlockLen={block_bytes}, actual payload={actual_file_bytes - block_position}"
         )
-    if header_valid_bjt != filename_valid_bjt:
+    if raw_timezone_seconds != 0:
+        errors.append(
+            f"unsupported TimeZone={raw_timezone_seconds}; delivered CREF clock must be UTC"
+        )
+    if header_valid_utc != filename_valid_utc:
         errors.append(
             "header/filename valid time mismatch: "
-            f"{header_valid_bjt} versus {filename_valid_bjt} BJT"
+            f"{header_valid_utc} versus {filename_valid_utc} UTC"
         )
     if nx <= 0 or ny <= 0 or dx_raw <= 0 or dy_raw <= 0:
         errors.append(f"invalid grid nx={nx}, ny={ny}, dx={dx_raw}, dy={dy_raw}")
@@ -166,9 +167,8 @@ def read_cref_binary_header(path) -> CrefBinaryHeader:
         block_position=block_position,
         block_bytes=block_bytes,
         raw_timezone_seconds=raw_timezone_seconds,
-        valid_time_bjt=filename_valid_bjt,
-        valid_time_utc=filename_valid_bjt - _BEIJING_OFFSET,
-        generated_time_bjt=generated_bjt,
+        valid_time_utc=filename_valid_utc,
+        generated_time_utc=generated_utc,
         south=south_raw / 1000.0,
         west=west_raw / 1000.0,
         north=north_raw / 1000.0,
