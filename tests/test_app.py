@@ -46,6 +46,8 @@ def test_streamlit_initial_screen_renders_without_exceptions():
     app = AppTest.from_file("app.py", default_timeout=30).run()
 
     assert not app.exception
+    assert [control.value for control in app.number_input] == [29.0, 33.5, 108.0, 116.5]
+    assert any("默认：湖北区域" in item.value for item in app.caption)
     labels = {button.label for button in app.button}
     assert "智能解析并运行" in labels
     assert "使用推荐方案" in labels
@@ -110,6 +112,8 @@ def test_phase5_full_day_result_has_three_diagnostics_and_downloads(tmp_path, mo
     monkeypatch.setattr(agent, "generate_daily_insight", lambda *_args, **_kwargs: "全天测试解读")
 
     app = AppTest.from_file("app.py", default_timeout=30).run()
+    for control, value in zip(app.number_input, (28.0, 30.0, 116.0, 120.0)):
+        app = control.set_value(value).run()
     app = _button(app, "使用推荐方案").click().run()
 
     assert not app.exception

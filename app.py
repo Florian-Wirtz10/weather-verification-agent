@@ -40,6 +40,13 @@ from visualization.batch_plots import (
 load_dotenv()
 st.set_page_config(page_title="强对流预报检验智能体", layout="wide")
 
+DEFAULT_HUBEI_BBOX = {
+    "lat_min": 29.0,
+    "lat_max": 33.5,
+    "lon_min": 108.0,
+    "lon_max": 116.5,
+}
+
 
 @st.cache_data(show_spinner="正在建立可用起报索引…")
 def _cached_cases(forecast_dir: str, observation_dir: str, generation: int):
@@ -275,10 +282,11 @@ def _render_daily(attempt):
 st.title("强对流预报检验智能体")
 with st.sidebar:
     st.header("检验区域")
-    lat_min = st.number_input("lat_min", value=28.0)
-    lat_max = st.number_input("lat_max", value=35.0)
-    lon_min = st.number_input("lon_min", value=116.5)
-    lon_max = st.number_input("lon_max", value=123.5)
+    st.caption("默认：湖北区域（可按业务需要调整）")
+    lat_min = st.number_input("lat_min", value=DEFAULT_HUBEI_BBOX["lat_min"])
+    lat_max = st.number_input("lat_max", value=DEFAULT_HUBEI_BBOX["lat_max"])
+    lon_min = st.number_input("lon_min", value=DEFAULT_HUBEI_BBOX["lon_min"])
+    lon_max = st.number_input("lon_max", value=DEFAULT_HUBEI_BBOX["lon_max"])
 
 case_column, mode_column = st.columns([1.45, 1])
 with case_column:
