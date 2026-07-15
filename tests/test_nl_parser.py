@@ -1,4 +1,4 @@
-from agent.nl_parser import _build_system_prompt, _validate
+from agent.nl_parser import _apply_spatial_animation_guard, _build_system_prompt, _validate
 
 
 def test_prompt_exposes_scope_schema_and_available_case():
@@ -19,6 +19,7 @@ def test_prompt_exposes_scope_schema_and_available_case():
     assert "不得为了凑结果输出全部图" in prompt
     assert "空间回波的“演变、过程、动态、逐时变化”" in prompt
     assert 'layout="auto"' in prompt
+    assert "偷换成评分曲线" in prompt
 
 
 def test_validate_uses_schema_and_does_not_default_unsupported_request():
@@ -31,3 +32,32 @@ def test_validate_uses_schema_and_does_not_default_unsupported_request():
 
     assert result["views"] == []
     assert any("taylor" in item for item in result["unmatched_requests"])
+
+
+def test_spatial_comparison_evolution_becomes_animation_not_score_curve():
+    parsed = _validate(
+        {
+            "intent": "verify_case",
+            "filters": {"thresholds_dbz": [35], "lead_range_minutes": {"start": 0, "end": 180}},
+            "views": [{"type": "score_time_series", "metric": "csi"}],
+        }
+    )
+
+    guarded = _apply_spatial_animation_guard(
+        "使用35 dBZ阈值，看所有时效的预测-观测对比图的时序变化，并简要解读结果。",
+        parsed,
+    )
+
+    assert guarded["views"] == [
+        {
+            "type": "reflectivity_animation",
+            "lead_range_minutes": {"start": 6, "end": 180},
+            "fps": 2,
+        }
+    ]
+
+
+def test_score_time_series_without_spatial_comparison_is_unchanged():
+    parsed = _validate({"views": [{"type": "score_time_series", "metric": "csi"}]})
+
+    assert _apply_spatial_animation_guard("看 CSI 随预报时效变化", parsed) == parsed

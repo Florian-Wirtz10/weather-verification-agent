@@ -218,15 +218,14 @@ def render_reflectivity_animation(frames, *, fps=2):
     if isinstance(fps, bool) or not isinstance(fps, int) or not 1 <= fps <= 4:
         raise ValueError("fps must be an integer from 1 to 4")
 
-    figures = []
-    for frame in frames:
-        lead = frame["lead_minutes"]
-        figure = plot_reflectivity_comparison(
+    figures = (
+        plot_reflectivity_comparison(
             frame["forecast"],
             frame["obs"],
-            title=f"Forecast vs observation — lead {lead} min",
+            title=f"Forecast vs observation — lead {frame['lead_minutes']} min",
         )
-        figures.append(figure)
+        for frame in frames
+    )
     return _figures_to_gif(figures, fps=fps)
 
 
@@ -253,16 +252,15 @@ def render_linked_score_animation(
     if any(lead not in lead_minutes for lead in expected_leads):
         raise ValueError("linked animation frames must occur on the score time axis")
 
-    figures = []
-    for frame in frames:
-        figures.append(
-            _plot_linked_score_frame(
+    figures = (
+        _plot_linked_score_frame(
                 frame,
                 lead_minutes=lead_minutes,
                 scores_by_threshold=scores_by_threshold,
                 score_name=score_name,
             )
-        )
+        for frame in frames
+    )
     return _figures_to_gif(figures, fps=fps)
 
 

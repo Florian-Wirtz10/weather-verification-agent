@@ -18,6 +18,33 @@ from agent.request_schema import (
     validate_request,
 )
 
+_SPATIAL_COMPARISON_CUES = (
+    "预测-观测",
+    "预报-观测",
+    "预测-实测",
+    "预报-实况",
+    "预测与观测",
+    "预报与观测",
+    "预测和观测",
+    "预报和观测",
+    "预测观测对比",
+    "预报观测对比",
+)
+_ANIMATION_CUES = (
+    "所有时效",
+    "时序变化",
+    "随时间变化",
+    "逐时变化",
+    "逐时",
+    "演变",
+    "过程",
+    "动态",
+    "动图",
+    "动画",
+    "gif",
+)
+_SCORE_CUES = ("csi", "ets", "pod", "far", "bias", "评分", "评分曲线", "指标曲线")
+
 
 def _build_system_prompt(available_cases=None, previous_request=None):
     cases = available_cases or []
@@ -80,6 +107,9 @@ linked_score_animation 只用于“空间回波演变与某一评分变化之间
 12. 用户明确要看空间回波的“演变、过程、动态、逐时变化”时，应提出一个
     reflectivity_animation（使用其时效范围，默认 fps=2）；普通 CSI/ETS 等评分时序曲线
     仍应保持 score_time_series，不能仅因横轴是时效就擅自增加动画。
+    特别地，“所有时效的预测/预报—观测/实况对比图的时序变化”是空间对比动画，必须输出
+    reflectivity_animation；除非用户同时明确点名 CSI、ETS 等评分，否则不得用 score_time_series
+    偷换成评分曲线。
 13. 用户要求把空间演变与 CSI、ETS 等某项评分联系起来、同屏对应或解释两者关系时，设置
     strategy="linked_score_animation" 和对应 metric。其它情形 strategy="auto"；不得把多个
     评分曲线或未请求的指标塞进联动动画。
@@ -124,7 +154,43 @@ def parse_request(
     )
     if not response.choices or response.choices[0].message.content is None:
         raise ValueError("DeepSeek returned an empty response")
-    return validate_request(json.loads(response.choices[0].message.content))
+    parsed = validate_request(json.loads(response.choices[0].message.content))
+    return _apply_spatial_animation_guard(user_text, parsed)
+
+
+def _apply_spatial_animation_guard(user_text, request):
+    """Resolve an otherwise common ambiguity between spatial and score time series.
+
+    The guard is deliberately narrow: it acts only when a request names both
+    a forecast/observation spatial comparison and a temporal-evolution cue.
+    This remains declarative, fully schema-validated, and never exposes code
+    generation to the model.
+    """
+    text = str(user_text).lower().replace("—", "-").replace("–", "-")
+    wants_spatial_animation = any(cue in text for cue in _SPATIAL_COMPARISON_CUES) and any(
+        cue in text for cue in _ANIMATION_CUES
+    )
+    if not wants_spatial_animation:
+        return request
+
+    has_explicit_score = any(cue in text for cue in _SCORE_CUES)
+    views = list(request["views"])
+    if not has_explicit_score:
+        views = [view for view in views if view["type"] != "score_time_series"]
+    if not any(view["type"] == "reflectivity_animation" for view in views):
+        lead_range = request["filters"]["lead_range_minutes"]
+        views.append(
+            {
+                "type": "reflectivity_animation",
+                "lead_range_minutes": {
+                    "start": max(6, lead_range["start"]),
+                    "end": lead_range["end"],
+                },
+                "fps": 2,
+            }
+        )
+    guarded = {**request, "views": views}
+    return validate_request(guarded)
 
 
 def _validate(parsed):

@@ -3,6 +3,7 @@ fixtures (never the private external/ sample data)."""
 
 from io import BytesIO
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 from PIL import Image
@@ -85,6 +86,7 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
     assert result["coverage"]["missing_leads"] == []
     assert result["per_lead"][0]["contingency"][20]["valid_count"] > 0
 
+    open_figures_before_animation = set(plt.get_fignums())
     animated = run_fenglei_case_verification(
         fenglei_dir=fenglei_dir,
         radar_dir=radar_dir,
@@ -109,6 +111,7 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
         }
     }
     assert animated["animations"]["animation_01"].startswith(b"GIF89a")
+    assert set(plt.get_fignums()) == open_figures_before_animation
 
     linked = run_fenglei_case_verification(
         fenglei_dir=fenglei_dir,
