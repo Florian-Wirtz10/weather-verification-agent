@@ -56,7 +56,7 @@ def _cached_cases(forecast_dir: str, observation_dir: str, generation: int):
 
 CASES = {
     "2026-04-07": {
-        "label": "2026-04-07｜观测 UTC 日（严格重叠 08:00—次日 02:54 BJT）",
+        "label": "2026-04-07｜8:00— 次日02:54 BJT",
         "forecast_dir": os.getenv("FENGLEI_DAILY_DIR", ""),
         "observation_dir": os.getenv("RADAR_DAILY_DIR", ""),
         "display_clock": "BJT",
@@ -110,7 +110,10 @@ def _execute_single(request, *, cases, selected_case_id, config, bbox):
     facts = build_insight_facts(result, requested_metrics=metrics)
     deterministic = render_deterministic_summary(facts)
     try:
-        insight, insight_error = generate_insight(facts, length=execution["insight"]["length"]), None
+        insight, insight_error = (
+            generate_insight(facts, length=execution["insight"]["length"]),
+            None,
+        )
     except Exception as exc:  # External AI is optional.
         insight, insight_error = None, str(exc)
     rows = _metric_rows(result, metrics)
@@ -142,9 +145,15 @@ def _execute_single(request, *, cases, selected_case_id, config, bbox):
 def _daily_media(result, request):
     metric, threshold = request["metric"], request["diagnostic_threshold_dbz"]
     factories = {
-        "daily_score_curve": lambda n: plot_daily_score_curves(result["summary"], metric, figure_number=n),
-        "daily_score_heatmap": lambda n: plot_daily_score_heatmap(result["per_case"], metric, threshold, figure_number=n),
-        "score_distribution": lambda n: plot_daily_score_distribution(result["per_case"], metric, threshold, figure_number=n),
+        "daily_score_curve": lambda n: plot_daily_score_curves(
+            result["summary"], metric, figure_number=n
+        ),
+        "daily_score_heatmap": lambda n: plot_daily_score_heatmap(
+            result["per_case"], metric, threshold, figure_number=n
+        ),
+        "score_distribution": lambda n: plot_daily_score_distribution(
+            result["per_case"], metric, threshold, figure_number=n
+        ),
     }
     labels = {
         "daily_score_curve": f"全天汇总 {metric.upper()} 随时效变化",
@@ -170,7 +179,12 @@ def _daily_media(result, request):
 
 def _execute_daily(request, *, config, case_date, bbox, progress_callback):
     if not request["views"]:
-        return {"kind": "daily", "status": "unsupported", "message": "没有可执行的全天图表。", "request": request}
+        return {
+            "kind": "daily",
+            "status": "unsupported",
+            "message": "没有可执行的全天图表。",
+            "request": request,
+        }
     lead = request["lead_range_minutes"]
     result = run_daily_fenglei_verification(
         forecast_dir=config["forecast_dir"],
@@ -225,9 +239,27 @@ def _render_single(attempt):
     with main:
         downloads = attempt["downloads"]
         columns = st.columns(3)
-        columns[0].download_button("下载结果包 ZIP", downloads["bundle"]["data"], downloads["bundle"]["file_name"], "application/zip", width="stretch")
-        columns[1].download_button("下载指标 CSV", downloads["metrics"]["data"], downloads["metrics"]["file_name"], "text/csv", width="stretch")
-        columns[2].download_button("下载解读 Markdown", downloads["summary"]["data"], downloads["summary"]["file_name"], "text/markdown", width="stretch")
+        columns[0].download_button(
+            "下载结果包 ZIP",
+            downloads["bundle"]["data"],
+            downloads["bundle"]["file_name"],
+            "application/zip",
+            width="stretch",
+        )
+        columns[1].download_button(
+            "下载指标 CSV",
+            downloads["metrics"]["data"],
+            downloads["metrics"]["file_name"],
+            "text/csv",
+            width="stretch",
+        )
+        columns[2].download_button(
+            "下载解读 Markdown",
+            downloads["summary"]["data"],
+            downloads["summary"]["file_name"],
+            "text/markdown",
+            width="stretch",
+        )
         layout = resolve_media_layout(
             attempt["request"].get("presentation", {}).get("layout", "auto"),
             figure_metadata=result["figure_metadata"],
@@ -242,12 +274,22 @@ def _render_single(attempt):
         ]
         for start in range(0, len(items), 2 if layout != "single_column" else 1):
             columns = st.columns(2) if layout != "single_column" else [st.container()]
-            for column, (kind, key, media, view) in zip(columns, items[start : start + len(columns)]):
+            for column, (kind, key, media, view) in zip(
+                columns, items[start : start + len(columns)]
+            ):
                 with column:
                     st.caption(describe_view(view))
                     st.image(media["data"])
-                    suffix, mime = ("gif", "image/gif") if kind == "animation" else ("png", "image/png")
-                    st.download_button(f"下载 {suffix.upper()}", media["data"], media["file_name"], mime, key=f"{suffix}_{key}")
+                    suffix, mime = (
+                        ("gif", "image/gif") if kind == "animation" else ("png", "image/png")
+                    )
+                    st.download_button(
+                        f"下载 {suffix.upper()}",
+                        media["data"],
+                        media["file_name"],
+                        mime,
+                        key=f"{suffix}_{key}",
+                    )
         with st.expander("查看本次指标"):
             st.dataframe(pd.DataFrame(attempt["metric_rows"]), width="stretch")
 
@@ -266,18 +308,44 @@ def _render_daily(attempt):
                 st.caption("AI 解读暂不可用，已显示确定性解读。")
     with main:
         coverage, cache = result["coverage"], result["cache"]
-        st.write(f"**{coverage['completed_pairs']}/{coverage['selected_pairs']} 对严格匹配样本**｜本次复用缓存 {cache['metric_pairs_reused']} 对")
+        st.write(
+            f"**{coverage['completed_pairs']}/{coverage['selected_pairs']} 对严格匹配样本**｜本次复用缓存 {cache['metric_pairs_reused']} 对"
+        )
         for start in range(0, len(attempt["media"]), 2):
             columns = st.columns(2)
             for column, item in zip(columns, attempt["media"][start : start + 2]):
                 with column:
                     st.caption(item["label"])
                     st.image(item["data"])
-                    st.download_button("下载 PNG", item["data"], item["file_name"], "image/png", key=f"daily_{item['file_name']}")
+                    st.download_button(
+                        "下载 PNG",
+                        item["data"],
+                        item["file_name"],
+                        "image/png",
+                        key=f"daily_{item['file_name']}",
+                    )
         columns = st.columns(3)
-        columns[0].download_button("下载逐起报 CSV", result["per_case"].to_csv(index=False).encode("utf-8-sig"), f"{result['context']['case_date']}_per_case.csv", "text/csv", width="stretch")
-        columns[1].download_button("下载汇总 CSV", result["summary"].to_csv(index=False).encode("utf-8-sig"), f"{result['context']['case_date']}_summary.csv", "text/csv", width="stretch")
-        columns[2].download_button("下载解读 Markdown", attempt["deterministic"].encode("utf-8"), f"{result['context']['case_date']}_insight.md", "text/markdown", width="stretch")
+        columns[0].download_button(
+            "下载逐起报 CSV",
+            result["per_case"].to_csv(index=False).encode("utf-8-sig"),
+            f"{result['context']['case_date']}_per_case.csv",
+            "text/csv",
+            width="stretch",
+        )
+        columns[1].download_button(
+            "下载汇总 CSV",
+            result["summary"].to_csv(index=False).encode("utf-8-sig"),
+            f"{result['context']['case_date']}_summary.csv",
+            "text/csv",
+            width="stretch",
+        )
+        columns[2].download_button(
+            "下载解读 Markdown",
+            attempt["deterministic"].encode("utf-8"),
+            f"{result['context']['case_date']}_insight.md",
+            "text/markdown",
+            width="stretch",
+        )
         with st.expander("查看全天汇总指标"):
             st.dataframe(result["summary"], width="stretch")
 
@@ -285,7 +353,7 @@ def _render_daily(attempt):
 st.title("强对流预报检验智能体")
 with st.sidebar:
     st.header("检验区域")
-    st.caption("默认：湖北区域（可按业务需要调整）")
+    st.caption("默认：湖北区域")
     lat_min = st.number_input("lat_min", value=DEFAULT_HUBEI_BBOX["lat_min"])
     lat_max = st.number_input("lat_max", value=DEFAULT_HUBEI_BBOX["lat_max"])
     lon_min = st.number_input("lon_min", value=DEFAULT_HUBEI_BBOX["lon_min"])
@@ -293,7 +361,9 @@ with st.sidebar:
 
 case_column, mode_column = st.columns([1.45, 1])
 with case_column:
-    case_key = st.selectbox("检验个例", list(CASES), format_func=lambda value: CASES[value]["label"])
+    case_key = st.selectbox(
+        "检验个例", list(CASES), format_func=lambda value: CASES[value]["label"]
+    )
 with mode_column:
     mode = st.radio("检验范围", ["全部起报（全天）", "单一起报"], horizontal=True)
 
@@ -311,7 +381,9 @@ if mode == "单一起报":
         generation += 1
         st.session_state["case_index_generation"] = generation
     try:
-        available_cases = _cached_cases(config["forecast_dir"], config["observation_dir"], generation)
+        available_cases = _cached_cases(
+            config["forecast_dir"], config["observation_dir"], generation
+        )
     except Exception as exc:
         available_cases, catalog_error = [], str(exc)
     else:
@@ -319,27 +391,50 @@ if mode == "单一起报":
     if catalog_error or not available_cases:
         st.error(catalog_error or "当前个例没有可用起报。")
         st.stop()
+
     def _case_label(item):
         init = item["init_time"]
         if config["display_clock"] == "BJT":
             init += timedelta(hours=8)
         return f"{init:%Y-%m-%d %H:%M} {config['display_clock']}｜{len(item['available_leads'])} 个时效"
+
     labels = {item["case_id"]: _case_label(item) for item in available_cases}
     with select:
-        selected_case_id = st.selectbox("风雷起报", list(labels), format_func=lambda value: labels[value])
-    prompt = st.text_area("检验要求", "使用35 dBZ阈值，只看前1小时，生成 CSI 和 ETS 曲线，并简要解读结果。")
+        selected_case_id = st.selectbox(
+            "风雷起报", list(labels), format_func=lambda value: labels[value]
+        )
+    prompt = st.text_area(
+        "检验要求", "使用35 dBZ阈值，只看前1小时，生成 CSI 和 ETS 曲线，并简要解读结果。"
+    )
     parse, default = st.columns(2)
     run_parse = parse.button("智能解析并运行", type="primary", width="stretch")
     run_default = default.button("使用推荐方案", width="stretch")
     if run_parse or run_default:
         try:
-            request = default_request() if run_default else parse_request(prompt, available_cases=available_cases)
+            request = (
+                default_request()
+                if run_default
+                else parse_request(prompt, available_cases=available_cases)
+            )
             with st.spinner("正在计算…"):
                 st.session_state["verification_attempt"] = _execute_single(
-                    request, cases=available_cases, selected_case_id=selected_case_id, config=config, bbox=bbox
+                    request,
+                    cases=available_cases,
+                    selected_case_id=selected_case_id,
+                    config=config,
+                    bbox=bbox,
                 )
-        except (AmbiguousCaseError, DataContractError, NoDataError, RequestValidationError, ValueError) as exc:
-            st.session_state["verification_attempt"] = {"kind": "single", "decision": {"status": "execution_error", "message": str(exc)}}
+        except (
+            AmbiguousCaseError,
+            DataContractError,
+            NoDataError,
+            RequestValidationError,
+            ValueError,
+        ) as exc:
+            st.session_state["verification_attempt"] = {
+                "kind": "single",
+                "decision": {"status": "execution_error", "message": str(exc)},
+            }
     attempt = st.session_state.get("verification_attempt")
     if attempt and attempt.get("kind") == "single":
         _render_single(attempt)
@@ -354,15 +449,23 @@ else:
     run_default = default.button("使用推荐方案", width="stretch")
     if run_parse or run_default:
         progress = st.progress(0.0)
+
         def _progress(done, total, _label):
             progress.progress(done / total)
+
         try:
-            request = default_daily_request(case_key) if run_default else parse_daily_request(prompt)
+            request = (
+                default_daily_request(case_key) if run_default else parse_daily_request(prompt)
+            )
             st.session_state["verification_attempt"] = _execute_daily(
                 request, config=config, case_date=case_key, bbox=bbox, progress_callback=_progress
             )
         except Exception as exc:
-            st.session_state["verification_attempt"] = {"kind": "daily", "status": "execution_error", "message": str(exc)}
+            st.session_state["verification_attempt"] = {
+                "kind": "daily",
+                "status": "execution_error",
+                "message": str(exc),
+            }
         finally:
             progress.empty()
     attempt = st.session_state.get("verification_attempt")
