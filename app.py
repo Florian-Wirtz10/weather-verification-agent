@@ -404,7 +404,8 @@ if mode == "单一起报":
             "风雷起报", list(labels), format_func=lambda value: labels[value]
         )
     prompt = st.text_area(
-        "检验要求", "使用35 dBZ阈值，只看前1小时，生成 CSI 和 ETS 曲线，并简要解读结果。"
+        "检验要求",
+        "使用35 dBZ阈值，只看前1小时，生成 CSI ， ETS 曲线和预报-观测时序变化图，并简要解读结果。",
     )
     parse, default = st.columns(2)
     run_parse = parse.button("智能解析并运行", type="primary", width="stretch")
