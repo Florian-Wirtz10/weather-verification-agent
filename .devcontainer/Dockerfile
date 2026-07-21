@@ -1,9 +1,8 @@
 # Python runtime for the agent/verification/report code.
 #
-# Node.js (for Claude Code) and the non-root user are provisioned via
-# devcontainer Features in devcontainer.json, not here — that avoids piping
-# a remote install script into bash and keeps this file a single-purpose,
-# auditable layer: "what Python needs to build and run".
+# Node.js for Codex CLI and the non-root user are provisioned by
+# devcontainer.json. This image remains a single-purpose, auditable Python
+# application layer.
 FROM python:3.11-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
