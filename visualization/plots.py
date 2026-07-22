@@ -387,88 +387,134 @@ def plot_score_time_series(lead_minutes, scores_by_threshold, score_name, title=
 
 
 def plot_forecast_observed_rate_trajectory(
-    lead_minutes, contingency_by_threshold, title=None
+    lead_minutes, contingency_tables, threshold_dbz, title=None
 ):
-    """Plot the rate relationship for one initialization as lead-time trajectories.
+    """Plot one initialization as a joint rate trajectory with marginal densities.
 
-    A single initialization provides only a small, temporally ordered sample.
-    It is therefore shown as a connected trajectory rather than being presented
-    as a population distribution.  Multiple thresholds use separate panels
-    because changing the threshold changes the event definition and rate scale.
+    Each threshold is rendered by a separate call/figure.  This preserves the
+    approved joint-plot structure without combining event definitions that
+    naturally occupy different rate ranges.
     """
     leads = np.asarray(lead_minutes, dtype=float)
     if leads.ndim != 1 or leads.size == 0:
         raise ValueError("lead_minutes must be a non-empty one-dimensional sequence")
-    thresholds = sorted(contingency_by_threshold)
-    if not thresholds:
-        raise ValueError("at least one threshold is required for a rate trajectory")
+    tables = list(contingency_tables)
+    if len(tables) != leads.size:
+        raise ValueError("contingency_tables must contain one table per lead")
+    observed_rates = []
+    forecast_rates = []
+    for table in tables:
+        valid_count = int(table.get("valid_count", 0))
+        if valid_count <= 0:
+            observed_rates.append(np.nan)
+            forecast_rates.append(np.nan)
+            continue
+        observed_rates.append(
+            (int(table["hits"]) + int(table["misses"])) / valid_count
+        )
+        forecast_rates.append(
+            (int(table["hits"]) + int(table["false_alarms"])) / valid_count
+        )
+    observed = np.asarray(observed_rates, dtype=float)
+    forecast = np.asarray(forecast_rates, dtype=float)
+    finite = np.isfinite(observed) & np.isfinite(forecast)
+    if not np.any(finite):
+        raise ValueError("rate trajectory has no finite matched samples")
 
-    columns = min(2, len(thresholds))
-    rows = int(np.ceil(len(thresholds) / columns))
-    fig, axes = plt.subplots(
-        rows,
-        columns,
-        figsize=(7.2 * columns, 5.8 * rows),
-        squeeze=False,
-        layout="constrained",
+    fig = plt.figure(figsize=(9.5, 8.2))
+    grid = fig.add_gridspec(
+        2,
+        2,
+        width_ratios=(4.4, 1.15),
+        height_ratios=(4.4, 1.15),
+        left=0.10,
+        right=0.94,
+        bottom=0.11,
+        top=0.87,
+        wspace=0.12,
+        hspace=0.20,
     )
-    active_axes = []
-    scatter = None
-    for ax, threshold in zip(axes.flat, thresholds):
-        tables = list(contingency_by_threshold[threshold])
-        if len(tables) != leads.size:
-            raise ValueError("every threshold must have one contingency table per lead")
-        observed_rates = []
-        forecast_rates = []
-        for table in tables:
-            valid_count = int(table.get("valid_count", 0))
-            if valid_count <= 0:
-                observed_rates.append(np.nan)
-                forecast_rates.append(np.nan)
-                continue
-            observed_rates.append(
-                (int(table["hits"]) + int(table["misses"])) / valid_count
-            )
-            forecast_rates.append(
-                (int(table["hits"]) + int(table["false_alarms"])) / valid_count
-            )
-        observed = np.asarray(observed_rates, dtype=float)
-        forecast = np.asarray(forecast_rates, dtype=float)
-        finite = np.isfinite(observed) & np.isfinite(forecast)
-        ax.plot(
-            observed[finite],
-            forecast[finite],
-            color="#6f7780",
-            linewidth=1.1,
-            alpha=0.75,
-            zorder=1,
-        )
-        scatter = ax.scatter(
-            observed[finite],
-            forecast[finite],
-            c=leads[finite],
-            cmap="viridis",
-            s=42,
-            edgecolors="#30343b",
-            linewidths=0.45,
-            zorder=2,
-        )
-        ax.plot([0, 1], [0, 1], "--", color="#777777", linewidth=1.1)
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.set_aspect("equal", adjustable="box")
-        ax.set_xlabel("Observed rate")
-        ax.set_ylabel("Forecast rate")
-        ax.set_title(f"{float(threshold):g} dBZ | {int(finite.sum())} matched leads")
-        ax.grid(False)
-        active_axes.append(ax)
-    for ax in axes.flat[len(thresholds) :]:
-        ax.set_visible(False)
-    if scatter is not None:
-        colorbar = fig.colorbar(scatter, ax=active_axes, shrink=0.82, pad=0.025)
-        colorbar.set_label("Forecast lead time (min)")
-    fig.suptitle(title or "Forecast-rate / observed-rate lead-time trajectory")
+    joint = fig.add_subplot(grid[0, 0])
+    forecast_density = fig.add_subplot(grid[0, 1], sharey=joint)
+    observed_density = fig.add_subplot(grid[1, 0], sharex=joint)
+    colorbar_axis = fig.add_subplot(grid[1, 1])
+
+    joint.plot(
+        observed[finite],
+        forecast[finite],
+        color="#6f7780",
+        linewidth=1.0,
+        alpha=0.7,
+        zorder=1,
+    )
+    scatter = joint.scatter(
+        observed[finite],
+        forecast[finite],
+        c=leads[finite],
+        cmap="viridis",
+        s=38,
+        edgecolors="#30343b",
+        linewidths=0.45,
+        zorder=2,
+    )
+    joint.plot([0, 1], [0, 1], "--", color="#777777", linewidth=1.1)
+    joint.set_xlim(0, 1)
+    joint.set_ylim(0, 1)
+    joint.set_xlabel("Observed rate")
+    joint.set_ylabel("Forecast rate")
+    joint.set_title(
+        f"(a) {float(threshold_dbz):g} dBZ | {int(finite.sum())} matched leads",
+        loc="left",
+    )
+    joint.grid(False)
+    joint.tick_params(direction="in", top=True, right=True)
+
+    x, x_density = _smooth_rate_density(observed[finite])
+    y, y_density = _smooth_rate_density(forecast[finite])
+    observed_density.fill_between(x, 0, x_density, color="#2a78d6", alpha=0.38)
+    observed_density.plot(x, x_density, color="#2a78d6", linewidth=1.25)
+    forecast_density.fill_betweenx(y, 0, y_density, color="#2a78d6", alpha=0.38)
+    forecast_density.plot(y_density, y, color="#2a78d6", linewidth=1.25)
+    observed_density.set_xlabel("Observed rate")
+    observed_density.set_ylabel("Density")
+    observed_density.grid(False)
+    observed_density.tick_params(direction="in")
+    forecast_density.set_xlabel("Density")
+    forecast_density.grid(False)
+    forecast_density.tick_params(
+        axis="y", labelleft=False, labelright=True, direction="in"
+    )
+    forecast_density.tick_params(axis="x", direction="in")
+
+    colorbar = fig.colorbar(scatter, cax=colorbar_axis, orientation="horizontal")
+    colorbar.set_label("Forecast lead time (min)")
+    colorbar_axis.set_box_aspect(0.22)
+    fig.suptitle(
+        title or "Forecast rate vs observed rate with marginal distributions",
+        fontsize=14,
+        fontweight="bold",
+        y=0.96,
+    )
+    fig.text(
+        0.10,
+        0.03,
+        "Each point is one matched lead; the thin line follows lead-time order.",
+        fontsize=9.2,
+        color="#565d66",
+    )
     return fig
+
+
+def _smooth_rate_density(values, *, bins=80, sigma_bins=2.0):
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    histogram, edges = np.histogram(values, bins=bins, range=(0, 1), density=True)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    radius = max(2, int(round(4 * sigma_bins)))
+    offsets = np.arange(-radius, radius + 1, dtype=float)
+    kernel = np.exp(-0.5 * (offsets / sigma_bins) ** 2)
+    kernel /= kernel.sum()
+    return centers, np.convolve(histogram, kernel, mode="same")
 
 
 def _break_time_gaps(lead_minutes, values):

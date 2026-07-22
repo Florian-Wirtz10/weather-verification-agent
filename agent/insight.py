@@ -200,9 +200,15 @@ def _figure_catalog_item(view: Mapping[str, Any]) -> dict[str, Any] | None:
         metric = str(view["metric"]).upper()
         return {"type": view_type, "label": f"{metric} 随预报时效变化曲线", "metric": metric}
     if view_type == "forecast_observed_rate":
+        threshold = _finite_float(view.get("threshold_dbz"))
         return {
             "type": view_type,
-            "label": "预报率—观测率随预报时效轨迹",
+            "label": (
+                f"{_fmt(threshold)} dBZ 预报率—观测率时效轨迹"
+                if threshold is not None
+                else "预报率—观测率时效轨迹"
+            ),
+            "threshold_dbz": threshold,
         }
     if view_type in {"reflectivity_comparison", "reflectivity_error"}:
         lead = _finite_float(view.get("lead"))

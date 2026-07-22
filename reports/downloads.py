@@ -83,7 +83,10 @@ def describe_view(view: Mapping[str, Any]) -> str:
     if view_type == "score_time_series":
         return f"{str(view.get('metric', '')).upper()} 随预报时效变化曲线"
     if view_type == "forecast_observed_rate":
-        return "预报率—观测率随预报时效轨迹"
+        threshold = view.get("threshold_dbz")
+        if isinstance(threshold, Real) and not isinstance(threshold, bool):
+            return f"{float(threshold):g} dBZ 预报率—观测率时效轨迹"
+        return "预报率—观测率时效轨迹"
     lead = view.get("lead")
     if view_type == "reflectivity_comparison":
         return f"{lead} 分钟预报与观测反射率对比"
@@ -273,7 +276,12 @@ def _figure_filename(index: int, view: Mapping[str, Any]) -> str:
     if view_type == "score_time_series":
         detail = str(view.get("metric") or "score")
     elif view_type == "forecast_observed_rate":
-        detail = "rate-trajectory"
+        threshold = view.get("threshold_dbz")
+        detail = (
+            f"{float(threshold):g}dbz-rate-trajectory"
+            if isinstance(threshold, Real) and not isinstance(threshold, bool)
+            else "rate-trajectory"
+        )
     else:
         lead = view.get("lead")
         detail = f"{int(lead):03d}min" if isinstance(lead, int) else "lead"
@@ -329,7 +337,14 @@ def _validated_view(value: Any) -> dict[str, Any]:
             raise ValueError(f"unsupported export metric: {metric!r}")
         return {"type": view_type, "metric": metric}
     if view_type == "forecast_observed_rate":
-        return {"type": view_type}
+        threshold = value.get("threshold_dbz")
+        if (
+            isinstance(threshold, bool)
+            or not isinstance(threshold, Real)
+            or not 0 <= float(threshold) <= 75
+        ):
+            raise ValueError(f"invalid export threshold: {threshold!r}")
+        return {"type": view_type, "threshold_dbz": float(threshold)}
     if view_type == "reflectivity_animation":
         lead_range = value.get("lead_range_minutes")
         fps = value.get("fps")

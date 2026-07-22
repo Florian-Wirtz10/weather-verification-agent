@@ -344,6 +344,16 @@ def run_fenglei_case_verification(
     )
     missing_leads = [lead for lead in expected_leads if lead not in available_leads]
     resolved_views, unavailable_views = _normalize_execution_views(views, selected_leads)
+    estimated_static_outputs = sum(
+        len(thresholds) if view["type"] == "forecast_observed_rate" else 1
+        for view in resolved_views
+        if view["type"] != "reflectivity_animation"
+    )
+    if estimated_static_outputs > MAX_VIEWS:
+        raise DataContractError(
+            f"the requested thresholds and views would render {estimated_static_outputs} "
+            f"figures; at most {MAX_VIEWS} are allowed"
+        )
     presentation_plan = _resolve_presentation_strategy(presentation, resolved_views)
     needed_frame_leads = {
         view["lead"]
@@ -419,15 +429,23 @@ def run_fenglei_case_verification(
                 selected_leads, scores_by_threshold, metric
             )
         elif view_type == "forecast_observed_rate":
-            contingency_by_threshold = {
-                threshold: [entry["contingency"][threshold] for entry in per_lead]
-                for threshold in thresholds
-            }
-            figures[key] = plot_forecast_observed_rate_trajectory(
-                selected_leads,
-                contingency_by_threshold,
-                title="Forecast-rate / observed-rate lead-time trajectory",
-            )
+            for threshold in thresholds:
+                threshold_key = (
+                    key
+                    if len(thresholds) == 1
+                    else f"{key}_threshold_{float(threshold):g}dbz"
+                )
+                figures[threshold_key] = plot_forecast_observed_rate_trajectory(
+                    selected_leads,
+                    [entry["contingency"][threshold] for entry in per_lead],
+                    threshold,
+                    title="Forecast rate vs observed rate with marginal distributions",
+                )
+                figure_metadata[threshold_key] = {
+                    "type": view_type,
+                    "threshold_dbz": float(threshold),
+                }
+            continue
         elif view_type == "reflectivity_comparison":
             frame = frames[view["lead"]]
             figures[key] = plot_reflectivity_comparison(

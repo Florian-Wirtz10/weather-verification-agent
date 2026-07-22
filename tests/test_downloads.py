@@ -168,6 +168,29 @@ def test_download_bundle_exports_valid_animation_gif():
         assert any(name.startswith("animations/") and name.endswith(".gif") for name in archive.namelist())
 
 
+def test_download_bundle_accepts_threshold_specific_rate_figure_metadata():
+    result, request, rows, facts = _download_inputs()
+    plt.close(result["figures"]["view_02"])
+    result["figures"] = {"view_01": result["figures"]["view_01"]}
+    result["figure_metadata"] = {
+        "view_01": {"type": "forecast_observed_rate", "threshold_dbz": 15.0}
+    }
+    request["views"] = [{"type": "forecast_observed_rate"}]
+
+    artifacts = build_case_download_artifacts(
+        result=result,
+        request=request,
+        metric_rows=rows,
+        facts=facts,
+        deterministic_summary="测试。",
+        ai_insight=None,
+    )
+
+    image = artifacts["images"]["view_01"]
+    assert "15 dBZ" in image["label"]
+    assert "15dbz-rate-trajectory" in image["file_name"]
+
+
 def test_downloads_can_reuse_pngs_and_request_fingerprint_avoids_name_collision():
     result, request, rows, facts = _download_inputs()
     first = build_case_download_artifacts(

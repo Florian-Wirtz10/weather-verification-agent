@@ -50,21 +50,15 @@ def test_score_series_breaks_missing_native_leads_and_uses_30_minute_ticks():
 
 
 def test_rate_trajectory_uses_separate_threshold_panels_and_lead_colours():
-    tables = {
-        10: [
-            {"hits": 4, "misses": 1, "false_alarms": 2, "valid_count": 10},
-            {"hits": 3, "misses": 2, "false_alarms": 1, "valid_count": 10},
-        ],
-        35: [
-            {"hits": 1, "misses": 1, "false_alarms": 0, "valid_count": 10},
-            {"hits": 1, "misses": 0, "false_alarms": 1, "valid_count": 10},
-        ],
-    }
+    tables = [
+        {"hits": 4, "misses": 1, "false_alarms": 2, "valid_count": 10},
+        {"hits": 3, "misses": 2, "false_alarms": 1, "valid_count": 10},
+    ]
 
-    figure = plot_forecast_observed_rate_trajectory([6, 12], tables)
+    figure = plot_forecast_observed_rate_trajectory([6, 12], tables, 15)
 
     main_axes = [axis for axis in figure.axes if axis.get_xlabel() == "Observed rate"]
-    assert len(main_axes) == 2
+    assert len(main_axes) == 2  # joint scatter plus bottom marginal density
     assert all(axis.collections for axis in main_axes)
     assert all(not any(line.get_visible() for line in axis.get_xgridlines()) for axis in main_axes)
 

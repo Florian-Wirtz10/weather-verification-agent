@@ -85,7 +85,7 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
     assert result["figure_metadata"] == {
         "view_01": {"type": "score_time_series", "metric": "csi"},
         "view_02": {"type": "score_time_series", "metric": "ets"},
-        "view_03": {"type": "forecast_observed_rate"},
+        "view_03": {"type": "forecast_observed_rate", "threshold_dbz": 20.0},
         "view_04": {"type": "reflectivity_comparison", "lead": 6},
         "view_05": {"type": "reflectivity_error", "lead": 12},
     }
@@ -93,6 +93,24 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
     assert result["coverage"]["selected_leads"] == [6, 12]
     assert result["coverage"]["missing_leads"] == []
     assert result["per_lead"][0]["contingency"][20]["valid_count"] > 0
+
+    rate_panels = run_fenglei_case_verification(
+        fenglei_dir=fenglei_dir,
+        radar_dir=radar_dir,
+        bbox=(29.9, 30.1, 109.9, 110.1),
+        thresholds=(20, 35),
+        lead_range=(0, 12),
+        views=[{"type": "forecast_observed_rate"}],
+    )
+    assert list(rate_panels["figures"]) == [
+        "view_01_threshold_20dbz",
+        "view_01_threshold_35dbz",
+    ]
+    assert [
+        item["threshold_dbz"] for item in rate_panels["figure_metadata"].values()
+    ] == [20.0, 35.0]
+    for figure in rate_panels["figures"].values():
+        plt.close(figure)
 
     open_figures_before_animation = set(plt.get_fignums())
     animated = run_fenglei_case_verification(
