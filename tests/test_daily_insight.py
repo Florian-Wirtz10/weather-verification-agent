@@ -20,6 +20,7 @@ def _result():
                 "hits": 10,
                 "misses": 2,
                 "false_alarms": 3,
+                "valid_count": 20,
             }
             for init in (0, 6)
             for lead, value in ((6, 0.6), (12, 0.4))
@@ -61,8 +62,9 @@ def test_daily_insight_facts_are_path_free_and_number_figures():
     facts = build_daily_insight_facts(_result(), metric="csi", diagnostic_threshold_dbz=15)
 
     assert facts["requested_metric"] == "csi"
-    assert [item["number"] for item in facts["figure_catalog"]] == [1, 2, 3]
+    assert [item["number"] for item in facts["figure_catalog"]] == [1, 2, 3, 4]
     assert facts["threshold_summary"][0]["first"]["value"] == 0.6
+    assert facts["rate_diagnostics"]["sample_count"] == 4
     assert "path" not in str(facts).lower()
     assert "不预设" in render_daily_deterministic_summary(facts)
 

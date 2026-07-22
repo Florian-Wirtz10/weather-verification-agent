@@ -20,6 +20,7 @@ SCHEMA_VERSION = "1"
 SUPPORTED_METRICS = ("csi", "pod", "far", "bias_score", "ets")
 SUPPORTED_VIEW_TYPES = (
     "score_time_series",
+    "forecast_observed_rate",
     "reflectivity_comparison",
     "reflectivity_error",
     "reflectivity_animation",
@@ -101,7 +102,11 @@ def validate_request(parsed: object) -> dict[str, Any]:
     views = _validate_views(parsed.get("views", []), unmatched)
     if len(views) > MAX_VIEWS:
         raise RequestValidationError(f"views 最多允许 {MAX_VIEWS} 项")
-    spatial_count = sum(view["type"] != "score_time_series" for view in views)
+    spatial_count = sum(
+        view["type"]
+        in {"reflectivity_comparison", "reflectivity_error", "reflectivity_animation"}
+        for view in views
+    )
     if spatial_count > MAX_SPATIAL_VIEWS:
         raise RequestValidationError(f"空间图最多允许 {MAX_SPATIAL_VIEWS} 张")
     insight = _validate_insight(parsed.get("insight", {}))
@@ -238,6 +243,8 @@ def _validate_views(value: object, unmatched: list[str]) -> list[dict[str, Any]]
 
         if view_type == "score_time_series":
             view = _validate_score_view(raw_view, unmatched)
+        elif view_type == "forecast_observed_rate":
+            view = {"type": view_type}
         elif view_type == "reflectivity_animation":
             view = _validate_animation_view(raw_view)
         else:
@@ -301,8 +308,10 @@ def _validate_animation_view(raw_view: dict[str, Any]) -> dict[str, Any]:
 def _record_extra_view_parameters(
     raw_view: dict[str, Any], view_type: str, unmatched: list[str]
 ) -> None:
-    if view_type == "score_time_series":
+    if view_type in {"score_time_series", "forecast_observed_rate"}:
         allowed = {"type", "metric"}
+        if view_type == "forecast_observed_rate":
+            allowed = {"type"}
     elif view_type == "reflectivity_animation":
         allowed = {"type", "lead_range_minutes", "fps"}
     else:

@@ -23,7 +23,10 @@ _SYSTEM_PROMPT = """你是强对流预报公平检验平台的全天结果解读
 4. 公平口径与边界：说明同一观测、区域、时空配准、阈值和汇总口径；平台只呈现证据，
    不预设风雷或未来上游模型谁优谁劣。全天个例仍不能代表模型的普遍能力。
 
-只讨论 requested_metric，不主动引入其它评分。不要提到代码、路径、API、提示词或缓存实现。"""
+requested_metric 非空时，只讨论该评分，不主动引入其它评分；为空时不要讨论任何评分。
+仅当 rate_diagnostics 非空时，可以客观说明预报率、
+观测率及散点相对 1:1 线的数量关系；不要把二者误称为 CSI、Bias 等评分。
+不要提到代码、路径、API、提示词或缓存实现。"""
 
 
 def _number(value) -> float | None:
@@ -145,13 +148,45 @@ def build_daily_insight_facts(
         "score_distribution": (
             f"{diagnostic_threshold_dbz:g} dBZ 下各时效 {metric.upper()} 分布箱线图"
         ),
+        "forecast_observed_rate_distribution": (
+            f"{diagnostic_threshold_dbz:g} dBZ 下全天预报率—观测率联合分布"
+        ),
     }
     requested_views = list(views) if views is not None else list(view_labels)
+    score_view_types = {"daily_score_curve", "daily_score_heatmap", "score_distribution"}
+    has_score_view = any(view in score_view_types for view in requested_views)
     figure_catalog = [
         {"number": number, "type": view, "label": view_labels[view]}
         for number, view in enumerate(requested_views, start=1)
         if view in view_labels
     ]
+    rate_diagnostics = None
+    rate_columns = {"valid_count", "hits", "misses", "false_alarms"}
+    if (
+        "forecast_observed_rate_distribution" in requested_views
+        and rate_columns.issubset(selected.columns)
+    ):
+        valid_rate_rows = selected[selected["valid_count"] > 0].copy()
+        if not valid_rate_rows.empty:
+            valid_count = valid_rate_rows["valid_count"].to_numpy(dtype=float)
+            forecast_rate = (
+                valid_rate_rows["hits"].to_numpy(dtype=float)
+                + valid_rate_rows["false_alarms"].to_numpy(dtype=float)
+            ) / valid_count
+            observed_rate = (
+                valid_rate_rows["hits"].to_numpy(dtype=float)
+                + valid_rate_rows["misses"].to_numpy(dtype=float)
+            ) / valid_count
+            rate_diagnostics = {
+                "sample_count": int(len(valid_rate_rows)),
+                "mean_forecast_rate": _number(np.mean(forecast_rate)),
+                "mean_observed_rate": _number(np.mean(observed_rate)),
+                "mean_forecast_minus_observed": _number(
+                    np.mean(forecast_rate - observed_rate)
+                ),
+                "above_one_to_one_count": int(np.sum(forecast_rate > observed_rate)),
+                "below_one_to_one_count": int(np.sum(forecast_rate < observed_rate)),
+            }
     return {
         "context": {
             "case_date": context.get("case_date"),
@@ -175,11 +210,12 @@ def build_daily_insight_facts(
                 "discarded_observation_revisions",
             )
         },
-        "requested_metric": metric,
+        "requested_metric": metric if has_score_view else None,
         "diagnostic_threshold_dbz": float(diagnostic_threshold_dbz),
-        "threshold_summary": threshold_facts,
-        "lead_distributions": lead_distributions,
-        "weakest_cases": weakest_cases,
+        "threshold_summary": threshold_facts if has_score_view else [],
+        "lead_distributions": lead_distributions if has_score_view else [],
+        "weakest_cases": weakest_cases if has_score_view else [],
+        "rate_diagnostics": rate_diagnostics,
         "figure_catalog": figure_catalog,
         "limitations": [
             "全天汇总按时效和阈值汇总列联表后重新计算评分，不是单样本评分的简单平均。",
@@ -191,7 +227,8 @@ def build_daily_insight_facts(
 
 
 def render_daily_deterministic_summary(facts: Mapping[str, Any]) -> str:
-    metric = str(facts.get("requested_metric", "score")).upper()
+    requested_metric = facts.get("requested_metric")
+    metric = str(requested_metric).upper() if requested_metric else "评分"
     figure_count = len(facts.get("figure_catalog", []))
     figure_text = f"共生成 {figure_count} 张已请求视图" if figure_count else "未生成图表"
     lines = [f"本次全天结果按同一口径汇总 {metric}，{figure_text}。"]
@@ -202,6 +239,13 @@ def render_daily_deterministic_summary(facts: Mapping[str, Any]) -> str:
         lines.append(
             f"{item['threshold_dbz']:g} dBZ：{first['lead_minutes']}分钟 {first['value']:.3f}，"
             f"{last['lead_minutes']}分钟 {last['value']:.3f}。"
+        )
+    rate_diagnostics = facts.get("rate_diagnostics")
+    if isinstance(rate_diagnostics, Mapping):
+        lines.append(
+            f"预报率—观测率图包含 {rate_diagnostics.get('sample_count', 0)} 个匹配样本；"
+            f"平均预报率 {_number(rate_diagnostics.get('mean_forecast_rate')) or 0:.3f}，"
+            f"平均观测率 {_number(rate_diagnostics.get('mean_observed_rate')) or 0:.3f}。"
         )
     lines.append("平台只呈现同口径证据，不预设风雷或未来上游模型谁更优。")
     return "\n".join(lines)

@@ -81,6 +81,19 @@ def test_missing_views_gets_one_csi_chart_not_all_charts():
     assert result["views"] == [{"type": "score_time_series", "metric": "csi"}]
 
 
+def test_forecast_observed_rate_view_is_parameter_free_and_supported():
+    result = validate_request({"views": [{"type": "forecast_observed_rate"}]})
+
+    assert result["views"] == [{"type": "forecast_observed_rate"}]
+    assert result["unmatched_requests"] == []
+
+    with_extra = validate_request(
+        {"views": [{"type": "forecast_observed_rate", "chart": "free-form"}]}
+    )
+    assert with_extra["views"] == [{"type": "forecast_observed_rate"}]
+    assert any("chart" in item for item in with_extra["unmatched_requests"])
+
+
 def test_unknown_and_malicious_views_are_preserved_and_never_executed():
     result = validate_request(
         {

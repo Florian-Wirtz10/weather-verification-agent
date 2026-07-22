@@ -117,9 +117,9 @@ def test_phase5_full_day_result_has_three_diagnostics_and_downloads(tmp_path, mo
     app = _button(app, "使用推荐方案").click().run()
 
     assert not app.exception
-    assert len(app.image) == 3
+    assert len(app.image) == 4
     download_labels = [button.label for button in app.download_button]
-    assert download_labels.count("下载 PNG") == 3
+    assert download_labels.count("下载 PNG") == 4
     assert "下载逐起报 CSV" in download_labels
     assert "下载汇总 CSV" in download_labels
     assert "下载解读 Markdown" in download_labels

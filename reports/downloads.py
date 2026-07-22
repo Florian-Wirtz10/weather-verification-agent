@@ -20,6 +20,7 @@ MAX_EXPORT_ANIMATIONS = 3
 MAX_EXPORT_BYTES = 100 * 1024 * 1024
 _ALLOWED_VIEW_TYPES = {
     "score_time_series",
+    "forecast_observed_rate",
     "reflectivity_comparison",
     "reflectivity_error",
     "reflectivity_animation",
@@ -81,6 +82,8 @@ def describe_view(view: Mapping[str, Any]) -> str:
     view_type = view.get("type")
     if view_type == "score_time_series":
         return f"{str(view.get('metric', '')).upper()} 随预报时效变化曲线"
+    if view_type == "forecast_observed_rate":
+        return "预报率—观测率随预报时效轨迹"
     lead = view.get("lead")
     if view_type == "reflectivity_comparison":
         return f"{lead} 分钟预报与观测反射率对比"
@@ -269,6 +272,8 @@ def _figure_filename(index: int, view: Mapping[str, Any]) -> str:
     view_type = str(view.get("type") or "figure")
     if view_type == "score_time_series":
         detail = str(view.get("metric") or "score")
+    elif view_type == "forecast_observed_rate":
+        detail = "rate-trajectory"
     else:
         lead = view.get("lead")
         detail = f"{int(lead):03d}min" if isinstance(lead, int) else "lead"
@@ -323,6 +328,8 @@ def _validated_view(value: Any) -> dict[str, Any]:
         if metric not in _ALLOWED_METRICS:
             raise ValueError(f"unsupported export metric: {metric!r}")
         return {"type": view_type, "metric": metric}
+    if view_type == "forecast_observed_rate":
+        return {"type": view_type}
     if view_type == "reflectivity_animation":
         lead_range = value.get("lead_range_minutes")
         fps = value.get("fps")
@@ -497,6 +504,7 @@ def _safe_facts(value: Mapping[str, Any]) -> dict[str, Any]:
             "coverage",
             "requested_metrics",
             "thresholds",
+            "rate_diagnostics",
             "undefined_values",
             "limitations",
             "figure_catalog",

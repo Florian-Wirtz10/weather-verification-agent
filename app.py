@@ -32,6 +32,7 @@ from agent import (
 from reports import build_case_download_artifacts, describe_view, figure_to_png
 from verification.batch import run_daily_fenglei_verification
 from visualization.batch_plots import (
+    plot_forecast_observed_rate_distribution,
     plot_daily_score_curves,
     plot_daily_score_distribution,
     plot_daily_score_heatmap,
@@ -154,11 +155,19 @@ def _daily_media(result, request):
         "score_distribution": lambda n: plot_daily_score_distribution(
             result["per_case"], metric, threshold, figure_number=n
         ),
+        "forecast_observed_rate_distribution": lambda n: (
+            plot_forecast_observed_rate_distribution(
+                result["per_case"], threshold, figure_number=n
+            )
+        ),
     }
     labels = {
         "daily_score_curve": f"全天汇总 {metric.upper()} 随时效变化",
         "daily_score_heatmap": f"{threshold:g} dBZ 起报时刻×时效",
         "score_distribution": f"{threshold:g} dBZ 跨起报分布",
+        "forecast_observed_rate_distribution": (
+            f"{threshold:g} dBZ 全天预报率—观测率联合分布"
+        ),
     }
     media = []
     for number, view in enumerate(request["views"], 1):
@@ -443,7 +452,7 @@ else:
     prompt = st.text_area(
         "检验要求",
         f"检验{date.fromisoformat(case_key):%Y年%m月%d日}全部起报，使用5、15、25、35 dBZ阈值，"
-        "查看 CSI 曲线、15 dBZ 热力图和分布图，并全面解读。",
+        "查看 CSI 曲线、15 dBZ 热力图、跨起报分布图和预报率—观测率联合分布，并全面解读。",
     )
     parse, default = st.columns(2)
     run_parse = parse.button("智能解析并运行", type="primary", width="stretch")

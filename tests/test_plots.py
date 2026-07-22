@@ -9,6 +9,8 @@ from visualization.plots import (
     _break_time_gaps,
     _reflectivity_cmap_norm,
     _reflectivity_display_data,
+    plot_forecast_observed_rate_trajectory,
+    plot_reflectivity_comparison,
     plot_reflectivity_error,
     plot_score_time_series,
 )
@@ -43,6 +45,47 @@ def test_score_series_breaks_missing_native_leads_and_uses_30_minute_ticks():
     assert np.isnan(line.get_xdata()).sum() == 1
     ticks = figure.axes[0].xaxis.get_major_locator().tick_values(0, 60)
     np.testing.assert_allclose(np.diff(ticks), 30)
+    assert not any(line.get_visible() for line in figure.axes[0].get_xgridlines())
+    assert not any(line.get_visible() for line in figure.axes[0].get_ygridlines())
+
+
+def test_rate_trajectory_uses_separate_threshold_panels_and_lead_colours():
+    tables = {
+        10: [
+            {"hits": 4, "misses": 1, "false_alarms": 2, "valid_count": 10},
+            {"hits": 3, "misses": 2, "false_alarms": 1, "valid_count": 10},
+        ],
+        35: [
+            {"hits": 1, "misses": 1, "false_alarms": 0, "valid_count": 10},
+            {"hits": 1, "misses": 0, "false_alarms": 1, "valid_count": 10},
+        ],
+    }
+
+    figure = plot_forecast_observed_rate_trajectory([6, 12], tables)
+
+    main_axes = [axis for axis in figure.axes if axis.get_xlabel() == "Observed rate"]
+    assert len(main_axes) == 2
+    assert all(axis.collections for axis in main_axes)
+    assert all(not any(line.get_visible() for line in axis.get_xgridlines()) for axis in main_axes)
+
+
+def test_reflectivity_comparison_adds_boundaries_without_changing_extent_or_colourbar():
+    common = {
+        "lat": np.array([29.0, 33.5]),
+        "lon": np.array([108.0, 116.5]),
+        "valid_time": datetime(2025, 4, 11, 2, 18),
+        "units": "dBZ",
+    }
+    forecast = GriddedField(data=np.array([[10.0, 20.0], [30.0, 40.0]]), product="forecast", **common)
+    obs = GriddedField(data=np.array([[15.0, 25.0], [35.0, 45.0]]), product="obs", **common)
+
+    figure = plot_reflectivity_comparison(forecast, obs)
+
+    for axis in figure.axes[:2]:
+        assert axis.lines
+        np.testing.assert_allclose(axis.get_xlim(), [108.0, 116.5])
+        np.testing.assert_allclose(axis.get_ylim(), [29.0, 33.5])
+        np.testing.assert_allclose(axis.images[0].norm.boundaries, _REFLECTIVITY_BOUNDS)
 
 
 def test_break_time_gaps_rejects_mismatched_lengths():

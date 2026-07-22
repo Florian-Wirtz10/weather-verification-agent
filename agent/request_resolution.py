@@ -23,7 +23,7 @@ def resolve_request(
         return _decision(
             "show_capabilities",
             "支持反射率阈值、预报时效范围、CSI/POD/FAR/Bias/ETS曲线、"
-            "指定时效的预报实况对比与误差图，以及可选结果解读。",
+            "预报率—观测率关系图、指定时效的预报实况对比与误差图，以及可选结果解读。",
             request,
         )
     if intent == "unknown":

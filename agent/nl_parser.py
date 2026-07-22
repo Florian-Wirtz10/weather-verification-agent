@@ -75,6 +75,7 @@ intent 只能是：
 支持的指标：{json.dumps(SUPPORTED_METRICS, ensure_ascii=False)}
 支持的视图类型：{json.dumps(SUPPORTED_VIEW_TYPES, ensure_ascii=False)}
 - score_time_series：必须带一个 metric，一个请求对应一张图
+- forecast_observed_rate：预报率—观测率关系图；单一起报自动按时效绘制轨迹，阈值由 filters 控制
 - reflectivity_comparison：必须带 lead，值为 first、last 或 0—180 整数
 - reflectivity_error：必须带 lead，值为 first、last 或 0—180 整数
 - reflectivity_animation：必须带 lead_range_minutes={{"start": 6, "end": 24}} 和可选 fps（1—4）；
@@ -113,6 +114,8 @@ linked_score_animation 只用于“空间回波演变与某一评分变化之间
 13. 用户要求把空间演变与 CSI、ETS 等某项评分联系起来、同屏对应或解释两者关系时，设置
     strategy="linked_score_animation" 和对应 metric。其它情形 strategy="auto"；不得把多个
     评分曲线或未请求的指标塞进联动动画。
+14. 用户要求“预报率和观测率”“forecast rate 与 observed/base rate”“频率偏差散点关系”时，
+    输出 forecast_observed_rate。它不是 Bias 评分曲线，不得替换成 score_time_series。
 
 只输出 JSON 对象，不使用 Markdown。结构如下：
 {{

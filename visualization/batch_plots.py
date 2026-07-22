@@ -52,8 +52,154 @@ def plot_daily_score_curves(summary: pd.DataFrame, metric="csi", *, figure_numbe
             else (-0.05 if metric == "ets" else 0.0)
         )
         ax.set_ylim(lower, 1.0)
-    ax.grid(True, alpha=0.28)
+    ax.grid(False)
     ax.legend(title="Threshold", ncols=2)
+    return fig
+
+
+def _smooth_density(values, *, bins=80, sigma_bins=2.0):
+    """Return a small dependency-free smoothed histogram on the 0—1 rate range."""
+    values = np.asarray(values, dtype=float)
+    values = values[np.isfinite(values)]
+    histogram, edges = np.histogram(values, bins=bins, range=(0, 1), density=True)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+    radius = max(2, int(round(4 * sigma_bins)))
+    offsets = np.arange(-radius, radius + 1, dtype=float)
+    kernel = np.exp(-0.5 * (offsets / sigma_bins) ** 2)
+    kernel /= kernel.sum()
+    return centers, np.convolve(histogram, kernel, mode="same")
+
+
+def plot_forecast_observed_rate_distribution(
+    per_case: pd.DataFrame, threshold_dbz=15, *, figure_number=1
+):
+    """Plot a full-day rate scatter with forecast/observed marginal densities.
+
+    Every point is one cached initialization/lead pair at one fixed threshold.
+    Lead-time bands provide a meaningful grouping when geographic subregions
+    have not been defined.  The chart is descriptive; it does not claim that
+    overlapping six-minute initializations are statistically independent.
+    """
+    required = {
+        "lead_minutes",
+        "threshold_dbz",
+        "hits",
+        "misses",
+        "false_alarms",
+        "valid_count",
+    }
+    missing = required.difference(per_case.columns)
+    if missing:
+        raise ValueError(f"rate distribution is missing columns: {sorted(missing)}")
+    selected = per_case[
+        np.isclose(per_case["threshold_dbz"], float(threshold_dbz))
+    ].copy()
+    selected = selected[selected["valid_count"] > 0]
+    if selected.empty:
+        raise ValueError(
+            f"threshold {float(threshold_dbz):g} dBZ has no valid rate samples"
+        )
+    valid = selected["valid_count"].to_numpy(dtype=float)
+    selected["observed_rate"] = (
+        selected["hits"].to_numpy(dtype=float)
+        + selected["misses"].to_numpy(dtype=float)
+    ) / valid
+    selected["forecast_rate"] = (
+        selected["hits"].to_numpy(dtype=float)
+        + selected["false_alarms"].to_numpy(dtype=float)
+    ) / valid
+
+    bands = (
+        ("6—60 min", 0, 60, "#12bde5"),
+        ("66—120 min", 60, 120, "#ef8f83"),
+        ("126—180 min", 120, 180, "#16bf65"),
+    )
+    fig = plt.figure(figsize=(10.5, 8.8))
+    grid = fig.add_gridspec(
+        2,
+        2,
+        width_ratios=(4.4, 1.15),
+        height_ratios=(4.4, 1.15),
+        left=0.09,
+        right=0.95,
+        bottom=0.11,
+        top=0.87,
+        wspace=0.12,
+        hspace=0.12,
+    )
+    joint = fig.add_subplot(grid[0, 0])
+    forecast_density = fig.add_subplot(grid[0, 1], sharey=joint)
+    observed_density = fig.add_subplot(grid[1, 0], sharex=joint)
+    legend_axis = fig.add_subplot(grid[1, 1])
+
+    plotted_groups = 0
+    for label, lower, upper, color in bands:
+        in_band = (selected["lead_minutes"] > lower) & (
+            selected["lead_minutes"] <= upper
+        )
+        rows = selected[in_band]
+        if rows.empty:
+            continue
+        observed = rows["observed_rate"].to_numpy(dtype=float)
+        forecast = rows["forecast_rate"].to_numpy(dtype=float)
+        joint.scatter(
+            observed,
+            forecast,
+            s=17,
+            facecolor=color,
+            edgecolor="#30343b",
+            linewidth=0.3,
+            alpha=0.42,
+            rasterized=True,
+            label=f"{label} (n={len(rows)})",
+        )
+        x, x_density = _smooth_density(observed)
+        y, y_density = _smooth_density(forecast)
+        observed_density.fill_between(x, 0, x_density, color=color, alpha=0.38)
+        observed_density.plot(x, x_density, color=color, linewidth=1.25)
+        forecast_density.fill_betweenx(y, 0, y_density, color=color, alpha=0.38)
+        forecast_density.plot(y_density, y, color=color, linewidth=1.25)
+        plotted_groups += 1
+    if plotted_groups == 0:
+        raise ValueError("no lead-time groups are available for the rate distribution")
+
+    joint.plot([0, 1], [0, 1], "--", color="#777777", linewidth=1.1)
+    joint.set_xlim(0, 1)
+    joint.set_ylim(0, 1)
+    joint.set_xlabel("Observed rate")
+    joint.set_ylabel("Forecast rate")
+    joint.set_title(
+        f"(a) {float(threshold_dbz):g} dBZ | {len(selected)} matched samples",
+        loc="left",
+    )
+    joint.grid(False)
+    joint.tick_params(direction="in", top=True, right=True)
+
+    forecast_density.set_xlabel("Density")
+    forecast_density.tick_params(axis="y", labelleft=False, labelright=True, direction="in")
+    forecast_density.tick_params(axis="x", direction="in")
+    forecast_density.grid(False)
+    observed_density.set_xlabel("Observed rate")
+    observed_density.set_ylabel("Density")
+    observed_density.tick_params(direction="in")
+    observed_density.grid(False)
+
+    legend_axis.axis("off")
+    handles, labels = joint.get_legend_handles_labels()
+    legend_axis.legend(handles, labels, title="Forecast lead", loc="center", frameon=False)
+    fig.suptitle(
+        f"Figure {figure_number}. Forecast rate vs observed rate with marginal distributions",
+        fontsize=14,
+        fontweight="bold",
+        y=0.96,
+    )
+    fig.text(
+        0.09,
+        0.025,
+        "Each point is one exactly matched initialization/lead sample; the dashed line is 1:1.",
+        fontsize=9.2,
+        color="#565d66",
+    )
     return fig
 
 

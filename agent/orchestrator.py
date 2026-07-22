@@ -28,6 +28,7 @@ from visualization.plots import (
     plot_field,
     plot_reflectivity_comparison,
     plot_reflectivity_error,
+    plot_forecast_observed_rate_trajectory,
     plot_score_time_series,
     render_linked_score_animation,
     render_reflectivity_animation,
@@ -187,7 +188,9 @@ def _normalize_execution_views(views, selected_leads):
     if len(requested_views) > MAX_VIEWS:
         raise DataContractError(f"at most {MAX_VIEWS} views can be rendered")
     spatial_count = sum(
-        view.get("type") != "score_time_series" for view in requested_views
+        view.get("type")
+        in {"reflectivity_comparison", "reflectivity_error", "reflectivity_animation"}
+        for view in requested_views
     )
     if spatial_count > MAX_SPATIAL_VIEWS:
         raise DataContractError(
@@ -202,6 +205,8 @@ def _normalize_execution_views(views, selected_leads):
             if metric not in CATEGORICAL_SCORES:
                 raise DataContractError(f"unsupported score metric: {metric!r}")
             normalized.append({"type": view_type, "metric": metric})
+        elif view_type == "forecast_observed_rate":
+            normalized.append({"type": view_type})
         elif view_type in {"reflectivity_comparison", "reflectivity_error"}:
             selection = view.get("lead", "last")
             lead = _resolve_spatial_lead(selection, selected_leads)
@@ -341,8 +346,9 @@ def run_fenglei_case_verification(
     resolved_views, unavailable_views = _normalize_execution_views(views, selected_leads)
     presentation_plan = _resolve_presentation_strategy(presentation, resolved_views)
     needed_frame_leads = {
-        view["lead"] for view in resolved_views if view["type"] != "score_time_series"
-        and view["type"] != "reflectivity_animation"
+        view["lead"]
+        for view in resolved_views
+        if view["type"] in {"reflectivity_comparison", "reflectivity_error"}
     }
     for view in resolved_views:
         if view["type"] == "reflectivity_animation":
@@ -411,6 +417,16 @@ def run_fenglei_case_verification(
             }
             figures[key] = plot_score_time_series(
                 selected_leads, scores_by_threshold, metric
+            )
+        elif view_type == "forecast_observed_rate":
+            contingency_by_threshold = {
+                threshold: [entry["contingency"][threshold] for entry in per_lead]
+                for threshold in thresholds
+            }
+            figures[key] = plot_forecast_observed_rate_trajectory(
+                selected_leads,
+                contingency_by_threshold,
+                title="Forecast-rate / observed-rate lead-time trajectory",
             )
         elif view_type == "reflectivity_comparison":
             frame = frames[view["lead"]]

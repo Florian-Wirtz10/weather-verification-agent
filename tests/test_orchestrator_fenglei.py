@@ -66,6 +66,7 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
         views=[
             {"type": "score_time_series", "metric": "csi"},
             {"type": "score_time_series", "metric": "ets"},
+            {"type": "forecast_observed_rate"},
             {"type": "reflectivity_comparison", "lead": "first"},
             {"type": "reflectivity_error", "lead": 12},
         ],
@@ -74,12 +75,19 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
     assert result["lead_minutes"] == [6, 12]
     assert len(result["per_lead"]) == 2
     assert result["per_lead"][0]["categorical"][20]["csi"] > 0
-    assert list(result["figures"]) == ["view_01", "view_02", "view_03", "view_04"]
+    assert list(result["figures"]) == [
+        "view_01",
+        "view_02",
+        "view_03",
+        "view_04",
+        "view_05",
+    ]
     assert result["figure_metadata"] == {
         "view_01": {"type": "score_time_series", "metric": "csi"},
         "view_02": {"type": "score_time_series", "metric": "ets"},
-        "view_03": {"type": "reflectivity_comparison", "lead": 6},
-        "view_04": {"type": "reflectivity_error", "lead": 12},
+        "view_03": {"type": "forecast_observed_rate"},
+        "view_04": {"type": "reflectivity_comparison", "lead": 6},
+        "view_05": {"type": "reflectivity_error", "lead": 12},
     }
     assert result["context"]["init_time"].isoformat() == "2025-04-11T02:12:00"
     assert result["coverage"]["selected_leads"] == [6, 12]

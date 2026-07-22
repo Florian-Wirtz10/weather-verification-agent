@@ -51,6 +51,7 @@ _SAFE_FACT_KEYS = (
     "coverage",
     "requested_metrics",
     "thresholds",
+    "rate_diagnostics",
     "undefined_values",
     "limitations",
     "figure_catalog",
@@ -79,8 +80,9 @@ _SENSITIVE_KEYS = {
 _SYSTEM_PROMPT = """你是强对流预报检验结果解读助手。用户消息只包含服务端已经计算好的事实 JSON。
 所有数值计算与异常标记都已完成；不要重新计算、补造数字，也不要引入 JSON 中没有的事实。
 
-只讨论 requested_metrics 中列出的评分指标。即使你能从列联表推导其它指标，也不得在报告中
-主动引入用户没有请求的 POD、FAR、CSI、Bias 或 ETS。
+只讨论 requested_metrics 中列出的评分指标。即使你能从列联表推导其它评分，也不得在报告中
+主动引入用户没有请求的 POD、FAR、CSI、Bias 或 ETS。只有 rate_diagnostics 存在时，才可讨论
+预报率、观测率及其相对 1:1 线的偏离；不得把它们冒充评分指标。
 
 请用专业、通俗的中文，固定输出以下四个短章节：
 1. 图表导读：按 figure_catalog 中的编号说明每张已生成图/动画展示什么。仅当该编号确实存在时，
@@ -131,6 +133,10 @@ def build_insight_facts(
         )
         for threshold in thresholds
     ]
+    has_rate_view = any(
+        isinstance(view, Mapping) and view.get("type") == "forecast_observed_rate"
+        for view in (result.get("figure_metadata") or {}).values()
+    ) if isinstance(result.get("figure_metadata"), Mapping) else False
 
     limitations = ["本结果仅针对单个起报个例，不能推广为模型整体能力结论。"]
     missing = coverage.get("missing_leads")
@@ -151,6 +157,9 @@ def build_insight_facts(
         "coverage": coverage,
         "requested_metrics": metrics,
         "thresholds": threshold_facts,
+        "rate_diagnostics": (
+            _summarise_event_rates(entries, thresholds) if has_rate_view else []
+        ),
         "undefined_values": undefined_values,
         "limitations": limitations,
         "figure_catalog": _build_figure_catalog(result),
@@ -190,6 +199,11 @@ def _figure_catalog_item(view: Mapping[str, Any]) -> dict[str, Any] | None:
     if view_type == "score_time_series" and isinstance(view.get("metric"), str):
         metric = str(view["metric"]).upper()
         return {"type": view_type, "label": f"{metric} 随预报时效变化曲线", "metric": metric}
+    if view_type == "forecast_observed_rate":
+        return {
+            "type": view_type,
+            "label": "预报率—观测率随预报时效轨迹",
+        }
     if view_type in {"reflectivity_comparison", "reflectivity_error"}:
         lead = _finite_float(view.get("lead"))
         if lead is None:
@@ -291,6 +305,17 @@ def render_deterministic_summary(facts: Mapping[str, Any]) -> str:
     )
     if undefined_count:
         score_lines.append(f"另有 {undefined_count} 个评分不可定义，未参与对应趋势和极值判断。")
+
+    raw_rates = facts.get("rate_diagnostics")
+    if isinstance(raw_rates, Sequence) and not isinstance(raw_rates, (str, bytes)):
+        for item in raw_rates:
+            if not isinstance(item, Mapping) or not item.get("samples"):
+                continue
+            score_lines.append(
+                f"阈值 {_fmt(item.get('threshold'))}：预报率均值 "
+                f"{_fmt(item.get('mean_forecast_rate'))}，观测率均值 "
+                f"{_fmt(item.get('mean_observed_rate'))}。"
+            )
 
     final_line = "以上仅是单个起报个例的客观统计，不能推广为模型整体能力结论。"
     return "\n".join([first_line, *score_lines, final_line])
@@ -418,6 +443,49 @@ def _summarise_threshold(
             "values": [value for _, value in negative_points],
         }
     return summary
+
+
+def _summarise_event_rates(
+    entries: Sequence[dict[str, Any]], thresholds: Sequence[float]
+) -> list[dict[str, Any]]:
+    summaries = []
+    for threshold in thresholds:
+        samples = []
+        for entry in entries:
+            table = _threshold_mapping(entry.get("contingency"), threshold)
+            if not table:
+                continue
+            valid = _nonnegative_int(table.get("valid_count"))
+            hits = _nonnegative_int(table.get("hits"))
+            misses = _nonnegative_int(table.get("misses"))
+            false_alarms = _nonnegative_int(table.get("false_alarms"))
+            if not valid or None in {hits, misses, false_alarms}:
+                continue
+            samples.append(
+                {
+                    "lead_minutes": entry["lead_minutes"],
+                    "forecast_rate": (hits + false_alarms) / valid,
+                    "observed_rate": (hits + misses) / valid,
+                }
+            )
+        summaries.append(
+            {
+                "threshold": threshold,
+                "sample_count": len(samples),
+                "mean_forecast_rate": (
+                    sum(item["forecast_rate"] for item in samples) / len(samples)
+                    if samples
+                    else None
+                ),
+                "mean_observed_rate": (
+                    sum(item["observed_rate"] for item in samples) / len(samples)
+                    if samples
+                    else None
+                ),
+                "samples": samples,
+            }
+        )
+    return summaries
 
 
 def _normalise_requested_metrics(value: Sequence[str] | None) -> list[str]:

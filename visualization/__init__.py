@@ -10,6 +10,7 @@ from visualization.plots import (
     plot_field,
     plot_reflectivity_error,
     plot_reflectivity_field,
+    plot_forecast_observed_rate_trajectory,
     plot_score_time_series,
 )
 
@@ -18,5 +19,6 @@ __all__ = [
     "plot_field",
     "plot_reflectivity_field",
     "plot_reflectivity_error",
+    "plot_forecast_observed_rate_trajectory",
     "plot_score_time_series",
 ]

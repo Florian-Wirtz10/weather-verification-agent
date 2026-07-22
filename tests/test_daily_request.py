@@ -11,6 +11,7 @@ def test_default_daily_request_selects_complete_diagnostic_suite():
         "daily_score_curve",
         "daily_score_heatmap",
         "score_distribution",
+        "forecast_observed_rate_distribution",
     ]
 
 
@@ -38,3 +39,12 @@ def test_daily_request_requires_native_six_minute_leads():
 
     with pytest.raises(ValueError, match="multiple of 6"):
         validate_daily_request(request)
+
+
+def test_daily_rate_distribution_is_a_supported_selectable_view():
+    request = default_daily_request()
+    request["views"] = ["forecast_observed_rate_distribution"]
+
+    normalized = validate_daily_request(request)
+
+    assert normalized["views"] == ["forecast_observed_rate_distribution"]

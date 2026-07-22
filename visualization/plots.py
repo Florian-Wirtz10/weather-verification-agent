@@ -12,6 +12,8 @@ from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColor
 from matplotlib.ticker import MultipleLocator
 from PIL import Image
 
+from visualization.geography import add_admin_boundaries
+
 
 def plot_field(array, title, cmap="Blues"):
     """Render a single 2D field as a heatmap figure."""
@@ -97,7 +99,7 @@ def _diverging_cmap():
 
 
 def _style_axes(ax):
-    ax.grid(True, color=_GRIDLINE, linewidth=0.8)
+    ax.grid(False)
     ax.set_axisbelow(True)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -129,6 +131,7 @@ def plot_reflectivity_field(field, title=None):
     ax.set_title(title or f"{field.product} ({field.valid_time:%Y-%m-%d %H:%M} UTC)")
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
+    add_admin_boundaries(ax, extent)
     plt.colorbar(
         im,
         ax=ax,
@@ -164,6 +167,7 @@ def plot_reflectivity_comparison(forecast_field, obs_field, title=None):
         ax.set_title(panel_title)
         ax.set_xlabel("Longitude")
         ax.set_ylabel("Latitude")
+        add_admin_boundaries(ax, extent)
     if im is not None:
         plt.colorbar(
             im,
@@ -202,6 +206,7 @@ def plot_reflectivity_error(forecast_field, obs_field, title="Forecast - Obs (dB
     ax.set_title(title)
     ax.set_xlabel("Longitude")
     ax.set_ylabel("Latitude")
+    add_admin_boundaries(ax, extent)
     plt.colorbar(im, ax=ax, label="dBZ error (display floor: 0)")
     return fig
 
@@ -320,6 +325,7 @@ def _plot_linked_score_frame(frame, *, lead_minutes, scores_by_threshold, score_
         axis.set_title(title)
         axis.set_xlabel("Longitude")
         axis.set_ylabel("Latitude")
+        add_admin_boundaries(axis, extent)
     if image is not None:
         fig.colorbar(
             image, cax=colorbar_axis, label="dBZ (display floor: 0)",
@@ -377,6 +383,91 @@ def plot_score_time_series(lead_minutes, scores_by_threshold, score_name, title=
     ax.xaxis.set_major_locator(MultipleLocator(30))
     _style_axes(ax)
     ax.legend(title="Threshold", frameon=False)
+    return fig
+
+
+def plot_forecast_observed_rate_trajectory(
+    lead_minutes, contingency_by_threshold, title=None
+):
+    """Plot the rate relationship for one initialization as lead-time trajectories.
+
+    A single initialization provides only a small, temporally ordered sample.
+    It is therefore shown as a connected trajectory rather than being presented
+    as a population distribution.  Multiple thresholds use separate panels
+    because changing the threshold changes the event definition and rate scale.
+    """
+    leads = np.asarray(lead_minutes, dtype=float)
+    if leads.ndim != 1 or leads.size == 0:
+        raise ValueError("lead_minutes must be a non-empty one-dimensional sequence")
+    thresholds = sorted(contingency_by_threshold)
+    if not thresholds:
+        raise ValueError("at least one threshold is required for a rate trajectory")
+
+    columns = min(2, len(thresholds))
+    rows = int(np.ceil(len(thresholds) / columns))
+    fig, axes = plt.subplots(
+        rows,
+        columns,
+        figsize=(7.2 * columns, 5.8 * rows),
+        squeeze=False,
+        layout="constrained",
+    )
+    active_axes = []
+    scatter = None
+    for ax, threshold in zip(axes.flat, thresholds):
+        tables = list(contingency_by_threshold[threshold])
+        if len(tables) != leads.size:
+            raise ValueError("every threshold must have one contingency table per lead")
+        observed_rates = []
+        forecast_rates = []
+        for table in tables:
+            valid_count = int(table.get("valid_count", 0))
+            if valid_count <= 0:
+                observed_rates.append(np.nan)
+                forecast_rates.append(np.nan)
+                continue
+            observed_rates.append(
+                (int(table["hits"]) + int(table["misses"])) / valid_count
+            )
+            forecast_rates.append(
+                (int(table["hits"]) + int(table["false_alarms"])) / valid_count
+            )
+        observed = np.asarray(observed_rates, dtype=float)
+        forecast = np.asarray(forecast_rates, dtype=float)
+        finite = np.isfinite(observed) & np.isfinite(forecast)
+        ax.plot(
+            observed[finite],
+            forecast[finite],
+            color="#6f7780",
+            linewidth=1.1,
+            alpha=0.75,
+            zorder=1,
+        )
+        scatter = ax.scatter(
+            observed[finite],
+            forecast[finite],
+            c=leads[finite],
+            cmap="viridis",
+            s=42,
+            edgecolors="#30343b",
+            linewidths=0.45,
+            zorder=2,
+        )
+        ax.plot([0, 1], [0, 1], "--", color="#777777", linewidth=1.1)
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.set_aspect("equal", adjustable="box")
+        ax.set_xlabel("Observed rate")
+        ax.set_ylabel("Forecast rate")
+        ax.set_title(f"{float(threshold):g} dBZ | {int(finite.sum())} matched leads")
+        ax.grid(False)
+        active_axes.append(ax)
+    for ax in axes.flat[len(thresholds) :]:
+        ax.set_visible(False)
+    if scatter is not None:
+        colorbar = fig.colorbar(scatter, ax=active_axes, shrink=0.82, pad=0.025)
+        colorbar.set_label("Forecast lead time (min)")
+    fig.suptitle(title or "Forecast-rate / observed-rate lead-time trajectory")
     return fig
 
 

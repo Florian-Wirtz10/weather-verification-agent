@@ -10,7 +10,12 @@ import os
 
 from openai import OpenAI
 
-DAILY_VIEW_TYPES = ("daily_score_curve", "daily_score_heatmap", "score_distribution")
+DAILY_VIEW_TYPES = (
+    "daily_score_curve",
+    "daily_score_heatmap",
+    "score_distribution",
+    "forecast_observed_rate_distribution",
+)
 DAILY_METRICS = ("csi", "ets", "pod", "far", "bias_score")
 _SYSTEM_PROMPT = f"""你是强对流预报公平检验平台 Phase 5 的请求解析器，只输出 JSON。
 平台按页面声明的源资料时钟（2025 预报/观测均为 UTC；2026 风雷文件名为 BJT、SWAN 头和 CREF 观测均为 UTC），对风雷预报和 CREF 观测做严格同有效时刻、同区域、同网格口径检验。
@@ -21,14 +26,18 @@ _SYSTEM_PROMPT = f"""你是强对流预报公平检验平台 Phase 5 的请求�
 - daily_score_curve：全天汇总指标随预报时效曲线；
 - daily_score_heatmap：起报时刻×预报时效热力图；
 - score_distribution：各时效跨起报样本的分布箱线图。
+- forecast_observed_rate_distribution：固定诊断阈值下，全天所有起报×时效样本的
+  预报率—观测率散点及边缘分布；按 6—60、66—120、126—180 分钟分组。
 
 规则：
-1. “全套/全面/录屏展示”默认输出三种视图；未指定指标用 csi。
+1. “全套/全面/录屏展示”默认输出四种视图；未指定指标用 csi。
 2. 未指定阈值用 [5,15,25,35]，诊断阈值默认 15 且必须包含在 thresholds_dbz 中。
 3. 未指定时效用 6—180 分钟；所有时效必须是 6 的倍数。
 4. Taylor、FSS、动画、自由排版等未支持要求放入 unmatched_requests，不得替换成别的图。
 5. 用户只要求某一种支持视图时，只输出该视图。
 6. requested_date 使用 YYYY-MM-DD；没有日期则为 null。
+7. 用户要求“预报率和观测率”“forecast rate 与 observed/base rate”或“频率偏差散点”时，
+   输出 forecast_observed_rate_distribution；其阈值使用 diagnostic_threshold_dbz。
 
 JSON 结构：
 {{
@@ -37,7 +46,7 @@ JSON 结构：
   "thresholds_dbz": [5, 15, 25, 35],
   "diagnostic_threshold_dbz": 15,
   "lead_range_minutes": {{"start": 6, "end": 180}},
-  "views": ["daily_score_curve", "daily_score_heatmap", "score_distribution"],
+  "views": ["daily_score_curve", "daily_score_heatmap", "score_distribution", "forecast_observed_rate_distribution"],
   "unmatched_requests": [],
   "notes": ""
 }}"""
