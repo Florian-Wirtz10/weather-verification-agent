@@ -81,17 +81,39 @@ def test_missing_views_gets_one_csi_chart_not_all_charts():
     assert result["views"] == [{"type": "score_time_series", "metric": "csi"}]
 
 
-def test_forecast_observed_rate_view_is_parameter_free_and_supported():
+def test_forecast_observed_rate_view_supports_safe_threshold_modes():
     result = validate_request({"views": [{"type": "forecast_observed_rate"}]})
 
-    assert result["views"] == [{"type": "forecast_observed_rate"}]
+    assert result["views"] == [
+        {"type": "forecast_observed_rate", "threshold_mode": "separate"}
+    ]
     assert result["unmatched_requests"] == []
+
+    combined = validate_request(
+        {
+            "views": [
+                {"type": "forecast_observed_rate", "threshold_mode": "combined"}
+            ]
+        }
+    )
+    assert combined["views"][0]["threshold_mode"] == "combined"
 
     with_extra = validate_request(
         {"views": [{"type": "forecast_observed_rate", "chart": "free-form"}]}
     )
-    assert with_extra["views"] == [{"type": "forecast_observed_rate"}]
+    assert with_extra["views"] == [
+        {"type": "forecast_observed_rate", "threshold_mode": "separate"}
+    ]
     assert any("chart" in item for item in with_extra["unmatched_requests"])
+
+    with pytest.raises(RequestValidationError):
+        validate_request(
+            {
+                "views": [
+                    {"type": "forecast_observed_rate", "threshold_mode": "free_form"}
+                ]
+            }
+        )
 
 
 def test_unknown_and_malicious_views_are_preserved_and_never_executed():

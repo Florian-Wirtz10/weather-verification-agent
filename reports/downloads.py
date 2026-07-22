@@ -83,6 +83,14 @@ def describe_view(view: Mapping[str, Any]) -> str:
     if view_type == "score_time_series":
         return f"{str(view.get('metric', '')).upper()} 随预报时效变化曲线"
     if view_type == "forecast_observed_rate":
+        if view.get("threshold_mode") == "combined":
+            thresholds = view.get("thresholds_dbz")
+            if isinstance(thresholds, Sequence) and not isinstance(
+                thresholds, (str, bytes)
+            ):
+                labels = "、".join(f"{float(value):g}" for value in thresholds)
+                return f"{labels} dBZ 预报率—观测率阈值对比"
+            return "预报率—观测率阈值对比"
         threshold = view.get("threshold_dbz")
         if isinstance(threshold, Real) and not isinstance(threshold, bool):
             return f"{float(threshold):g} dBZ 预报率—观测率时效轨迹"
@@ -276,12 +284,15 @@ def _figure_filename(index: int, view: Mapping[str, Any]) -> str:
     if view_type == "score_time_series":
         detail = str(view.get("metric") or "score")
     elif view_type == "forecast_observed_rate":
-        threshold = view.get("threshold_dbz")
-        detail = (
-            f"{float(threshold):g}dbz-rate-trajectory"
-            if isinstance(threshold, Real) and not isinstance(threshold, bool)
-            else "rate-trajectory"
-        )
+        if view.get("threshold_mode") == "combined":
+            detail = "threshold-rate-comparison"
+        else:
+            threshold = view.get("threshold_dbz")
+            detail = (
+                f"{float(threshold):g}dbz-rate-trajectory"
+                if isinstance(threshold, Real) and not isinstance(threshold, bool)
+                else "rate-trajectory"
+            )
     else:
         lead = view.get("lead")
         detail = f"{int(lead):03d}min" if isinstance(lead, int) else "lead"
@@ -337,6 +348,33 @@ def _validated_view(value: Any) -> dict[str, Any]:
             raise ValueError(f"unsupported export metric: {metric!r}")
         return {"type": view_type, "metric": metric}
     if view_type == "forecast_observed_rate":
+        if value.get("threshold_mode") == "combined":
+            raw_thresholds = value.get("thresholds_dbz")
+            if (
+                not isinstance(raw_thresholds, Sequence)
+                or isinstance(raw_thresholds, (str, bytes))
+                or not raw_thresholds
+                or len(raw_thresholds) > 8
+            ):
+                raise ValueError("invalid export comparison thresholds")
+            thresholds = []
+            for threshold in raw_thresholds:
+                if (
+                    isinstance(threshold, bool)
+                    or not isinstance(threshold, Real)
+                    or not 0 <= float(threshold) <= 75
+                ):
+                    raise ValueError(
+                        f"invalid export comparison threshold: {threshold!r}"
+                    )
+                numeric = float(threshold)
+                if numeric not in thresholds:
+                    thresholds.append(numeric)
+            return {
+                "type": view_type,
+                "threshold_mode": "combined",
+                "thresholds_dbz": thresholds,
+            }
         threshold = value.get("threshold_dbz")
         if (
             isinstance(threshold, bool)
@@ -344,7 +382,11 @@ def _validated_view(value: Any) -> dict[str, Any]:
             or not 0 <= float(threshold) <= 75
         ):
             raise ValueError(f"invalid export threshold: {threshold!r}")
-        return {"type": view_type, "threshold_dbz": float(threshold)}
+        return {
+            "type": view_type,
+            "threshold_mode": "separate",
+            "threshold_dbz": float(threshold),
+        }
     if view_type == "reflectivity_animation":
         lead_range = value.get("lead_range_minutes")
         fps = value.get("fps")
@@ -500,7 +542,17 @@ def _safe_request(value: Mapping[str, Any]) -> dict[str, Any]:
             ("thresholds_dbz", "lead_range_minutes", "requested_date"),
         ),
         "views": [
-            _safe_pick(view, ("type", "metric", "lead", "lead_range_minutes", "fps"))
+            _safe_pick(
+                view,
+                (
+                    "type",
+                    "metric",
+                    "lead",
+                    "lead_range_minutes",
+                    "fps",
+                    "threshold_mode",
+                ),
+            )
             for view in views
             if isinstance(view, Mapping)
         ]

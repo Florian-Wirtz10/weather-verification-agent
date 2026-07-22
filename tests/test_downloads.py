@@ -191,6 +191,35 @@ def test_download_bundle_accepts_threshold_specific_rate_figure_metadata():
     assert "15dbz-rate-trajectory" in image["file_name"]
 
 
+def test_download_bundle_accepts_combined_rate_threshold_metadata():
+    result, request, rows, facts = _download_inputs()
+    plt.close(result["figures"]["view_02"])
+    result["figures"] = {"view_01": result["figures"]["view_01"]}
+    result["figure_metadata"] = {
+        "view_01": {
+            "type": "forecast_observed_rate",
+            "threshold_mode": "combined",
+            "thresholds_dbz": [10.0, 20.0, 35.0],
+        }
+    }
+    request["views"] = [
+        {"type": "forecast_observed_rate", "threshold_mode": "combined"}
+    ]
+
+    artifacts = build_case_download_artifacts(
+        result=result,
+        request=request,
+        metric_rows=rows,
+        facts=facts,
+        deterministic_summary="测试。",
+        ai_insight=None,
+    )
+
+    image = artifacts["images"]["view_01"]
+    assert "10、20、35 dBZ" in image["label"]
+    assert "threshold-rate-comparison" in image["file_name"]
+
+
 def test_downloads_can_reuse_pngs_and_request_fingerprint_avoids_name_collision():
     result, request, rows, facts = _download_inputs()
     first = build_case_download_artifacts(

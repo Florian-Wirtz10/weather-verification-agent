@@ -25,6 +25,7 @@ SUPPORTED_VIEW_TYPES = (
     "reflectivity_error",
     "reflectivity_animation",
 )
+SUPPORTED_RATE_THRESHOLD_MODES = ("separate", "combined")
 DEFAULT_THRESHOLDS_DBZ = (10.0, 20.0, 35.0)
 MAX_VIEWS = 12
 MAX_SPATIAL_VIEWS = 6
@@ -244,7 +245,7 @@ def _validate_views(value: object, unmatched: list[str]) -> list[dict[str, Any]]
         if view_type == "score_time_series":
             view = _validate_score_view(raw_view, unmatched)
         elif view_type == "forecast_observed_rate":
-            view = {"type": view_type}
+            view = _validate_rate_view(raw_view)
         elif view_type == "reflectivity_animation":
             view = _validate_animation_view(raw_view)
         else:
@@ -272,6 +273,18 @@ def _validate_score_view(
         _append_unmatched(unmatched, f"暂不支持评分指标：{metric or '(空)'}")
         return None
     return {"type": "score_time_series", "metric": metric}
+
+
+def _validate_rate_view(raw_view: dict[str, Any]) -> dict[str, Any]:
+    mode = raw_view.get("threshold_mode", "separate")
+    if not isinstance(mode, str):
+        raise RequestValidationError("forecast_observed_rate.threshold_mode 必须是字符串")
+    mode = mode.strip().lower()
+    if mode not in SUPPORTED_RATE_THRESHOLD_MODES:
+        raise RequestValidationError(
+            "forecast_observed_rate.threshold_mode 只能是 separate 或 combined"
+        )
+    return {"type": "forecast_observed_rate", "threshold_mode": mode}
 
 
 def _validate_reflectivity_view(raw_view: dict[str, Any], view_type: str) -> dict[str, Any]:
@@ -311,7 +324,7 @@ def _record_extra_view_parameters(
     if view_type in {"score_time_series", "forecast_observed_rate"}:
         allowed = {"type", "metric"}
         if view_type == "forecast_observed_rate":
-            allowed = {"type"}
+            allowed = {"type", "threshold_mode"}
     elif view_type == "reflectivity_animation":
         allowed = {"type", "lead_range_minutes", "fps"}
     else:

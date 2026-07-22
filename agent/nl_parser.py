@@ -14,6 +14,7 @@ from agent.request_schema import (
     SCHEMA_VERSION,
     SUPPORTED_METRICS,
     SUPPORTED_LAYOUTS,
+    SUPPORTED_RATE_THRESHOLD_MODES,
     SUPPORTED_VIEW_TYPES,
     validate_request,
 )
@@ -75,7 +76,9 @@ intent 只能是：
 支持的指标：{json.dumps(SUPPORTED_METRICS, ensure_ascii=False)}
 支持的视图类型：{json.dumps(SUPPORTED_VIEW_TYPES, ensure_ascii=False)}
 - score_time_series：必须带一个 metric，一个请求对应一张图
-- forecast_observed_rate：预报率—观测率关系图；单一起报自动按时效绘制轨迹，阈值由 filters 控制
+- forecast_observed_rate：预报率—观测率关系图；必须带 threshold_mode，取值只能是
+  {json.dumps(SUPPORTED_RATE_THRESHOLD_MODES, ensure_ascii=False)}。separate 表示每个阈值各画一张
+  时效轨迹联合分布图；combined 表示把多个阈值合在同一张阈值对比联合分布图中
 - reflectivity_comparison：必须带 lead，值为 first、last 或 0—180 整数
 - reflectivity_error：必须带 lead，值为 first、last 或 0—180 整数
 - reflectivity_animation：必须带 lead_range_minutes={{"start": 6, "end": 24}} 和可选 fps（1—4）；
@@ -116,6 +119,8 @@ linked_score_animation 只用于“空间回波演变与某一评分变化之间
     评分曲线或未请求的指标塞进联动动画。
 14. 用户要求“预报率和观测率”“forecast rate 与 observed/base rate”“频率偏差散点关系”时，
     输出 forecast_observed_rate。它不是 Bias 评分曲线，不得替换成 score_time_series。
+    默认 threshold_mode="separate"；只有用户明确要求“多个阈值合在同一张图中比较”时才用
+    combined。用户说“分别、各画一张、独立展示”时必须用 separate。
 
 只输出 JSON 对象，不使用 Markdown。结构如下：
 {{
@@ -158,7 +163,8 @@ def parse_request(
     if not response.choices or response.choices[0].message.content is None:
         raise ValueError("DeepSeek returned an empty response")
     parsed = validate_request(json.loads(response.choices[0].message.content))
-    return _apply_spatial_animation_guard(user_text, parsed)
+    parsed = _apply_spatial_animation_guard(user_text, parsed)
+    return _apply_rate_threshold_mode_guard(user_text, parsed)
 
 
 def _apply_spatial_animation_guard(user_text, request):
@@ -194,6 +200,33 @@ def _apply_spatial_animation_guard(user_text, request):
         )
     guarded = {**request, "views": views}
     return validate_request(guarded)
+
+
+def _apply_rate_threshold_mode_guard(user_text, request):
+    """Honor explicit combined/separate threshold wording deterministically."""
+    text = str(user_text).lower()
+    combined_cues = (
+        "合在一张图",
+        "画在一张图",
+        "同一张图",
+        "一张图中",
+        "阈值对比图",
+    )
+    separate_cues = ("分别生成", "分别画", "各画一张", "每个阈值一张", "独立展示")
+    if any(cue in text for cue in combined_cues):
+        mode = "combined"
+    elif any(cue in text for cue in separate_cues):
+        mode = "separate"
+    else:
+        return request
+
+    views = [
+        {**view, "threshold_mode": mode}
+        if view["type"] == "forecast_observed_rate"
+        else view
+        for view in request["views"]
+    ]
+    return validate_request({**request, "views": views})
 
 
 def _validate(parsed):

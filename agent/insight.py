@@ -200,6 +200,14 @@ def _figure_catalog_item(view: Mapping[str, Any]) -> dict[str, Any] | None:
         metric = str(view["metric"]).upper()
         return {"type": view_type, "label": f"{metric} 随预报时效变化曲线", "metric": metric}
     if view_type == "forecast_observed_rate":
+        thresholds = view.get("thresholds_dbz")
+        if view.get("threshold_mode") == "combined" and isinstance(thresholds, list):
+            labels = "、".join(f"{_fmt(value)} dBZ" for value in thresholds)
+            return {
+                "type": view_type,
+                "label": f"{labels} 预报率—观测率阈值对比图",
+                "thresholds_dbz": thresholds,
+            }
         threshold = _finite_float(view.get("threshold_dbz"))
         return {
             "type": view_type,

@@ -28,6 +28,7 @@ from visualization.plots import (
     plot_field,
     plot_reflectivity_comparison,
     plot_reflectivity_error,
+    plot_forecast_observed_rate_threshold_comparison,
     plot_forecast_observed_rate_trajectory,
     plot_score_time_series,
     render_linked_score_animation,
@@ -206,7 +207,12 @@ def _normalize_execution_views(views, selected_leads):
                 raise DataContractError(f"unsupported score metric: {metric!r}")
             normalized.append({"type": view_type, "metric": metric})
         elif view_type == "forecast_observed_rate":
-            normalized.append({"type": view_type})
+            threshold_mode = view.get("threshold_mode", "separate")
+            if threshold_mode not in {"separate", "combined"}:
+                raise DataContractError(
+                    f"unsupported forecast/observed rate threshold mode: {threshold_mode!r}"
+                )
+            normalized.append({"type": view_type, "threshold_mode": threshold_mode})
         elif view_type in {"reflectivity_comparison", "reflectivity_error"}:
             selection = view.get("lead", "last")
             lead = _resolve_spatial_lead(selection, selected_leads)
@@ -345,7 +351,12 @@ def run_fenglei_case_verification(
     missing_leads = [lead for lead in expected_leads if lead not in available_leads]
     resolved_views, unavailable_views = _normalize_execution_views(views, selected_leads)
     estimated_static_outputs = sum(
-        len(thresholds) if view["type"] == "forecast_observed_rate" else 1
+        (
+            len(thresholds)
+            if view["type"] == "forecast_observed_rate"
+            and view["threshold_mode"] == "separate"
+            else 1
+        )
         for view in resolved_views
         if view["type"] != "reflectivity_animation"
     )
@@ -429,6 +440,23 @@ def run_fenglei_case_verification(
                 selected_leads, scores_by_threshold, metric
             )
         elif view_type == "forecast_observed_rate":
+            if view["threshold_mode"] == "combined":
+                figures[key] = plot_forecast_observed_rate_threshold_comparison(
+                    selected_leads,
+                    {
+                        threshold: [
+                            entry["contingency"][threshold] for entry in per_lead
+                        ]
+                        for threshold in thresholds
+                    },
+                    title="Forecast rate vs observed rate by threshold",
+                )
+                figure_metadata[key] = {
+                    "type": view_type,
+                    "threshold_mode": "combined",
+                    "thresholds_dbz": [float(value) for value in thresholds],
+                }
+                continue
             for threshold in thresholds:
                 threshold_key = (
                     key
@@ -443,6 +471,7 @@ def run_fenglei_case_verification(
                 )
                 figure_metadata[threshold_key] = {
                     "type": view_type,
+                    "threshold_mode": "separate",
                     "threshold_dbz": float(threshold),
                 }
             continue

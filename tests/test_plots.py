@@ -1,6 +1,7 @@
 from datetime import datetime
 
-from matplotlib.colors import BoundaryNorm
+import matplotlib.pyplot as plt
+from matplotlib.colors import BoundaryNorm, Normalize
 import numpy as np
 import pytest
 
@@ -11,10 +12,17 @@ from visualization.plots import (
     _reflectivity_cmap_norm,
     _reflectivity_display_data,
     plot_forecast_observed_rate_trajectory,
+    plot_forecast_observed_rate_threshold_comparison,
     plot_reflectivity_comparison,
     plot_reflectivity_error,
     plot_score_time_series,
 )
+
+
+@pytest.fixture(autouse=True)
+def _close_test_figures():
+    yield
+    plt.close("all")
 
 
 def test_reflectivity_display_uses_a_common_zero_no_echo_floor():
@@ -50,7 +58,7 @@ def test_score_series_breaks_missing_native_leads_and_uses_30_minute_ticks():
     assert not any(line.get_visible() for line in figure.axes[0].get_ygridlines())
 
 
-def test_rate_trajectory_uses_separate_threshold_panels_and_lead_colours():
+def test_rate_trajectory_uses_blue_red_continuous_lead_colours():
     tables = [
         {"hits": 4, "misses": 1, "false_alarms": 2, "valid_count": 10},
         {"hits": 3, "misses": 2, "false_alarms": 1, "valid_count": 10},
@@ -63,9 +71,32 @@ def test_rate_trajectory_uses_separate_threshold_panels_and_lead_colours():
     assert all(axis.collections for axis in main_axes)
     assert all(not any(line.get_visible() for line in axis.get_xgridlines()) for axis in main_axes)
     scatter = main_axes[0].collections[0]
-    assert isinstance(scatter.norm, BoundaryNorm)
-    assert scatter.cmap.N == 2
-    np.testing.assert_allclose(figure.axes[-1].get_yticks(), [6, 12])
+    assert isinstance(scatter.norm, Normalize)
+    assert not isinstance(scatter.norm, BoundaryNorm)
+    np.testing.assert_allclose(scatter.cmap(0.0)[:3], (42 / 255, 120 / 255, 214 / 255))
+    np.testing.assert_allclose(scatter.cmap(1.0)[:3], (227 / 255, 73 / 255, 72 / 255))
+    np.testing.assert_allclose(figure.axes[-1].get_xticks(), [6, 12])
+
+
+def test_rate_threshold_comparison_keeps_thresholds_in_one_joint_figure():
+    tables = {
+        15: [
+            {"hits": 4, "misses": 1, "false_alarms": 2, "valid_count": 10},
+            {"hits": 3, "misses": 2, "false_alarms": 1, "valid_count": 10},
+        ],
+        35: [
+            {"hits": 1, "misses": 1, "false_alarms": 1, "valid_count": 10},
+            {"hits": 1, "misses": 2, "false_alarms": 0, "valid_count": 10},
+        ],
+    }
+
+    figure = plot_forecast_observed_rate_threshold_comparison([6, 12], tables)
+
+    joint = figure.axes[0]
+    assert len(joint.collections) == 2
+    legend = figure.axes[-1].get_legend()
+    assert [text.get_text() for text in legend.get_texts()] == ["15 dBZ", "35 dBZ"]
+    assert not any(line.get_visible() for line in joint.get_xgridlines())
 
 
 def test_reflectivity_comparison_adds_boundaries_without_changing_extent_or_colourbar():

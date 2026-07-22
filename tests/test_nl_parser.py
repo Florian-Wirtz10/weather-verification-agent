@@ -1,4 +1,9 @@
-from agent.nl_parser import _apply_spatial_animation_guard, _build_system_prompt, _validate
+from agent.nl_parser import (
+    _apply_rate_threshold_mode_guard,
+    _apply_spatial_animation_guard,
+    _build_system_prompt,
+    _validate,
+)
 
 
 def test_prompt_exposes_scope_schema_and_available_case():
@@ -20,6 +25,7 @@ def test_prompt_exposes_scope_schema_and_available_case():
     assert "空间回波的“演变、过程、动态、逐时变化”" in prompt
     assert 'layout="auto"' in prompt
     assert "偷换成评分曲线" in prompt
+    assert 'threshold_mode="separate"' in prompt
 
 
 def test_validate_uses_schema_and_does_not_default_unsupported_request():
@@ -61,3 +67,22 @@ def test_score_time_series_without_spatial_comparison_is_unchanged():
     parsed = _validate({"views": [{"type": "score_time_series", "metric": "csi"}]})
 
     assert _apply_spatial_animation_guard("看 CSI 随预报时效变化", parsed) == parsed
+
+
+def test_explicit_rate_threshold_layout_wording_is_deterministic():
+    parsed = _validate(
+        {
+            "filters": {"thresholds_dbz": [15, 35]},
+            "views": [{"type": "forecast_observed_rate"}],
+        }
+    )
+
+    combined = _apply_rate_threshold_mode_guard(
+        "把15和35 dBZ合在一张图中比较预报率和观测率", parsed
+    )
+    assert combined["views"][0]["threshold_mode"] == "combined"
+
+    separate = _apply_rate_threshold_mode_guard(
+        "15和35 dBZ分别画预报率和观测率关系图", combined
+    )
+    assert separate["views"][0]["threshold_mode"] == "separate"

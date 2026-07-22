@@ -85,7 +85,11 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
     assert result["figure_metadata"] == {
         "view_01": {"type": "score_time_series", "metric": "csi"},
         "view_02": {"type": "score_time_series", "metric": "ets"},
-        "view_03": {"type": "forecast_observed_rate", "threshold_dbz": 20.0},
+        "view_03": {
+            "type": "forecast_observed_rate",
+            "threshold_mode": "separate",
+            "threshold_dbz": 20.0,
+        },
         "view_04": {"type": "reflectivity_comparison", "lead": 6},
         "view_05": {"type": "reflectivity_error", "lead": 12},
     }
@@ -111,6 +115,24 @@ def test_run_fenglei_case_verification_end_to_end(tmp_path, monkeypatch):
     ] == [20.0, 35.0]
     for figure in rate_panels["figures"].values():
         plt.close(figure)
+
+    rate_comparison = run_fenglei_case_verification(
+        fenglei_dir=fenglei_dir,
+        radar_dir=radar_dir,
+        bbox=(29.9, 30.1, 109.9, 110.1),
+        thresholds=(20, 35),
+        lead_range=(0, 12),
+        views=[
+            {"type": "forecast_observed_rate", "threshold_mode": "combined"}
+        ],
+    )
+    assert list(rate_comparison["figures"]) == ["view_01"]
+    assert rate_comparison["figure_metadata"]["view_01"] == {
+        "type": "forecast_observed_rate",
+        "threshold_mode": "combined",
+        "thresholds_dbz": [20.0, 35.0],
+    }
+    plt.close(rate_comparison["figures"]["view_01"])
 
     open_figures_before_animation = set(plt.get_fignums())
     animated = run_fenglei_case_verification(
