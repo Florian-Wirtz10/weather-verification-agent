@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from matplotlib.colors import BoundaryNorm
 import numpy as np
 import pytest
 
@@ -61,6 +62,10 @@ def test_rate_trajectory_uses_separate_threshold_panels_and_lead_colours():
     assert len(main_axes) == 2  # joint scatter plus bottom marginal density
     assert all(axis.collections for axis in main_axes)
     assert all(not any(line.get_visible() for line in axis.get_xgridlines()) for axis in main_axes)
+    scatter = main_axes[0].collections[0]
+    assert isinstance(scatter.norm, BoundaryNorm)
+    assert scatter.cmap.N == 2
+    np.testing.assert_allclose(figure.axes[-1].get_yticks(), [6, 12])
 
 
 def test_reflectivity_comparison_adds_boundaries_without_changing_extent_or_colourbar():

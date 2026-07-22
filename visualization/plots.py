@@ -424,11 +424,11 @@ def plot_forecast_observed_rate_trajectory(
     fig = plt.figure(figsize=(9.5, 8.2))
     grid = fig.add_gridspec(
         2,
-        2,
-        width_ratios=(4.4, 1.15),
+        3,
+        width_ratios=(4.4, 1.15, 0.18),
         height_ratios=(4.4, 1.15),
         left=0.10,
-        right=0.94,
+        right=0.96,
         bottom=0.11,
         top=0.87,
         wspace=0.12,
@@ -437,7 +437,9 @@ def plot_forecast_observed_rate_trajectory(
     joint = fig.add_subplot(grid[0, 0])
     forecast_density = fig.add_subplot(grid[0, 1], sharey=joint)
     observed_density = fig.add_subplot(grid[1, 0], sharex=joint)
-    colorbar_axis = fig.add_subplot(grid[1, 1])
+    colorbar_axis = fig.add_subplot(grid[0, 2])
+
+    lead_cmap, lead_norm, lead_ticks = _discrete_lead_scale(leads[finite])
 
     joint.plot(
         observed[finite],
@@ -451,7 +453,8 @@ def plot_forecast_observed_rate_trajectory(
         observed[finite],
         forecast[finite],
         c=leads[finite],
-        cmap="viridis",
+        cmap=lead_cmap,
+        norm=lead_norm,
         s=38,
         edgecolors="#30343b",
         linewidths=0.45,
@@ -486,9 +489,9 @@ def plot_forecast_observed_rate_trajectory(
     )
     forecast_density.tick_params(axis="x", direction="in")
 
-    colorbar = fig.colorbar(scatter, cax=colorbar_axis, orientation="horizontal")
+    colorbar = fig.colorbar(scatter, cax=colorbar_axis, orientation="vertical")
+    colorbar.set_ticks(lead_ticks)
     colorbar.set_label("Forecast lead time (min)")
-    colorbar_axis.set_box_aspect(0.22)
     fig.suptitle(
         title or "Forecast rate vs observed rate with marginal distributions",
         fontsize=14,
@@ -503,6 +506,34 @@ def plot_forecast_observed_rate_trajectory(
         color="#565d66",
     )
     return fig
+
+
+def _discrete_lead_scale(lead_minutes):
+    """Return one fixed colour bin per actually available forecast lead."""
+    leads = np.unique(np.asarray(lead_minutes, dtype=float))
+    leads = leads[np.isfinite(leads)]
+    if leads.size == 0:
+        raise ValueError("at least one finite forecast lead is required")
+    base = plt.get_cmap("viridis")
+    cmap = ListedColormap(base(np.linspace(0, 1, leads.size)))
+    if leads.size == 1:
+        boundaries = np.array([leads[0] - 0.5, leads[0] + 0.5])
+    else:
+        midpoints = (leads[:-1] + leads[1:]) / 2
+        boundaries = np.concatenate(
+            (
+                [leads[0] - (leads[1] - leads[0]) / 2],
+                midpoints,
+                [leads[-1] + (leads[-1] - leads[-2]) / 2],
+            )
+        )
+    norm = BoundaryNorm(boundaries, cmap.N)
+    preferred_ticks = (6, 30, 60, 90, 120, 150, 180)
+    ticks = [value for value in preferred_ticks if np.any(np.isclose(leads, value))]
+    for endpoint in (leads[0], leads[-1]):
+        if not any(np.isclose(endpoint, tick) for tick in ticks):
+            ticks.append(float(endpoint))
+    return cmap, norm, sorted(ticks)
 
 
 def _smooth_rate_density(values, *, bins=80, sigma_bins=2.0):
