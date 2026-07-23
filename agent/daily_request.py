@@ -1,4 +1,4 @@
-"""Closed natural-language request schema for Phase 5 full-day diagnostics."""
+"""Closed natural-language request schema for multi-initialization diagnostics."""
 
 from __future__ import annotations
 
@@ -17,16 +17,16 @@ DAILY_VIEW_TYPES = (
     "forecast_observed_rate_distribution",
 )
 DAILY_METRICS = ("csi", "ets", "pod", "far", "bias_score")
-_SYSTEM_PROMPT = f"""你是强对流预报公平检验平台 Phase 5 的请求解析器，只输出 JSON。
+_SYSTEM_PROMPT = f"""你是强对流预报检验平台 Phase 7 的请求解析器，只输出 JSON。
 平台按页面声明的源资料时钟（2025 预报/观测均为 UTC；2026 风雷文件名为 BJT、SWAN 头和 CREF 观测均为 UTC），对风雷预报和 CREF 观测做严格同有效时刻、同区域、同网格口径检验。
 你只选择参数，不计算、不画图、不写代码，也不能修改数据路径、插值、掩膜、缓存或评分公式。
 
 支持指标：{list(DAILY_METRICS)}
 支持视图：
-- daily_score_curve：全天汇总指标随预报时效曲线；
+- daily_score_curve：所选起报汇总指标随预报时效曲线；
 - daily_score_heatmap：起报时刻×预报时效热力图；
 - score_distribution：各时效跨起报样本的分布箱线图。
-- forecast_observed_rate_distribution：固定诊断阈值下，全天所有起报×时效样本的
+- forecast_observed_rate_distribution：固定诊断阈值下，所选起报×时效样本的
   预报率—观测率散点及边缘分布；按 6—60、66—120、126—180 分钟分组。
 
 规则：
@@ -124,7 +124,7 @@ def validate_daily_request(parsed) -> dict:
         if normalized in DAILY_VIEW_TYPES and normalized not in views:
             views.append(normalized)
         elif normalized:
-            unmatched.append(f"暂不支持全天图表：{normalized}")
+            unmatched.append(f"暂不支持图表：{normalized}")
     if not views and not unmatched:
         views = list(DAILY_VIEW_TYPES)
     notes = str(parsed.get("notes", ""))[:1000]

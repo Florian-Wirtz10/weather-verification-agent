@@ -1,4 +1,4 @@
-"""Evidence-bounded AI interpretation for full-day verification summaries."""
+"""Evidence-bounded AI interpretation for multi-initialization summaries."""
 
 from __future__ import annotations
 
@@ -12,20 +12,20 @@ import pandas as pd
 from openai import OpenAI
 
 _METRICS = {"csi", "ets", "pod", "far", "bias_score"}
-_SYSTEM_PROMPT = """你是强对流预报检验平台的全天结果解读助手。用户消息只有服务端已经
+_SYSTEM_PROMPT = """你是强对流预报检验平台的结果解读助手。用户消息只有服务端已经
 计算好的结构化事实；不得重新计算、补造数字，不得声称看过原始图片或网格。
 
 固定输出三个简短章节：
 1. 图表导读：只按 figure_catalog 中实际存在的编号使用“如图1所示”介绍图表内容。
-2. 全天总体结果：客观说明不同阈值下该指标随时效的首末值、范围和极值。
+2. 总体结果：客观说明不同阈值下该指标随时效的首末值、范围和极值。
 3. 离散性与诊断：结合热力图事实、分位数、最弱样本和列联表，指出值得复核的起报/时效；
    原因只能表述为“可能”或“需要结合空间回波进一步核查”。
 
 requested_metric 非空时，只讨论该评分，不主动引入其它评分；为空时不要讨论任何评分。
 仅当 rate_diagnostics 非空时，可以客观说明预报率、
 观测率及散点相对 1:1 线的数量关系；不要把二者误称为 CSI、Bias 等评分。
-不要提到代码、路径、API、提示词或缓存实现。不要另行输出“口径与边界”“公平性说明”
-“适用范围”“局限性”等章节，也不要讨论结果能否推广。"""
+不要提到代码、路径、API、提示词或缓存实现。严格使用上述三个章节，不得新增其它章节，
+也不要讨论结果能否推广。"""
 
 
 def _number(value) -> float | None:
@@ -153,7 +153,7 @@ def build_daily_insight_facts(
     raw_coverage = result.get("coverage")
     coverage: Mapping[str, Any] = raw_coverage if isinstance(raw_coverage, Mapping) else {}
     view_labels = {
-        "daily_score_curve": f"全天汇总 {metric.upper()} 随预报时效曲线",
+        "daily_score_curve": f"汇总 {metric.upper()} 随预报时效曲线",
         "daily_score_heatmap": (
             f"{diagnostic_threshold_dbz:g} dBZ 下起报时刻×时效 {metric.upper()} 热力图"
         ),
@@ -161,7 +161,7 @@ def build_daily_insight_facts(
             f"{diagnostic_threshold_dbz:g} dBZ 下各时效 {metric.upper()} 分布箱线图"
         ),
         "forecast_observed_rate_distribution": (
-            f"{diagnostic_threshold_dbz:g} dBZ 下全天预报率—观测率联合分布"
+            f"{diagnostic_threshold_dbz:g} dBZ 下预报率—观测率联合分布"
         ),
     }
     requested_views = list(views) if views is not None else list(view_labels)
@@ -232,7 +232,7 @@ def render_daily_deterministic_summary(facts: Mapping[str, Any]) -> str:
     metric = str(requested_metric).upper() if requested_metric else "评分"
     figure_count = len(facts.get("figure_catalog", []))
     figure_text = f"共生成 {figure_count} 张已请求视图" if figure_count else "未生成图表"
-    lines = [f"本次全天结果汇总 {metric}，{figure_text}。"]
+    lines = [f"本次结果汇总 {metric}，{figure_text}。"]
     for item in facts.get("threshold_summary", []):
         if not isinstance(item, Mapping) or "first" not in item:
             continue
@@ -259,7 +259,7 @@ def generate_daily_insight(
     base_url="https://api.deepseek.com",
     client: Any | None = None,
 ) -> str:
-    """Ask DeepSeek to verbalize the precomputed full-day fact sheet."""
+    """Ask DeepSeek to verbalize the precomputed multi-initialization fact sheet."""
     payload = json.dumps(facts, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
     llm_client = client or OpenAI(
         api_key=api_key or os.environ["DEEPSEEK_API_KEY"], base_url=base_url

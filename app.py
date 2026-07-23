@@ -30,7 +30,10 @@ from agent import (
     run_fenglei_case_verification,
 )
 from reports import build_case_download_artifacts, describe_view, figure_to_png
-from verification.batch import run_daily_fenglei_verification
+from verification.batch import (
+    filter_daily_result_by_initializations,
+    run_daily_fenglei_verification,
+)
 from visualization.batch_plots import (
     plot_forecast_observed_rate_distribution,
     plot_daily_score_curves,
@@ -73,6 +76,10 @@ CASES = {
         "observation_case_time_basis": "utc",
     },
 }
+
+
+def _clear_verification_attempt():
+    st.session_state.pop("verification_attempt", None)
 
 
 def _metric_rows(result, metrics):
@@ -145,12 +152,21 @@ def _execute_single(request, *, cases, selected_case_id, config, bbox):
 
 def _daily_media(result, request):
     metric, threshold = request["metric"], request["diagnostic_threshold_dbz"]
+    selected_scope = (
+        result["context"].get("selection_scope") == "selected_initializations"
+    )
+    scope_label = "Selected-initialization" if selected_scope else "Full-day"
+    label_prefix = "所选起报" if selected_scope else "全天"
     factories = {
         "daily_score_curve": lambda n: plot_daily_score_curves(
-            result["summary"], metric, figure_number=n
+            result["summary"], metric, figure_number=n, scope_label=scope_label
         ),
         "daily_score_heatmap": lambda n: plot_daily_score_heatmap(
-            result["per_case"], metric, threshold, figure_number=n
+            result["per_case"],
+            metric,
+            threshold,
+            figure_number=n,
+            scope_label=scope_label,
         ),
         "score_distribution": lambda n: plot_daily_score_distribution(
             result["per_case"], metric, threshold, figure_number=n
@@ -162,11 +178,11 @@ def _daily_media(result, request):
         ),
     }
     labels = {
-        "daily_score_curve": f"全天汇总 {metric.upper()} 随时效变化",
+        "daily_score_curve": f"{label_prefix}汇总 {metric.upper()} 随时效变化",
         "daily_score_heatmap": f"{threshold:g} dBZ 起报时刻×时效",
         "score_distribution": f"{threshold:g} dBZ 跨起报分布",
         "forecast_observed_rate_distribution": (
-            f"{threshold:g} dBZ 全天预报率—观测率联合分布"
+            f"{threshold:g} dBZ {label_prefix}预报率—观测率联合分布"
         ),
     }
     media = []
@@ -186,7 +202,15 @@ def _daily_media(result, request):
     return media
 
 
-def _execute_daily(request, *, config, case_date, bbox, progress_callback):
+def _execute_daily(
+    request,
+    *,
+    config,
+    case_date,
+    bbox,
+    progress_callback,
+    selected_initializations_utc=None,
+):
     if not request["views"]:
         return {
             "kind": "daily",
@@ -206,6 +230,10 @@ def _execute_daily(request, *, config, case_date, bbox, progress_callback):
         lead_range=(lead["start"], lead["end"]),
         progress_callback=progress_callback,
     )
+    if selected_initializations_utc is not None:
+        result = filter_daily_result_by_initializations(
+            result, selected_initializations_utc
+        )
     facts = build_daily_insight_facts(
         result,
         metric=request["metric"],
@@ -220,7 +248,7 @@ def _execute_daily(request, *, config, case_date, bbox, progress_callback):
     return {
         "kind": "daily",
         "status": "partial" if request["unmatched_requests"] else "ready",
-        "message": "全天检验完成。",
+        "message": "检验完成。",
         "request": request,
         "result": result,
         "media": _daily_media(result, request),
@@ -317,8 +345,11 @@ def _render_daily(attempt):
                 st.caption("AI 解读暂不可用，已显示确定性解读。")
     with main:
         coverage, cache = result["coverage"], result["cache"]
+        selected_count = coverage.get("selected_initialization_count")
+        selection_text = f"｜已选择 {selected_count} 个起报" if selected_count else ""
         st.write(
-            f"**{coverage['completed_pairs']}/{coverage['selected_pairs']} 对严格匹配样本**｜本次复用缓存 {cache['metric_pairs_reused']} 对"
+            f"**{coverage['completed_pairs']}/{coverage['selected_pairs']} 对严格匹配样本**"
+            f"{selection_text}｜本次复用缓存 {cache['metric_pairs_reused']} 对"
         )
         for start in range(0, len(attempt["media"]), 2):
             columns = st.columns(2)
@@ -355,7 +386,7 @@ def _render_daily(attempt):
             "text/markdown",
             width="stretch",
         )
-        with st.expander("查看全天汇总指标"):
+        with st.expander("查看汇总指标"):
             st.dataframe(result["summary"], width="stretch")
 
 
@@ -374,7 +405,11 @@ with case_column:
         "检验个例", list(CASES), format_func=lambda value: CASES[value]["label"]
     )
 with mode_column:
-    mode = st.radio("检验范围", ["全部起报（全天）", "单一起报"], horizontal=True)
+    mode = st.radio(
+        "检验范围",
+        ["全部起报（全天）", "自定义多起报", "单一起报"],
+        horizontal=True,
+    )
 
 config = CASES[case_key]
 bbox = (lat_min, lat_max, lon_min, lon_max)
@@ -383,7 +418,10 @@ if st.session_state.get("active_scope") != scope:
     st.session_state["active_scope"] = scope
     st.session_state.pop("verification_attempt", None)
 
-if mode == "单一起报":
+available_cases = None
+labels = None
+select = None
+if mode in {"单一起报", "自定义多起报"}:
     generation = st.session_state.get("case_index_generation", 0)
     refresh, select = st.columns([1, 3])
     if refresh.button("刷新可用起报"):
@@ -408,6 +446,8 @@ if mode == "单一起报":
         return f"{init:%Y-%m-%d %H:%M} {config['display_clock']}｜{len(item['available_leads'])} 个时效"
 
     labels = {item["case_id"]: _case_label(item) for item in available_cases}
+
+if mode == "单一起报":
     with select:
         selected_case_id = st.selectbox(
             "风雷起报", list(labels), format_func=lambda value: labels[value]
@@ -448,6 +488,76 @@ if mode == "单一起报":
     attempt = st.session_state.get("verification_attempt")
     if attempt and attempt.get("kind") == "single":
         _render_single(attempt)
+elif mode == "自定义多起报":
+    if len(available_cases) < 2:
+        st.error("当前个例至少需要两个可用起报，才能进行多起报比较。")
+        st.stop()
+    if len(available_cases) <= 3:
+        default_case_ids = [item["case_id"] for item in available_cases]
+    else:
+        default_case_ids = [
+            available_cases[index]["case_id"]
+            for index in (0, len(available_cases) // 2, len(available_cases) - 1)
+        ]
+    with select:
+        selected_case_ids = st.multiselect(
+            "选择风雷起报（2—8个）",
+            list(labels),
+            default=default_case_ids,
+            max_selections=8,
+            format_func=lambda value: labels[value],
+            on_change=_clear_verification_attempt,
+        )
+    prompt = st.text_area(
+        "检验要求",
+        "比较页面选中的多个起报，使用5、15、25、35 dBZ阈值，查看6—180分钟CSI曲线；"
+        "再用15 dBZ画起报时刻×时效热力图、跨起报分布图和预报率—观测率联合分布，并全面解读。",
+    )
+    parse, default = st.columns(2)
+    run_parse = parse.button("智能解析并运行", type="primary", width="stretch")
+    run_default = default.button("使用推荐方案", width="stretch")
+    if run_parse or run_default:
+        if not 2 <= len(selected_case_ids) <= 8:
+            st.session_state["verification_attempt"] = {
+                "kind": "daily",
+                "status": "execution_error",
+                "message": "请选择2—8个不同的起报时间。",
+            }
+        else:
+            progress = st.progress(0.0)
+
+            def _progress(done, total, _label):
+                progress.progress(done / total)
+
+            selected_by_id = {item["case_id"]: item for item in available_cases}
+            selected_times = [
+                selected_by_id[case_id]["init_time"] for case_id in selected_case_ids
+            ]
+            try:
+                request = (
+                    default_daily_request(case_key)
+                    if run_default
+                    else parse_daily_request(prompt)
+                )
+                st.session_state["verification_attempt"] = _execute_daily(
+                    request,
+                    config=config,
+                    case_date=case_key,
+                    bbox=bbox,
+                    progress_callback=_progress,
+                    selected_initializations_utc=selected_times,
+                )
+            except Exception as exc:
+                st.session_state["verification_attempt"] = {
+                    "kind": "daily",
+                    "status": "execution_error",
+                    "message": str(exc),
+                }
+            finally:
+                progress.empty()
+    attempt = st.session_state.get("verification_attempt")
+    if attempt and attempt.get("kind") == "daily":
+        _render_daily(attempt)
 else:
     prompt = st.text_area(
         "检验要求",

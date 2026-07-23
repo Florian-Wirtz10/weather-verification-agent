@@ -156,6 +156,69 @@ def _aggregate_scores(per_case: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(combined.loc[:, columns])
 
 
+def filter_daily_result_by_initializations(
+    result: dict, initialization_times_utc
+) -> dict:
+    """Return a daily result restricted to explicitly selected UTC initializations.
+
+    The full-day cache remains the source of truth.  Only cached rows are
+    selected here, after which contingency counts are pooled again so every
+    summary score keeps exactly the same definition as a full-day run.
+    """
+    per_case = result.get("per_case")
+    if not isinstance(per_case, pd.DataFrame) or "init_time_utc" not in per_case:
+        raise ValueError("daily result does not contain initialization timestamps")
+
+    targets = []
+    for value in initialization_times_utc:
+        timestamp = pd.Timestamp(value)
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.tz_localize("UTC")
+        else:
+            timestamp = timestamp.tz_convert("UTC")
+        if timestamp not in targets:
+            targets.append(timestamp)
+    if not 2 <= len(targets) <= 8:
+        raise ValueError("select between 2 and 8 distinct initialization times")
+
+    row_times = pd.to_datetime(per_case["init_time_utc"], utc=True, errors="coerce")
+    available = set(row_times.dropna())
+    missing = [timestamp for timestamp in targets if timestamp not in available]
+    if missing:
+        missing_text = ", ".join(timestamp.strftime("%Y-%m-%d %H:%M UTC") for timestamp in missing)
+        raise ValueError(f"selected initialization has no cached scores: {missing_text}")
+
+    filtered = per_case.loc[row_times.isin(targets)].copy().reset_index(drop=True)
+    if filtered.empty:
+        raise ValueError("selected initializations contain no cached scores")
+
+    selected_pairs = int(filtered["forecast_path"].nunique())
+    context = dict(result.get("context", {}))
+    context.update(
+        {
+            "selection_scope": "selected_initializations",
+            "selected_initializations_utc": [
+                timestamp.isoformat(timespec="seconds") for timestamp in targets
+            ],
+        }
+    )
+    coverage = dict(result.get("coverage", {}))
+    coverage.update(
+        {
+            "selected_pairs": selected_pairs,
+            "completed_pairs": selected_pairs,
+            "selected_initialization_count": len(targets),
+        }
+    )
+    return {
+        **result,
+        "context": context,
+        "per_case": filtered,
+        "summary": _aggregate_scores(filtered),
+        "coverage": coverage,
+    }
+
+
 def _load_scores(connection: sqlite3.Connection, run_key: str) -> pd.DataFrame:
     return pd.DataFrame(
         pd.read_sql_query(

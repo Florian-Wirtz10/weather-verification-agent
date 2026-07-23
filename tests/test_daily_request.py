@@ -30,7 +30,7 @@ def test_daily_request_preserves_unsupported_view_without_fallback():
     normalized = validate_daily_request(request)
 
     assert normalized["views"] == ["daily_score_curve"]
-    assert normalized["unmatched_requests"] == ["暂不支持全天图表：taylor"]
+    assert normalized["unmatched_requests"] == ["暂不支持图表：taylor"]
 
 
 def test_daily_request_requires_native_six_minute_leads():

@@ -23,7 +23,13 @@ def _validate_metric(frame: pd.DataFrame, metric: str) -> str:
     return metric
 
 
-def plot_daily_score_curves(summary: pd.DataFrame, metric="csi", *, figure_number=1):
+def plot_daily_score_curves(
+    summary: pd.DataFrame,
+    metric="csi",
+    *,
+    figure_number=1,
+    scope_label="Full-day",
+):
     """Plot pooled full-day score against lead time for every threshold."""
     metric = _validate_metric(summary, metric)
     fig, ax = plt.subplots(figsize=(11.5, 6.2), constrained_layout=True)
@@ -40,7 +46,7 @@ def plot_daily_score_curves(summary: pd.DataFrame, metric="csi", *, figure_numbe
     ax.set_xlabel("Forecast lead time (min)")
     ax.set_ylabel(_METRIC_LABELS[metric])
     ax.set_title(
-        f"Figure {figure_number}. Full-day pooled {_METRIC_LABELS[metric]} by lead time"
+        f"Figure {figure_number}. {scope_label} pooled {_METRIC_LABELS[metric]} by lead time"
     )
     lead_values = np.unique(summary["lead_minutes"].to_numpy(dtype=int))
     ax.set_xticks(lead_values[::2])
@@ -205,7 +211,12 @@ def plot_forecast_observed_rate_distribution(
 
 
 def plot_daily_score_heatmap(
-    per_case: pd.DataFrame, metric="csi", threshold_dbz=15, *, figure_number=2
+    per_case: pd.DataFrame,
+    metric="csi",
+    threshold_dbz=15,
+    *,
+    figure_number=2,
+    scope_label="Full-day",
 ):
     """Plot a 30-minute median score heatmap with two marginal summaries."""
     metric = _validate_metric(per_case, metric)
@@ -326,7 +337,7 @@ def plot_daily_score_heatmap(
     )
     colorbar.set_label(f"Median {_METRIC_LABELS[metric]} (discrete score bands)")
     fig.suptitle(
-        f"Full-day {_METRIC_LABELS[metric]} structure with 30-minute initialization bins\n"
+        f"{scope_label} {_METRIC_LABELS[metric]} structure with 30-minute initialization bins\n"
         f"{float(threshold_dbz):g} dBZ | white cells indicate no strictly matched sample",
         fontsize=15,
         fontweight="bold",

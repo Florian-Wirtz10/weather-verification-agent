@@ -51,6 +51,7 @@ def test_streamlit_initial_screen_renders_without_exceptions():
     labels = {button.label for button in app.button}
     assert "智能解析并运行" in labels
     assert "使用推荐方案" in labels
+    assert app.radio[0].options == ["全部起报（全天）", "自定义多起报", "单一起报"]
 
 
 def test_phase4_result_has_browser_downloads_and_releases_figures(tmp_path, monkeypatch):
@@ -124,3 +125,34 @@ def test_phase5_full_day_result_has_three_diagnostics_and_downloads(tmp_path, mo
     assert "下载汇总 CSV" in download_labels
     assert "下载解读 Markdown" in download_labels
     assert any("1/1 对严格匹配样本" in item.value for item in app.markdown)
+
+
+def test_phase7_custom_multi_initialization_uses_selected_cases(tmp_path, monkeypatch):
+    forecast_dir = tmp_path / "daily-forecast"
+    obs_dir = tmp_path / "daily-obs"
+    forecast_dir.mkdir()
+    obs_dir.mkdir()
+    _write_forecast(forecast_dir, init_bjt="202604071848")
+    _write_forecast(forecast_dir, init_bjt="202604071854")
+    _write_binary_cref(
+        obs_dir, valid="20260407_105400", generated="20260407110012"
+    )
+    _write_binary_cref(
+        obs_dir, valid="20260407_110000", generated="20260407110612"
+    )
+    monkeypatch.setenv("FENGLEI_DAILY_DIR", str(forecast_dir))
+    monkeypatch.setenv("RADAR_DAILY_DIR", str(obs_dir))
+    monkeypatch.setattr(agent, "generate_daily_insight", lambda *_args, **_kwargs: "多起报测试解读")
+
+    app = AppTest.from_file("app.py", default_timeout=30).run()
+    app = app.radio[0].set_value("自定义多起报").run()
+    for control, value in zip(app.number_input, (28.0, 30.0, 116.0, 120.0)):
+        app = control.set_value(value).run()
+    assert len(app.multiselect) == 1
+    assert len(app.multiselect[0].value) == 2
+    app = _button(app, "使用推荐方案").click().run()
+
+    assert not app.exception
+    assert len(app.image) == 4
+    assert any("已选择 2 个起报" in item.value for item in app.markdown)
+    assert any("多起报测试解读" in item.value for item in app.markdown)
