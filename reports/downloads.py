@@ -478,14 +478,6 @@ def _summary_markdown(
                 f"> 本次有 {unmatched_count} 项请求超出当前能力，结果包只包含已支持并实际执行的部分。",
             ]
         )
-    lines.extend(
-        [
-            "",
-            "## 口径说明",
-            "",
-            "本报告针对单个起报个例，不能推广为模型整体能力结论。",
-        ]
-    )
     return "\n".join(lines) + "\n"
 
 
@@ -573,7 +565,6 @@ def _safe_facts(value: Mapping[str, Any]) -> dict[str, Any]:
             "thresholds",
             "rate_diagnostics",
             "undefined_values",
-            "limitations",
             "figure_catalog",
         ),
     )

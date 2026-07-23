@@ -49,9 +49,14 @@ def test_daily_batch_plot_suite():
 
     assert all(figure.axes for figure in figures)
     assert "Figure 1" in figures[0].axes[0].get_title()
-    assert "Figure 2" in figures[1].axes[0].get_title()
+    assert "Figure 2" in figures[1].axes[0].get_title(loc="left")
     assert "Figure 3" in figures[2].axes[0].get_title()
     assert "Figure 4" in figures[3]._suptitle.get_text()
     assert not any(line.get_visible() for line in figures[0].axes[0].get_xgridlines())
+    heatmap = figures[1]
+    assert len(heatmap.axes) == 5
+    assert "30-minute" in heatmap._suptitle.get_text()
+    assert "30-minute median" in heatmap.axes[1].get_ylabel()
+    assert not any(line.get_visible() for line in heatmap.axes[0].get_xgridlines())
     for figure in figures:
         plt.close(figure)

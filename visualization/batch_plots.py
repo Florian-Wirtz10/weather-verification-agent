@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
+from matplotlib.colors import BoundaryNorm, ListedColormap
 
 _METRIC_LABELS = {
     "csi": "CSI",
@@ -206,39 +207,164 @@ def plot_forecast_observed_rate_distribution(
 def plot_daily_score_heatmap(
     per_case: pd.DataFrame, metric="csi", threshold_dbz=15, *, figure_number=2
 ):
-    """Plot score by initialization time and lead for one threshold."""
+    """Plot a 30-minute median score heatmap with two marginal summaries."""
     metric = _validate_metric(per_case, metric)
     selected = per_case[np.isclose(per_case["threshold_dbz"], float(threshold_dbz))].copy()
     if selected.empty:
         raise ValueError(f"threshold {threshold_dbz:g} dBZ is not present in cached scores")
     selected["init_time_bjt"] = pd.to_datetime(selected["init_time_bjt"])
-    pivot = selected.pivot_table(
-        index="init_time_bjt",
+    selected["init_time_bin_bjt"] = selected["init_time_bjt"].dt.floor("30min")
+    aggregated = (
+        selected.groupby(["init_time_bin_bjt", "lead_minutes"], as_index=False)[metric]
+        .median()
+    )
+    pivot = aggregated.pivot_table(
+        index="init_time_bin_bjt",
         columns="lead_minutes",
         values=metric,
-        aggfunc="mean",
+        aggfunc="median",
     ).sort_index()
     pivot = pivot.reindex(sorted(pivot.columns), axis=1)
 
-    fig, ax = plt.subplots(figsize=(12.5, 7.0), constrained_layout=True)
     values = np.ma.masked_invalid(pivot.to_numpy(dtype=float))
-    vmin = min(-0.1, float(values.min())) if metric == "ets" and values.count() else 0.0
-    vmax = 1.0 if metric != "bias_score" else max(2.0, float(values.max()))
-    image = ax.imshow(values, aspect="auto", origin="lower", cmap="viridis", vmin=vmin, vmax=vmax)
-    leads = list(pivot.columns)
-    x_positions = np.arange(0, len(leads), max(1, len(leads) // 10))
-    ax.set_xticks(x_positions, [str(leads[index]) for index in x_positions])
-    times = list(pivot.index)
-    y_positions = np.arange(0, len(times), max(1, len(times) // 12))
-    ax.set_yticks(y_positions, [times[index].strftime("%H:%M") for index in y_positions])
-    ax.set_xlabel("Forecast lead time (min)")
-    ax.set_ylabel("Initialization time (BJT)")
-    ax.set_title(
-        f"Figure {figure_number}. {_METRIC_LABELS[metric]} heatmap at "
-        f"{float(threshold_dbz):g} dBZ"
+    if not values.count():
+        raise ValueError(f"{metric} is undefined for every selected daily sample")
+    raw_values = values.filled(np.nan)
+    leads = np.asarray(pivot.columns, dtype=int)
+    times = pd.DatetimeIndex(pivot.index)
+    lead_median = np.nanmedian(raw_values, axis=0)
+    lead_q25 = np.nanpercentile(raw_values, 25, axis=0)
+    lead_q75 = np.nanpercentile(raw_values, 75, axis=0)
+    time_median = np.nanmedian(raw_values, axis=1)
+    cmap, norm, bounds = _daily_heatmap_scale(metric)
+
+    fig = plt.figure(figsize=(14.8, 8.8))
+    grid = fig.add_gridspec(
+        2,
+        2,
+        width_ratios=(5.5, 1.25),
+        height_ratios=(1.3, 5.3),
+        left=0.08,
+        right=0.92,
+        bottom=0.10,
+        top=0.90,
+        wspace=0.08,
+        hspace=0.08,
     )
-    fig.colorbar(image, ax=ax, label=_METRIC_LABELS[metric], fraction=0.035, pad=0.02)
+    lead_axis = fig.add_subplot(grid[0, 0])
+    heat_axis = fig.add_subplot(grid[1, 0], sharex=lead_axis)
+    time_axis = fig.add_subplot(grid[1, 1], sharey=heat_axis)
+    summary_axis = fig.add_subplot(grid[0, 1])
+
+    image = heat_axis.imshow(
+        values, aspect="auto", origin="lower", cmap=cmap, norm=norm
+    )
+    x_positions = np.arange(0, len(leads), max(1, len(leads) // 6))
+    heat_axis.set_xticks(x_positions, [str(leads[index]) for index in x_positions])
+    y_positions = np.arange(0, len(times), max(1, len(times) // 10))
+    heat_axis.set_yticks(
+        y_positions, [times[index].strftime("%H:%M") for index in y_positions]
+    )
+    heat_axis.set_xlabel("Forecast lead time (min)")
+    heat_axis.set_ylabel("Initialization time (BJT, 30-minute median)")
+    heat_axis.grid(False)
+
+    x_values = np.arange(len(leads))
+    lead_axis.fill_between(
+        x_values, lead_q25, lead_q75, color="#8cbbe8", alpha=0.35, label="IQR"
+    )
+    lead_axis.plot(
+        x_values,
+        lead_median,
+        color="#2a78d6",
+        marker="o",
+        markersize=3,
+        linewidth=1.6,
+        label="Median",
+    )
+    lead_axis.set_ylabel(_METRIC_LABELS[metric])
+    lead_axis.set_ylim(*_daily_summary_limits(metric, lead_q25, lead_q75))
+    lead_axis.grid(False)
+    lead_axis.tick_params(axis="x", labelbottom=False)
+    lead_axis.legend(frameon=False, ncols=2, loc="upper right")
+    lead_axis.set_title(
+        f"Figure {figure_number}. Lead-time summary across initialization bins",
+        loc="left",
+    )
+
+    y_values = np.arange(len(times))
+    time_axis.plot(time_median, y_values, color="#e34948", linewidth=1.7)
+    time_axis.scatter(time_median, y_values, color="#e34948", s=12)
+    time_axis.set_xlabel(f"Median {_METRIC_LABELS[metric]}")
+    time_axis.set_xlim(*_daily_summary_limits(metric, time_median, time_median))
+    time_axis.grid(False)
+    time_axis.tick_params(axis="y", labelleft=False)
+    time_axis.set_title("Time-window\nsummary", fontsize=10)
+
+    best_index = int(np.nanargmax(raw_values))
+    best_row, best_column = np.unravel_index(best_index, raw_values.shape)
+    finite_values = raw_values[np.isfinite(raw_values)]
+    summary_axis.axis("off")
+    summary_axis.text(
+        0.02,
+        0.90,
+        f"30-min bins: {len(times)}\n"
+        f"Lead times: {len(leads)}\n"
+        f"Median {_METRIC_LABELS[metric]}: {np.median(finite_values):.3f}\n"
+        f"Best bin: {times[best_row]:%H:%M}, {leads[best_column]} min\n"
+        f"Best median {_METRIC_LABELS[metric]}: {raw_values[best_row, best_column]:.3f}",
+        va="top",
+        fontsize=10,
+        bbox={
+            "facecolor": "#f7f7f7",
+            "edgecolor": "#c7c7c7",
+            "boxstyle": "round,pad=0.45",
+        },
+    )
+    colorbar = fig.colorbar(
+        image, ax=[heat_axis, time_axis], fraction=0.025, pad=0.02, ticks=bounds
+    )
+    colorbar.set_label(f"Median {_METRIC_LABELS[metric]} (discrete score bands)")
+    fig.suptitle(
+        f"Full-day {_METRIC_LABELS[metric]} structure with 30-minute initialization bins\n"
+        f"{float(threshold_dbz):g} dBZ | white cells indicate no strictly matched sample",
+        fontsize=15,
+        fontweight="bold",
+    )
     return fig
+
+
+def _daily_heatmap_scale(metric: str):
+    if metric in {"csi", "pod", "far"}:
+        bounds = np.asarray([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0])
+        base = plt.get_cmap("viridis")
+    elif metric == "ets":
+        bounds = np.asarray([-0.4, -0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4, 0.6, 0.8, 1.0])
+        base = plt.get_cmap("RdYlGn")
+    else:
+        bounds = np.asarray([0, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4])
+        base = plt.get_cmap("viridis")
+    colors = base(np.linspace(0.05, 0.95, len(bounds) - 1))
+    cmap = ListedColormap(colors).with_extremes(
+        bad="white", under=colors[0], over=colors[-1]
+    )
+    return cmap, BoundaryNorm(bounds, cmap.N, clip=True), bounds
+
+
+def _daily_summary_limits(metric: str, lower_values, upper_values):
+    lower_finite = np.asarray(lower_values, dtype=float)
+    upper_finite = np.asarray(upper_values, dtype=float)
+    lower_finite = lower_finite[np.isfinite(lower_finite)]
+    upper_finite = upper_finite[np.isfinite(upper_finite)]
+    if metric in {"csi", "pod", "far"}:
+        upper = max(0.5, float(np.max(upper_finite)) * 1.12)
+        return 0.0, min(1.0, upper)
+    if metric == "ets":
+        lower = min(-0.1, float(np.min(lower_finite)) * 1.12)
+        upper = max(0.5, float(np.max(upper_finite)) * 1.12)
+        return max(-0.4, lower), min(1.0, upper)
+    upper = max(2.0, float(np.max(upper_finite)) * 1.12)
+    return 0.0, upper
 
 
 def plot_daily_score_distribution(

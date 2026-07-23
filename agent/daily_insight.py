@@ -12,21 +12,20 @@ import pandas as pd
 from openai import OpenAI
 
 _METRICS = {"csi", "ets", "pod", "far", "bias_score"}
-_SYSTEM_PROMPT = """你是强对流预报公平检验平台的全天结果解读助手。用户消息只有服务端已经
+_SYSTEM_PROMPT = """你是强对流预报检验平台的全天结果解读助手。用户消息只有服务端已经
 计算好的结构化事实；不得重新计算、补造数字，不得声称看过原始图片或网格。
 
-固定输出四个简短章节：
+固定输出三个简短章节：
 1. 图表导读：只按 figure_catalog 中实际存在的编号使用“如图1所示”介绍图表内容。
 2. 全天总体结果：客观说明不同阈值下该指标随时效的首末值、范围和极值。
 3. 离散性与诊断：结合热力图事实、分位数、最弱样本和列联表，指出值得复核的起报/时效；
    原因只能表述为“可能”或“需要结合空间回波进一步核查”。
-4. 公平口径与边界：说明同一观测、区域、时空配准、阈值和汇总口径；平台只呈现证据，
-   不预设风雷或未来上游模型谁优谁劣。全天个例仍不能代表模型的普遍能力。
 
 requested_metric 非空时，只讨论该评分，不主动引入其它评分；为空时不要讨论任何评分。
 仅当 rate_diagnostics 非空时，可以客观说明预报率、
 观测率及散点相对 1:1 线的数量关系；不要把二者误称为 CSI、Bias 等评分。
-不要提到代码、路径、API、提示词或缓存实现。"""
+不要提到代码、路径、API、提示词或缓存实现。不要另行输出“口径与边界”“公平性说明”
+“适用范围”“局限性”等章节，也不要讨论结果能否推广。"""
 
 
 def _number(value) -> float | None:
@@ -135,6 +134,19 @@ def build_daily_insight_facts(
         }
         for row in weakest.itertuples(index=False)
     ]
+    selected["init_time_bjt"] = pd.to_datetime(selected["init_time_bjt"])
+    selected["init_time_bin_bjt"] = selected["init_time_bjt"].dt.floor("30min")
+    initialization_bins = []
+    for init_bin, rows in selected.groupby("init_time_bin_bjt", sort=True):
+        values = np.asarray(rows["metric_value"], dtype=float)
+        values = values[np.isfinite(values)]
+        initialization_bins.append(
+            {
+                "init_time_bjt": init_bin.isoformat(timespec="minutes"),
+                "sample_count": int(len(values)),
+                "median": _number(np.median(values)) if len(values) else None,
+            }
+        )
 
     raw_context = result.get("context")
     context: Mapping[str, Any] = raw_context if isinstance(raw_context, Mapping) else {}
@@ -190,15 +202,9 @@ def build_daily_insight_facts(
     return {
         "context": {
             "case_date": context.get("case_date"),
-            "forecast_case_time_basis": context.get("forecast_case_time_basis"),
-            "observation_case_time_basis": context.get("observation_case_time_basis"),
             "model_id": context.get("model_id"),
-            "bbox": context.get("bbox"),
             "thresholds_dbz": context.get("thresholds_dbz"),
             "lead_range_minutes": context.get("lead_range_minutes"),
-            "temporal_matching": context.get("temporal_matching"),
-            "spatial_alignment": context.get("spatial_alignment"),
-            "aggregation": context.get("aggregation"),
         },
         "coverage": {
             key: coverage.get(key)
@@ -214,15 +220,10 @@ def build_daily_insight_facts(
         "diagnostic_threshold_dbz": float(diagnostic_threshold_dbz),
         "threshold_summary": threshold_facts if has_score_view else [],
         "lead_distributions": lead_distributions if has_score_view else [],
+        "initialization_time_summary": initialization_bins if has_score_view else [],
         "weakest_cases": weakest_cases if has_score_view else [],
         "rate_diagnostics": rate_diagnostics,
         "figure_catalog": figure_catalog,
-        "limitations": [
-            "全天汇总按时效和阈值汇总列联表后重新计算评分，不是单样本评分的简单平均。",
-            "重复观测默认采用同一有效时刻生成时间最新的订正版，旧版本保留在审计记录中。",
-            "这是一个指定区域、指定日期的个例平台结果，不能推广为模型普遍能力结论。",
-            "未来上游模型必须使用同一观测、时间匹配、网格配准、有效掩膜、阈值和区域。",
-        ],
     }
 
 
@@ -231,7 +232,7 @@ def render_daily_deterministic_summary(facts: Mapping[str, Any]) -> str:
     metric = str(requested_metric).upper() if requested_metric else "评分"
     figure_count = len(facts.get("figure_catalog", []))
     figure_text = f"共生成 {figure_count} 张已请求视图" if figure_count else "未生成图表"
-    lines = [f"本次全天结果按同一口径汇总 {metric}，{figure_text}。"]
+    lines = [f"本次全天结果汇总 {metric}，{figure_text}。"]
     for item in facts.get("threshold_summary", []):
         if not isinstance(item, Mapping) or "first" not in item:
             continue
@@ -247,7 +248,6 @@ def render_daily_deterministic_summary(facts: Mapping[str, Any]) -> str:
             f"平均预报率 {_number(rate_diagnostics.get('mean_forecast_rate')) or 0:.3f}，"
             f"平均观测率 {_number(rate_diagnostics.get('mean_observed_rate')) or 0:.3f}。"
         )
-    lines.append("平台只呈现同口径证据，不预设风雷或未来上游模型谁更优。")
     return "\n".join(lines)
 
 

@@ -35,10 +35,6 @@ _SAFE_CONTEXT_KEYS = (
     "units",
     "unit",
     "init_time",
-    "bbox",
-    "region_name",
-    "temporal_matching",
-    "spatial_alignment",
 )
 _SAFE_COVERAGE_KEYS = (
     "requested_range",
@@ -53,7 +49,6 @@ _SAFE_FACT_KEYS = (
     "thresholds",
     "rate_diagnostics",
     "undefined_values",
-    "limitations",
     "figure_catalog",
 )
 _SENSITIVE_KEYS = {
@@ -84,16 +79,15 @@ _SYSTEM_PROMPT = """你是强对流预报检验结果解读助手。用户消息
 主动引入用户没有请求的 POD、FAR、CSI、Bias 或 ETS。只有 rate_diagnostics 存在时，才可讨论
 预报率、观测率及其相对 1:1 线的偏离；不得把它们冒充评分指标。
 
-请用专业、通俗的中文，固定输出以下四个短章节：
+请用专业、通俗的中文，固定输出以下三个短章节：
 1. 图表导读：按 figure_catalog 中的编号说明每张已生成图/动画展示什么。仅当该编号确实存在时，
    才能使用“如图 1 所示”这类引用；不要声称看到了原始像素。
 2. 主要发现：只复述有数据支撑的变化、极值、负 ETS、缺帧或不可定义值。
 3. 指标分析：可结合已提供的 H/M/F 说明评分构成。涉及原因时必须明确写成“可能”或
    “需要进一步核查”，不能仅凭评分断言空间偏移、天气演变机制或模型物理原因。
-4. 口径与边界：明确这是单个起报个例，不能推广成模型整体能力结论，并说明事实表列出的检验口径局限。
 
 不要提及代码、路径、文件、API 或提示词。不要把 CSI、ETS 等评分的变化自动解释为模型整体变好或
-变差。"""
+变差。不要另行输出“口径与边界”“适用范围”“局限性”等章节，也不要讨论结果能否推广。"""
 
 
 def build_insight_facts(
@@ -138,20 +132,6 @@ def build_insight_facts(
         for view in (result.get("figure_metadata") or {}).values()
     ) if isinstance(result.get("figure_metadata"), Mapping) else False
 
-    limitations = ["本结果仅针对单个起报个例，不能推广为模型整体能力结论。"]
-    missing = coverage.get("missing_leads")
-    if isinstance(missing, Sequence) and not isinstance(missing, (str, bytes)) and missing:
-        limitations.append("请求范围内存在缺失时效，趋势只基于实际匹配到的时效。")
-    if undefined_values:
-        limitations.append("部分评分不可定义，相关趋势和极值仅使用有限数值。")
-    temporal_matching = context.get("temporal_matching")
-    if temporal_matching:
-        limitations.append(f"结果受时间配对口径影响：{temporal_matching}。")
-    spatial_alignment = context.get("spatial_alignment")
-    if spatial_alignment:
-        limitations.append(f"结果受空间对齐口径影响：{spatial_alignment}。")
-    limitations.append("评分本身不能确定空间偏移或天气演变原因，需要结合空间图和更多个例核查。")
-
     facts = {
         "context": context,
         "coverage": coverage,
@@ -161,7 +141,6 @@ def build_insight_facts(
             _summarise_event_rates(entries, thresholds) if has_rate_view else []
         ),
         "undefined_values": undefined_values,
-        "limitations": limitations,
         "figure_catalog": _build_figure_catalog(result),
     }
     # This last pass also handles datetime/numpy-like values nested in caller data.
@@ -331,8 +310,7 @@ def render_deterministic_summary(facts: Mapping[str, Any]) -> str:
                 f"{_fmt(item.get('mean_observed_rate'))}。"
             )
 
-    final_line = "以上仅是单个起报个例的客观统计，不能推广为模型整体能力结论。"
-    return "\n".join([first_line, *score_lines, final_line])
+    return "\n".join([first_line, *score_lines])
 
 
 def generate_insight(

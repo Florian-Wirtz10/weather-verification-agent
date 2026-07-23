@@ -65,8 +65,12 @@ def test_daily_insight_facts_are_path_free_and_number_figures():
     assert [item["number"] for item in facts["figure_catalog"]] == [1, 2, 3, 4]
     assert facts["threshold_summary"][0]["first"]["value"] == 0.6
     assert facts["rate_diagnostics"]["sample_count"] == 4
+    assert len(facts["initialization_time_summary"]) == 1
+    assert "limitations" not in facts
     assert "path" not in str(facts).lower()
-    assert "不预设" in render_daily_deterministic_summary(facts)
+    deterministic = render_daily_deterministic_summary(facts)
+    assert "口径与边界" not in deterministic
+    assert "不预设" not in deterministic
 
 
 def test_generate_daily_insight_sends_only_fact_json():

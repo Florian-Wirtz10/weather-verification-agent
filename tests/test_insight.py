@@ -79,13 +79,14 @@ def test_build_insight_facts_computes_evidence_and_is_strict_json():
     assert "NaN" not in encoded
 
 
-def test_deterministic_summary_reports_missing_negative_and_single_case_limit():
+def test_deterministic_summary_reports_missing_and_negative_scores_without_boundary_section():
     summary = render_deterministic_summary(build_insight_facts(_result()))
 
     assert "缺少 12 分钟" in summary
     assert "ETS 在 2 个时效为负" in summary
-    assert "单个起报个例" in summary
-    assert "不能推广为模型整体能力结论" in summary
+    assert "口径与边界" not in summary
+    assert "不能推广" not in summary
+    assert "limitations" not in build_insight_facts(_result())
 
 
 class _FakeCompletions:
