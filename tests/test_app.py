@@ -51,6 +51,7 @@ def test_streamlit_initial_screen_renders_without_exceptions():
     labels = {button.label for button in app.button}
     assert "智能解析并运行" in labels
     assert "使用推荐方案" in labels
+    assert "刷新可用起报" not in labels
     assert app.radio[0].options == ["全部起报（全天）", "自定义多起报", "单一起报"]
 
 

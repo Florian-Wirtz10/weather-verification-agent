@@ -53,8 +53,7 @@ DEFAULT_HUBEI_BBOX = {
 
 
 @st.cache_data(show_spinner="正在建立可用起报索引…")
-def _cached_cases(forecast_dir: str, observation_dir: str, generation: int):
-    del generation
+def _cached_cases(forecast_dir: str, observation_dir: str):
     return discover_fenglei_cases(forecast_dir, observation_dir)
 
 
@@ -420,16 +419,10 @@ if st.session_state.get("active_scope") != scope:
 
 available_cases = None
 labels = None
-select = None
 if mode in {"单一起报", "自定义多起报"}:
-    generation = st.session_state.get("case_index_generation", 0)
-    refresh, select = st.columns([1, 3])
-    if refresh.button("刷新可用起报"):
-        generation += 1
-        st.session_state["case_index_generation"] = generation
     try:
         available_cases = _cached_cases(
-            config["forecast_dir"], config["observation_dir"], generation
+            config["forecast_dir"], config["observation_dir"]
         )
     except Exception as exc:
         available_cases, catalog_error = [], str(exc)
@@ -448,10 +441,9 @@ if mode in {"单一起报", "自定义多起报"}:
     labels = {item["case_id"]: _case_label(item) for item in available_cases}
 
 if mode == "单一起报":
-    with select:
-        selected_case_id = st.selectbox(
-            "风雷起报", list(labels), format_func=lambda value: labels[value]
-        )
+    selected_case_id = st.selectbox(
+        "风雷起报", list(labels), format_func=lambda value: labels[value]
+    )
     prompt = st.text_area(
         "检验要求",
         "使用35 dBZ阈值，只看前1小时，生成 CSI ， ETS 曲线和预报-观测时序变化图，并简要解读结果。",
@@ -499,15 +491,14 @@ elif mode == "自定义多起报":
             available_cases[index]["case_id"]
             for index in (0, len(available_cases) // 2, len(available_cases) - 1)
         ]
-    with select:
-        selected_case_ids = st.multiselect(
-            "选择风雷起报（2—8个）",
-            list(labels),
-            default=default_case_ids,
-            max_selections=8,
-            format_func=lambda value: labels[value],
-            on_change=_clear_verification_attempt,
-        )
+    selected_case_ids = st.multiselect(
+        "选择风雷起报（2—8个）",
+        list(labels),
+        default=default_case_ids,
+        max_selections=8,
+        format_func=lambda value: labels[value],
+        on_change=_clear_verification_attempt,
+    )
     prompt = st.text_area(
         "检验要求",
         "比较页面选中的多个起报，使用5、15、25、35 dBZ阈值，查看6—180分钟CSI曲线；"
