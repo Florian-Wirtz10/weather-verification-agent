@@ -1,6 +1,11 @@
 """Constrained natural-language orchestration for forecast verification."""
 
 from agent.errors import AmbiguousCaseError, DataContractError, NoDataError
+from agent.comparison_insight import (
+    build_comparison_insight_facts,
+    generate_comparison_insight,
+    render_comparison_deterministic_summary,
+)
 from agent.daily_insight import (
     build_daily_insight_facts,
     generate_daily_insight,
@@ -40,4 +45,7 @@ __all__ = [
     "build_daily_insight_facts",
     "render_daily_deterministic_summary",
     "generate_daily_insight",
+    "build_comparison_insight_facts",
+    "render_comparison_deterministic_summary",
+    "generate_comparison_insight",
 ]

@@ -3,6 +3,7 @@ import numpy as np
 from streamlit.testing.v1 import AppTest
 
 import agent
+import verification.triplet
 from tests.test_real_data_io import _make_cref_nc, _make_swan_mosaic_bytes
 from tests.test_catalog import _write_forecast
 from tests.test_radar_binary import _write_binary_cref
@@ -157,3 +158,112 @@ def test_phase7_custom_multi_initialization_uses_selected_cases(tmp_path, monkey
     assert len(app.image) == 4
     assert any("已选择 2 个起报" in item.value for item in app.markdown)
     assert any("多起报测试解读" in item.value for item in app.markdown)
+
+
+def test_phase8_triplet_mode_renders_two_product_comparison(tmp_path, monkeypatch):
+    forecast_dir = tmp_path / "fenglei"
+    obs_dir = tmp_path / "obs"
+    model_root = tmp_path / "model"
+    forecast_dir.mkdir()
+    obs_dir.mkdir()
+    model_delivery = model_root / "2025041108_BJT"
+    model_delivery.mkdir(parents=True)
+    (model_delivery / "forecast.npz").touch()
+
+    raw = np.zeros((6, 6), dtype="u1")
+    (forecast_dir / "REFMOSAIC-202504110000-006MIN.bz2").write_bytes(
+        _make_swan_mosaic_bytes(
+            nx=6,
+            ny=6,
+            cell_bytes=1,
+            scale=0.5,
+            offset=-33.0,
+            values=raw,
+        )
+    )
+    _make_cref_nc(
+        obs_dir / "CREF_with_time_fixture.nc",
+        lat=np.linspace(29.0, 33.5, 6, dtype="f4"),
+        lon=np.linspace(108.0, 116.5, 6, dtype="f4"),
+        data=np.zeros((6, 6), dtype="f4"),
+        valid_time_str="2025-04-11 00:06:00",
+    )
+    monkeypatch.setenv("FENGLEI_CASE_DIR", str(forecast_dir))
+    monkeypatch.setenv("RADAR_OBS_DIR", str(obs_dir))
+    monkeypatch.setenv("UPSTREAM_MODEL_DIRS", str(model_root))
+    monkeypatch.setattr(
+        agent,
+        "generate_comparison_insight",
+        lambda *_args, **_kwargs: "Phase 8 对比测试解读",
+    )
+
+    def fake_triplet(**kwargs):
+        thresholds = [float(value) for value in kwargs["thresholds"]]
+        per_lead = []
+        for lead, model_score, fenglei_score in (
+            (6, 0.8, 0.7),
+            (12, 0.7, 0.65),
+        ):
+            products = {}
+            for product, score in (
+                ("model", model_score),
+                ("fenglei", fenglei_score),
+            ):
+                products[product] = {
+                    threshold: {
+                        "contingency": {
+                            "hits": 8,
+                            "misses": 1,
+                            "false_alarms": 1,
+                            "correct_negatives": 10,
+                            "valid_count": 20,
+                            "invalid_count": 0,
+                        },
+                        "pod": score,
+                        "far": 1 - score,
+                        "csi": score,
+                        "bias_score": 1.0,
+                        "ets": score - 0.1,
+                    }
+                    for threshold in thresholds
+                }
+            per_lead.append(
+                {
+                    "lead_minutes": lead,
+                    "valid_time_utc": np.datetime64(
+                        f"2025-04-11T00:{lead:02d}:00"
+                    ).astype("datetime64[s]").astype(object),
+                    **products,
+                }
+            )
+        return {
+            "context": {
+                "init_time_utc": np.datetime64("2025-04-11T00:00:00")
+                .astype("datetime64[s]")
+                .astype(object),
+                "init_time_bjt": np.datetime64("2025-04-11T08:00:00")
+                .astype("datetime64[s]")
+                .astype(object),
+                "model_contract": "phase8-inferred-v1",
+            },
+            "coverage": {
+                "selected_leads": [6, 12],
+                "missing_leads": [],
+            },
+            "per_lead": per_lead,
+        }
+
+    monkeypatch.setattr(verification.triplet, "run_triplet_case", fake_triplet)
+
+    app = AppTest.from_file("app.py", default_timeout=30).run()
+    app = app.selectbox[0].set_value("2025-04-11").run()
+    app = app.selectbox[1].set_value("我们模型 vs 风雷（Phase 8）").run()
+    app = _button(app, "使用推荐方案").click().run()
+
+    assert not app.exception
+    assert len(app.image) == 2
+    assert any("Phase 8 实验性三方对比" in item.value for item in app.info)
+    assert any("Phase 8 对比测试解读" in item.value for item in app.markdown)
+    assert {"下载三方指标 CSV", "下载解读 Markdown"} <= {
+        item.label for item in app.download_button
+    }

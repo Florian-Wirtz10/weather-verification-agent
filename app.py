@@ -1,4 +1,4 @@
-"""Streamlit demo for fair Fenglei/CREF verification on the delivered cases."""
+"""Streamlit demo for fair forecast/CREF verification on the delivered cases."""
 
 from datetime import date, timedelta
 import os
@@ -14,32 +14,38 @@ from agent import (
     DataContractError,
     NoDataError,
     RequestValidationError,
+    build_comparison_insight_facts,
     build_daily_insight_facts,
     build_insight_facts,
     default_daily_request,
     default_request,
     discover_fenglei_cases,
     generate_daily_insight,
+    generate_comparison_insight,
     generate_insight,
     parse_daily_request,
     parse_request,
     render_daily_deterministic_summary,
+    render_comparison_deterministic_summary,
     render_deterministic_summary,
     resolve_media_layout,
     resolve_request,
     run_fenglei_case_verification,
 )
+from data_io.upstream_model import discover_upstream_model_files
 from reports import build_case_download_artifacts, describe_view, figure_to_png
 from verification.batch import (
     filter_daily_result_by_initializations,
     run_daily_fenglei_verification,
 )
+from verification.triplet import run_triplet_case
 from visualization.batch_plots import (
     plot_forecast_observed_rate_distribution,
     plot_daily_score_curves,
     plot_daily_score_distribution,
     plot_daily_score_heatmap,
 )
+from visualization.comparison_plots import plot_triplet_score_curves
 
 load_dotenv()
 st.set_page_config(page_title="强对流预报检验智能体", layout="wide")
@@ -55,6 +61,19 @@ DEFAULT_HUBEI_BBOX = {
 @st.cache_data(show_spinner="正在建立可用起报索引…")
 def _cached_cases(forecast_dir: str, observation_dir: str):
     return discover_fenglei_cases(forecast_dir, observation_dir)
+
+
+def _upstream_model_directories() -> tuple[str, ...]:
+    raw = os.getenv(
+        "UPSTREAM_MODEL_DIRS",
+        "external/湖北两个个例;external/湖北个例补充",
+    )
+    return tuple(value.strip() for value in raw.split(";") if value.strip())
+
+
+@st.cache_data(show_spinner="正在建立我们模型的起报索引…")
+def _cached_upstream_model_files(directories: tuple[str, ...]):
+    return discover_upstream_model_files(directories)
 
 
 CASES = {
@@ -79,6 +98,18 @@ CASES = {
 
 def _clear_verification_attempt():
     st.session_state.pop("verification_attempt", None)
+
+
+def _default_triplet_request():
+    request = default_request()
+    request["filters"]["thresholds_dbz"] = [5.0, 15.0, 25.0, 35.0]
+    request["filters"]["lead_range_minutes"] = {"start": 6, "end": 180}
+    request["views"] = [
+        {"type": "score_time_series", "metric": "csi"},
+        {"type": "score_time_series", "metric": "ets"},
+    ]
+    request["insight"] = {"enabled": True, "length": "detailed"}
+    return request
 
 
 def _metric_rows(result, metrics):
@@ -142,6 +173,103 @@ def _execute_single(request, *, cases, selected_case_id, config, bbox):
         result=result,
         metric_rows=rows,
         downloads=downloads,
+        insight=insight,
+        deterministic=deterministic,
+        insight_error=insight_error,
+    )
+    return attempt
+
+
+def _triplet_metric_rows(result):
+    rows = []
+    for entry in result["per_lead"]:
+        for product in ("model", "fenglei"):
+            for threshold, values in entry[product].items():
+                table = values["contingency"]
+                rows.append(
+                    {
+                        "product": "我们模型" if product == "model" else "风雷",
+                        "lead_minutes": entry["lead_minutes"],
+                        "valid_time_utc": (
+                            entry["valid_time_utc"].isoformat(timespec="seconds") + "Z"
+                        ),
+                        "threshold_dbz": threshold,
+                        **{
+                            metric: values[metric]
+                            for metric in ("pod", "far", "csi", "bias_score", "ets")
+                        },
+                        **table,
+                    }
+                )
+    return rows
+
+
+def _execute_triplet(
+    request,
+    *,
+    cases,
+    selected_case_id,
+    model_path,
+    config,
+    bbox,
+):
+    decision = resolve_request(request, cases, selected_case_id=selected_case_id)
+    attempt: dict[str, Any] = {
+        "kind": "triplet",
+        "decision": decision,
+        "request": request,
+    }
+    if decision["status"] not in {"ready", "partial"}:
+        return attempt
+    execution = decision["execution"]
+    metrics = list(
+        dict.fromkeys(
+            view["metric"]
+            for view in execution["views"]
+            if view["type"] == "score_time_series"
+        )
+    )
+    if not metrics:
+        metrics = ["csi"]
+    result = run_triplet_case(
+        model_path=model_path,
+        fenglei_dir=config["forecast_dir"],
+        observation_dir=config["observation_dir"],
+        bbox=bbox,
+        thresholds=tuple(execution["thresholds"]),
+        lead_range=(
+            execution["lead_range"]["start"],
+            execution["lead_range"]["end"],
+        ),
+    )
+    media = []
+    for number, metric in enumerate(metrics, 1):
+        figure = plot_triplet_score_curves(result, metric)
+        try:
+            media.append(
+                {
+                    "number": number,
+                    "metric": metric,
+                    "label": f"我们模型与风雷的 {metric.upper()} 随时效对比",
+                    "data": figure_to_png(figure),
+                    "file_name": (
+                        f"phase8_{result['context']['init_time_utc']:%Y%m%d%H%M}_"
+                        f"{metric}.png"
+                    ),
+                }
+            )
+        finally:
+            plt.close(figure)
+    facts = build_comparison_insight_facts(result, metrics)
+    deterministic = render_comparison_deterministic_summary(facts)
+    try:
+        insight, insight_error = generate_comparison_insight(facts), None
+    except Exception as exc:
+        insight, insight_error = None, str(exc)
+    attempt.update(
+        result=result,
+        media=media,
+        rows=_triplet_metric_rows(result),
         insight=insight,
         deterministic=deterministic,
         insight_error=insight_error,
@@ -330,6 +458,59 @@ def _render_single(attempt):
             st.dataframe(pd.DataFrame(attempt["metric_rows"]), width="stretch")
 
 
+def _render_triplet(attempt):
+    decision, result = attempt["decision"], attempt.get("result")
+    if decision["status"] not in {"ready", "partial"}:
+        st.error(decision["message"])
+        return
+    if result is None:
+        st.warning(decision["message"])
+        return
+    main, insight = st.columns([3.2, 1], gap="large")
+    with insight:
+        st.subheader("AI 解读")
+        with st.container(height=680, border=False):
+            st.markdown(attempt["insight"] or attempt["deterministic"])
+            if attempt["insight_error"]:
+                st.caption("AI 解读暂不可用，已显示确定性对比摘要。")
+    with main:
+        context, coverage = result["context"], result["coverage"]
+        st.info(
+            "Phase 8 实验性三方对比｜"
+            f"{context['init_time_utc']:%Y-%m-%d %H:%M} UTC 起报｜"
+            f"{len(coverage['selected_leads'])} 个严格匹配时效｜"
+            f"模型契约：{context['model_contract']}｜0/缺测语义待上游确认"
+        )
+        for item in attempt["media"]:
+            st.caption(item["label"])
+            st.image(item["data"])
+            st.download_button(
+                "下载 PNG",
+                item["data"],
+                item["file_name"],
+                "image/png",
+                key=f"triplet_{item['metric']}",
+            )
+        frame = pd.DataFrame(attempt["rows"])
+        columns = st.columns(2)
+        columns[0].download_button(
+            "下载三方指标 CSV",
+            frame.to_csv(index=False).encode("utf-8-sig"),
+            f"phase8_{context['init_time_utc']:%Y%m%d%H%M}_metrics.csv",
+            "text/csv",
+            width="stretch",
+        )
+        columns[1].download_button(
+            "下载解读 Markdown",
+            attempt["deterministic"].encode("utf-8"),
+            f"phase8_{context['init_time_utc']:%Y%m%d%H%M}_insight.md",
+            "text/markdown",
+            width="stretch",
+        )
+        with st.expander("查看三方指标"):
+            st.dataframe(frame, width="stretch")
+
+
 def _render_daily(attempt):
     if attempt["status"] not in {"ready", "partial"}:
         st.error(attempt["message"])
@@ -398,24 +579,105 @@ with st.sidebar:
     lon_min = st.number_input("lon_min", value=DEFAULT_HUBEI_BBOX["lon_min"])
     lon_max = st.number_input("lon_max", value=DEFAULT_HUBEI_BBOX["lon_max"])
 
-case_column, mode_column = st.columns([1.45, 1])
+case_column, product_column, mode_column = st.columns([1.35, 1.05, 1.45])
 with case_column:
     case_key = st.selectbox(
         "检验个例", list(CASES), format_func=lambda value: CASES[value]["label"]
     )
+with product_column:
+    product_mode = st.selectbox(
+        "预报产品",
+        ["风雷检验", "我们模型 vs 风雷（Phase 8）"],
+        on_change=_clear_verification_attempt,
+    )
 with mode_column:
+    mode_options = (
+        ["单一起报"]
+        if product_mode == "我们模型 vs 风雷（Phase 8）"
+        else ["全部起报（全天）", "自定义多起报", "单一起报"]
+    )
     mode = st.radio(
         "检验范围",
-        ["全部起报（全天）", "自定义多起报", "单一起报"],
+        mode_options,
         horizontal=True,
     )
 
 config = CASES[case_key]
 bbox = (lat_min, lat_max, lon_min, lon_max)
-scope = (case_key, mode, *bbox)
+scope = (case_key, product_mode, mode, *bbox)
 if st.session_state.get("active_scope") != scope:
     st.session_state["active_scope"] = scope
     st.session_state.pop("verification_attempt", None)
+
+if product_mode == "我们模型 vs 风雷（Phase 8）":
+    try:
+        fenglei_cases = _cached_cases(
+            config["forecast_dir"], config["observation_dir"]
+        )
+        model_files = _cached_upstream_model_files(
+            _upstream_model_directories()
+        )
+        triplet_cases = [
+            item for item in fenglei_cases if item["init_time"] in model_files
+        ]
+    except Exception as exc:
+        st.error(str(exc))
+        st.stop()
+    if not triplet_cases:
+        st.error(
+            "当前个例没有我们模型、风雷和CREF三方严格重叠的起报。"
+            "现有2026模型资料实际对应2026-04-08 UTC，暂不在此入口中混用。"
+        )
+        st.stop()
+
+    triplet_by_id = {item["case_id"]: item for item in triplet_cases}
+    triplet_labels = {
+        item["case_id"]: (
+            f"{item['init_time']:%Y-%m-%d %H:%M} UTC｜"
+            f"{len(item['available_leads'])} 个风雷匹配时效"
+        )
+        for item in triplet_cases
+    }
+    selected_case_id = st.selectbox(
+        "共同起报",
+        list(triplet_labels),
+        format_func=lambda value: triplet_labels[value],
+        on_change=_clear_verification_attempt,
+    )
+    prompt = st.text_area(
+        "对比要求",
+        "使用5、15、25、35 dBZ阈值，对比6—180分钟我们模型与风雷的CSI和ETS曲线，"
+        "并解读不同阈值下两者表现。",
+    )
+    parse, default = st.columns(2)
+    run_parse = parse.button("智能解析并运行", type="primary", width="stretch")
+    run_default = default.button("使用推荐方案", width="stretch")
+    if run_parse or run_default:
+        try:
+            request = (
+                _default_triplet_request()
+                if run_default
+                else parse_request(prompt, available_cases=triplet_cases)
+            )
+            selected_case = triplet_by_id[selected_case_id]
+            with st.spinner("正在进行三方严格对齐计算…"):
+                st.session_state["verification_attempt"] = _execute_triplet(
+                    request,
+                    cases=triplet_cases,
+                    selected_case_id=selected_case_id,
+                    model_path=model_files[selected_case["init_time"]],
+                    config=config,
+                    bbox=bbox,
+                )
+        except Exception as exc:
+            st.session_state["verification_attempt"] = {
+                "kind": "triplet",
+                "decision": {"status": "execution_error", "message": str(exc)},
+            }
+    attempt = st.session_state.get("verification_attempt")
+    if attempt and attempt.get("kind") == "triplet":
+        _render_triplet(attempt)
+    st.stop()
 
 available_cases = None
 labels = None

@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+import re
 
 import numpy as np
 
@@ -49,6 +50,7 @@ PHASE8_INFERRED_CONTRACT = UpstreamModelContract(
 )
 
 _BJT_TO_UTC = timedelta(hours=8)
+_DELIVERY_DIRECTORY_RE = re.compile(r"(?P<time>\d{10})_BJT\Z")
 _REQUIRED_KEYS = {
     "predicted_radar",
     "history_frames",
@@ -67,6 +69,32 @@ class UpstreamModelMetadata:
     history_times_bjt: tuple[datetime, ...]
     available_leads: tuple[int, ...]
     contract_name: str
+
+
+def discover_upstream_model_files(directories) -> dict[datetime, Path]:
+    """Index delivered NPZ files by UTC initialization without decoding arrays.
+
+    Directory names are only used for fast discovery.  The selected archive is
+    still fully validated against its internal ``start_time`` before scoring.
+    """
+    indexed: dict[datetime, Path] = {}
+    for directory in directories:
+        root = Path(directory)
+        if not root.is_dir():
+            continue
+        for path in sorted(root.glob("*/*.npz")):
+            match = _DELIVERY_DIRECTORY_RE.fullmatch(path.parent.name)
+            if match is None:
+                continue
+            init_bjt = datetime.strptime(match.group("time"), "%Y%m%d%H")
+            init_utc = init_bjt - _BJT_TO_UTC
+            if init_utc in indexed:
+                raise ValueError(
+                    f"duplicate upstream-model initialization {init_utc} UTC: "
+                    f"{indexed[init_utc]} and {path}"
+                )
+            indexed[init_utc] = path
+    return indexed
 
 
 def _parse_bjt_timestamp(value, fmt: str) -> datetime:

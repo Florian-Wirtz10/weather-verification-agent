@@ -5,6 +5,7 @@ import pytest
 
 from data_io.upstream_model import (
     UpstreamModelContract,
+    discover_upstream_model_files,
     read_upstream_model_forecast,
     read_upstream_model_forecasts,
     read_upstream_model_metadata,
@@ -93,3 +94,14 @@ def test_reader_loads_multiple_future_leads(tmp_path, miniature_contract):
     assert list(fields) == [6, 18]
     np.testing.assert_array_equal(fields[6].data, predicted[2][::-1])
     np.testing.assert_array_equal(fields[18].data, predicted[4][::-1])
+
+
+def test_fast_discovery_uses_bjt_directory_clock(tmp_path):
+    delivery = tmp_path / "2025041108_BJT"
+    delivery.mkdir()
+    path = delivery / "forecast_2025041108_BJT.npz"
+    path.touch()
+
+    indexed = discover_upstream_model_files((tmp_path,))
+
+    assert indexed == {datetime(2025, 4, 11, 0): path}
