@@ -25,7 +25,7 @@ from data_io.radar_obs import read_radar_observation
 from data_io.upstream_model import read_upstream_model_forecasts
 from verification.metrics import CATEGORICAL_SCORES, contingency_table
 
-MULTIMODEL_CACHE_VERSION = 2
+MULTIMODEL_CACHE_VERSION = 3
 _COUNT_COLUMNS = (
     "hits",
     "misses",
@@ -35,15 +35,78 @@ _COUNT_COLUMNS = (
     "invalid_count",
 )
 _SCORE_COLUMNS = tuple(CATEGORICAL_SCORES)
+_DIAGNOSTIC_COLUMNS = (
+    "forecast_mean_dbz",
+    "observation_mean_dbz",
+    "forecast_max_dbz",
+    "observation_max_dbz",
+    "mean_reflectivity_error_dbz",
+    "reflectivity_mae_dbz",
+    "centroid_distance_km",
+)
 
 
-def _score_array(forecast_data, observation_data, thresholds):
+def _echo_centroid(data, valid, threshold, lat, lon):
+    echo = valid & (data >= threshold)
+    if not np.any(echo):
+        return None
+    lat_grid, lon_grid = np.meshgrid(lat, lon, indexing="ij")
+    return float(np.mean(lat_grid[echo])), float(np.mean(lon_grid[echo]))
+
+
+def _centroid_distance_km(left, right):
+    if left is None or right is None:
+        return float("nan")
+    mean_lat = np.deg2rad((left[0] + right[0]) / 2)
+    north_south = (left[0] - right[0]) * 111.32
+    east_west = (left[1] - right[1]) * 111.32 * np.cos(mean_lat)
+    return float(np.hypot(north_south, east_west))
+
+
+def _score_array(forecast_data, observation_data, thresholds, *, lat, lon):
+    """Score categorical events and cache auditable physical diagnostics.
+
+    Negative finite reflectivities are normalized to the common 0 dBZ no-echo
+    floor only for the new continuous diagnostics. Existing categorical scores
+    keep their original threshold comparison semantics.
+    """
+    forecast = np.asarray(forecast_data, dtype=float)
+    observation = np.asarray(observation_data, dtype=float)
+    valid = np.isfinite(forecast) & np.isfinite(observation)
+    normalized_forecast = np.maximum(forecast, 0.0)
+    normalized_observation = np.maximum(observation, 0.0)
+    if np.any(valid):
+        difference = normalized_forecast[valid] - normalized_observation[valid]
+        common = {
+            "forecast_mean_dbz": float(np.mean(normalized_forecast[valid])),
+            "observation_mean_dbz": float(np.mean(normalized_observation[valid])),
+            "forecast_max_dbz": float(np.max(normalized_forecast[valid])),
+            "observation_max_dbz": float(np.max(normalized_observation[valid])),
+            "mean_reflectivity_error_dbz": float(np.mean(difference)),
+            "reflectivity_mae_dbz": float(np.mean(np.abs(difference))),
+        }
+    else:
+        common = {
+            name: float("nan")
+            for name in _DIAGNOSTIC_COLUMNS
+            if name != "centroid_distance_km"
+        }
     result = {}
     for threshold in thresholds:
         table = contingency_table(forecast_data, observation_data, threshold)
+        forecast_centroid = _echo_centroid(
+            normalized_forecast, valid, threshold, lat, lon
+        )
+        observation_centroid = _echo_centroid(
+            normalized_observation, valid, threshold, lat, lon
+        )
         result[float(threshold)] = {
             "contingency": table,
             **{name: score_fn(table) for name, score_fn in CATEGORICAL_SCORES.items()},
+            **common,
+            "centroid_distance_km": _centroid_distance_km(
+                forecast_centroid, observation_centroid
+            ),
         }
     return result
 
@@ -135,6 +198,8 @@ def run_multimodel_case(
                 np.where(common_valid, aligned.data, np.nan),
                 observation_for_score,
                 thresholds,
+                lat=observation.lat,
+                lon=observation.lon,
             )
         per_lead.append(
             {
@@ -221,12 +286,27 @@ def _connect(path: Path) -> sqlite3.Connection:
             csi REAL,
             bias_score REAL,
             ets REAL,
+            forecast_mean_dbz REAL,
+            observation_mean_dbz REAL,
+            forecast_max_dbz REAL,
+            observation_max_dbz REAL,
+            mean_reflectivity_error_dbz REAL,
+            reflectivity_mae_dbz REAL,
+            centroid_distance_km REAL,
             PRIMARY KEY (
                 run_key, model_id, init_time_utc, lead_minutes, threshold_dbz
             )
         );
         """
     )
+    existing_columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(multimodel_scores)")
+    }
+    for column in _DIAGNOSTIC_COLUMNS:
+        if column not in existing_columns:
+            connection.execute(
+                f"ALTER TABLE multimodel_scores ADD COLUMN {column} REAL"
+            )
     return connection
 
 
@@ -371,11 +451,26 @@ def run_multimodel_batch(
                                 threshold,
                                 *(table[column] for column in _COUNT_COLUMNS),
                                 *(values[column] for column in _SCORE_COLUMNS),
+                                *(values[column] for column in _DIAGNOSTIC_COLUMNS),
                             )
                         )
             connection.executemany(
-                "INSERT OR REPLACE INTO multimodel_scores VALUES "
-                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO multimodel_scores ("
+                "run_key,model_id,init_time_utc,init_time_bjt,valid_time_utc,"
+                "lead_minutes,threshold_dbz,"
+                + ",".join(_COUNT_COLUMNS)
+                + ","
+                + ",".join(_SCORE_COLUMNS)
+                + ","
+                + ",".join(_DIAGNOSTIC_COLUMNS)
+                + ") VALUES ("
+                + ",".join("?" for _ in range(
+                    7
+                    + len(_COUNT_COLUMNS)
+                    + len(_SCORE_COLUMNS)
+                    + len(_DIAGNOSTIC_COLUMNS)
+                ))
+                + ")",
                 rows,
             )
             connection.commit()

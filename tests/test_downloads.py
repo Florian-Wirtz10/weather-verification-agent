@@ -5,7 +5,7 @@ from zipfile import ZipFile
 
 import matplotlib.pyplot as plt
 
-from reports.downloads import build_case_download_artifacts, figure_to_png
+from reports.downloads import build_case_download_artifacts, figure_to_png, figure_to_svg
 
 
 def _download_inputs():
@@ -71,6 +71,15 @@ def test_figure_to_png_returns_real_png_bytes():
     data = figure_to_png(figure)
 
     assert data.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_figure_to_svg_returns_vector_document():
+    figure, ax = plt.subplots()
+    ax.plot([0, 1], [1, 0])
+
+    data = figure_to_svg(figure)
+
+    assert b"<svg" in data[:1000]
 
 
 def test_download_bundle_contains_images_csv_report_and_safe_metadata():

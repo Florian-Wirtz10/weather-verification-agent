@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pandas as pd
+
 from agent.comparison_insight import (
     build_comparison_insight_facts,
     render_comparison_deterministic_summary,
@@ -58,3 +60,69 @@ def test_comparison_fallback_has_required_sections_and_figure_reference():
     assert "### 主要发现" in text
     assert "### 数据分析" in text
     assert "口径与边界" not in text
+
+
+def test_far_wins_use_lower_is_better_direction():
+    result = _result()
+    for entry, stormdit, fenglei in zip(
+        result["per_lead"],
+        (0.10, 0.30),
+        (0.20, 0.25),
+    ):
+        entry["models"]["stormdit"][15.0]["far"] = stormdit
+        entry["models"]["fenglei"][15.0]["far"] = fenglei
+
+    facts = build_comparison_insight_facts(result, ["far"])
+
+    assert facts["thresholds"][0]["wins_by_metric"]["far"] == {
+        "stormdit": 1,
+        "fenglei": 1,
+        "ties": 0,
+    }
+
+
+def test_batch_facts_include_descriptive_physical_correlations():
+    rows = []
+    for model_id in ("stormdit", "fenglei"):
+        for index in range(5):
+            rows.append(
+                {
+                    "model_id": model_id,
+                    "init_time_utc": f"2025-04-11T0{index}:00:00",
+                    "lead_minutes": 6 * (index + 1),
+                    "threshold_dbz": 20.0,
+                    "valid_count": 100,
+                    "hits": 50 - index,
+                    "misses": 10 + index,
+                    "false_alarms": 5 + index,
+                    "csi": 0.8 - index * 0.1,
+                    "forecast_mean_dbz": 20 - index,
+                    "observation_mean_dbz": 19 - index / 2,
+                    "reflectivity_mae_dbz": 2 + index,
+                    "centroid_distance_km": 3 + index,
+                }
+            )
+    frame = pd.DataFrame(rows)
+    result = {
+        "context": {
+            "model_ids": ["stormdit", "fenglei"],
+            "model_contract": "phase8-inferred-v1",
+        },
+        "coverage": {
+            "selected_initialization_count": 5,
+            "selected_pairs": 5,
+        },
+        "per_case": frame,
+    }
+
+    facts = build_comparison_insight_facts(
+        result,
+        ["csi"],
+        diagnostic_threshold_dbz=20,
+        correlation_method="spearman",
+    )
+
+    correlations = facts["physical_correlations"]
+    assert correlations["method"] == "spearman"
+    assert correlations["products"]["stormdit"]["sample_count"] == 5
+    assert correlations["products"]["stormdit"]["strongest_score_relationships"]

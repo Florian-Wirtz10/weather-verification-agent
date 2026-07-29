@@ -18,7 +18,9 @@ _SYSTEM_PROMPT = """你是强对流预报检验平台的AI解读助手。用户�
 只讨论 requested_metrics 中的指标，并引用 figure_catalog 里的图号：
 1. 图表导读：用“如图1所示”说明每幅图展示什么。
 2. 主要发现：按产品、阈值和时效概括均值、首末变化及双模型胜出次数。
-3. 数据分析：指出随时效和阈值的变化；成因只能作为待核查假设。
+3. 数据分析：指出随时效和阈值的变化，并结合physical_correlations解释相关性热图。
+CSI和POD越高越好，FAR越低越好，Bias越接近1越好。
+相关系数只能描述共同变化，不能表述为因果关系；成因只能作为待核查假设。
 不要增加“口径与边界”章节，不要提路径、代码、API或提示词。"""
 
 
@@ -43,11 +45,121 @@ def _stats(values) -> dict[str, float | None]:
     }
 
 
+def _wins(metric, left_values, right_values):
+    pairs = [
+        (left, right)
+        for left, right in zip(left_values, right_values)
+        if left is not None and right is not None
+    ]
+    if metric == "far":
+        left_wins = sum(left < right for left, right in pairs)
+        right_wins = sum(right < left for left, right in pairs)
+    elif metric == "bias_score":
+        left_wins = sum(abs(left - 1) < abs(right - 1) for left, right in pairs)
+        right_wins = sum(abs(right - 1) < abs(left - 1) for left, right in pairs)
+    else:
+        left_wins = sum(left > right for left, right in pairs)
+        right_wins = sum(right > left for left, right in pairs)
+    return {
+        "left": left_wins,
+        "right": right_wins,
+        "ties": len(pairs) - left_wins - right_wins,
+    }
+
+
+def _physical_correlation_facts(
+    frame,
+    requested_metrics,
+    *,
+    threshold,
+    method,
+):
+    if frame is None or frame.empty or threshold is None:
+        return {}
+    selected = frame[
+        (frame["threshold_dbz"] - float(threshold)).abs() < 1e-7
+    ].copy()
+    required = {"valid_count", "hits", "misses", "false_alarms"}
+    if selected.empty or not required <= set(selected):
+        return {}
+    selected = selected[selected["valid_count"] > 0]
+    valid = selected["valid_count"].astype(float)
+    selected["forecast_rate"] = (
+        selected["hits"] + selected["false_alarms"]
+    ) / valid
+    selected["observed_rate"] = (
+        selected["hits"] + selected["misses"]
+    ) / valid
+    physical = [
+        "lead_minutes",
+        "forecast_rate",
+        "observed_rate",
+        "forecast_mean_dbz",
+        "observation_mean_dbz",
+        "mean_reflectivity_error_dbz",
+        "reflectivity_mae_dbz",
+        "centroid_distance_km",
+    ]
+    physical = [
+        column
+        for column in physical
+        if column in selected
+        and selected[column].notna().sum() >= 3
+        and selected[column].nunique(dropna=True) > 1
+    ]
+    metrics = [
+        metric
+        for metric in requested_metrics
+        if metric in selected
+        and selected[metric].notna().sum() >= 3
+        and selected[metric].nunique(dropna=True) > 1
+    ]
+    if not physical or not metrics:
+        return {}
+    products = {}
+    for model_id, rows in selected.groupby("model_id", sort=False):
+        correlations = rows[physical + metrics].corr(
+            method=method, min_periods=3
+        )
+        relationships = []
+        for metric in metrics:
+            candidates = []
+            for variable in physical:
+                coefficient = _finite(correlations.loc[variable, metric])
+                if coefficient is not None:
+                    candidates.append(
+                        {
+                            "variable": variable,
+                            "metric": metric,
+                            "coefficient": coefficient,
+                        }
+                    )
+            relationships.extend(
+                sorted(
+                    candidates,
+                    key=lambda item: abs(item["coefficient"]),
+                    reverse=True,
+                )[:3]
+            )
+        products[str(model_id)] = {
+            "sample_count": int(len(rows)),
+            "strongest_score_relationships": relationships,
+        }
+    return {
+        "threshold_dbz": float(threshold),
+        "method": method,
+        "products": products,
+        "interpretation": "descriptive association only; no causal claim",
+    }
+
+
 def build_comparison_insight_facts(
     result: Mapping[str, Any],
     requested_metrics: Sequence[str],
     *,
     figure_catalog: Sequence[Mapping[str, Any]] | None = None,
+    diagnostic_threshold_dbz: float | None = None,
+    correlation_method: str = "spearman",
 ) -> dict[str, Any]:
     """Reduce either a single-init or cached batch result to numerical facts."""
     metrics = list(dict.fromkeys(requested_metrics))
@@ -76,7 +188,8 @@ def build_comparison_insight_facts(
             if len(model_ids) == 2:
                 left, right = model_ids
                 for metric in metrics:
-                    pairs: list[tuple[float, float]] = []
+                    left_values = []
+                    right_values = []
                     for entry in entries:
                         left_value = _finite(
                             entry["models"][left][threshold][metric]
@@ -84,12 +197,13 @@ def build_comparison_insight_facts(
                         right_value = _finite(
                             entry["models"][right][threshold][metric]
                         )
-                        if left_value is not None and right_value is not None:
-                            pairs.append((left_value, right_value))
+                        left_values.append(left_value)
+                        right_values.append(right_value)
+                    counts = _wins(metric, left_values, right_values)
                     wins[metric] = {
-                        left: sum(a > b for a, b in pairs),
-                        right: sum(b > a for a, b in pairs),
-                        "ties": sum(a == b for a, b in pairs),
+                        left: counts["left"],
+                        right: counts["right"],
+                        "ties": counts["ties"],
                     }
             threshold_summaries.append(
                 {
@@ -136,10 +250,15 @@ def build_comparison_insight_facts(
                     a = joined[f"{metric}_left"]
                     b = joined[f"{metric}_right"]
                     finite = a.notna() & b.notna()
+                    counts = _wins(
+                        metric,
+                        [_finite(value) for value in a[finite]],
+                        [_finite(value) for value in b[finite]],
+                    )
                     wins[metric] = {
-                        left: int((a[finite] > b[finite]).sum()),
-                        right: int((b[finite] > a[finite]).sum()),
-                        "ties": int((a[finite] == b[finite]).sum()),
+                        left: counts["left"],
+                        right: counts["right"],
+                        "ties": counts["ties"],
                     }
             threshold_summaries.append(
                 {
@@ -156,6 +275,12 @@ def build_comparison_insight_facts(
             "lead_end_minutes": int(frame["lead_minutes"].max()),
         }
         initialization = {}
+    physical_correlations = _physical_correlation_facts(
+        result.get("per_case"),
+        metrics,
+        threshold=diagnostic_threshold_dbz,
+        method=correlation_method,
+    )
     return {
         "context": {
             **initialization,
@@ -168,6 +293,7 @@ def build_comparison_insight_facts(
         "coverage": coverage,
         "requested_metrics": metrics,
         "thresholds": threshold_summaries,
+        "physical_correlations": physical_correlations,
         "figure_catalog": list(figure_catalog or []),
     }
 

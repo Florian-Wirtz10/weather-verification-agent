@@ -1,8 +1,15 @@
 from datetime import datetime
 
 import matplotlib.pyplot as plt
+import pandas as pd
 
-from visualization.comparison_plots import plot_triplet_score_curves
+from visualization.comparison_plots import (
+    plot_multimodel_forecast_observed_rate_scatter,
+    plot_multimodel_multi_metric_curves,
+    plot_multimodel_score_distribution,
+    plot_multimodel_variable_correlation_heatmap,
+    plot_triplet_score_curves,
+)
 
 
 def test_triplet_score_plot_uses_product_line_styles_without_grid():
@@ -28,3 +35,102 @@ def test_triplet_score_plot_uses_product_line_styles_without_grid():
         assert not any(line.get_visible() for line in axis.get_xgridlines())
     finally:
         plt.close(figure)
+
+
+def _comparison_result():
+    entries = []
+    for lead, offset in ((6, 0.0), (12, -0.1), (18, -0.2)):
+        entries.append(
+            {
+                "lead_minutes": lead,
+                "models": {
+                    model_id: {
+                        20.0: {
+                            "csi": 0.8 + offset - model_offset,
+                            "pod": 0.9 + offset - model_offset,
+                            "far": 0.1 - offset + model_offset,
+                        }
+                    }
+                    for model_id, model_offset in (
+                        ("stormdit", 0.0),
+                        ("fenglei", 0.05),
+                    )
+                },
+            }
+        )
+    return {
+        "context": {"model_ids": ["stormdit", "fenglei"]},
+        "per_lead": entries,
+    }
+
+
+def _batch_frame():
+    rows = []
+    for model_index, model_id in enumerate(("stormdit", "fenglei")):
+        for init_index in range(4):
+            for lead in (6, 12, 18):
+                for threshold in (10.0, 20.0, 30.0, 40.0):
+                    base = 0.75 - lead / 100 - threshold / 200 - model_index * 0.03
+                    rows.append(
+                        {
+                            "model_id": model_id,
+                            "init_time_utc": f"2026-04-08T00:{init_index * 6:02d}:00",
+                            "init_time_bjt": f"2026-04-08T08:{init_index * 6:02d}:00",
+                            "lead_minutes": lead,
+                            "threshold_dbz": threshold,
+                            "hits": 30 + init_index,
+                            "misses": 10 + lead // 6,
+                            "false_alarms": 8 + model_index,
+                            "valid_count": 100,
+                            "csi": base,
+                            "pod": min(1.0, base + 0.12),
+                            "far": max(0.0, 0.28 - base / 5),
+                            "bias_score": 1.0 + model_index * 0.05,
+                            "forecast_mean_dbz": 15 + init_index + model_index,
+                            "observation_mean_dbz": 14 + init_index,
+                            "forecast_max_dbz": 50 + init_index,
+                            "observation_max_dbz": 49 + init_index,
+                            "mean_reflectivity_error_dbz": 1 + model_index,
+                            "reflectivity_mae_dbz": 3 + lead / 30 + model_index,
+                            "centroid_distance_km": 5 + lead / 6 + model_index,
+                        }
+                    )
+    return pd.DataFrame(rows)
+
+
+def test_multi_metric_curve_uses_metric_colours_and_model_styles():
+    figure = plot_multimodel_multi_metric_curves(
+        _comparison_result(), ["csi", "pod", "far"], 20
+    )
+    try:
+        axis = figure.axes[0]
+        assert len(axis.lines) == 6
+        assert {line.get_linestyle() for line in axis.lines} == {"-", "--"}
+        assert len({line.get_color() for line in axis.lines}) == 3
+        assert axis.get_ylim() == (0.0, 1.0)
+    finally:
+        plt.close(figure)
+
+
+def test_batch_publication_views_support_multiple_thresholds_and_correlations():
+    frame = _batch_frame()
+    figures = [
+        plot_multimodel_score_distribution(
+            frame, "csi", [10, 20, 30, 40]
+        ),
+        plot_multimodel_forecast_observed_rate_scatter(
+            frame, [10, 20, 30, 40]
+        ),
+        plot_multimodel_variable_correlation_heatmap(
+            frame, 20, method="spearman"
+        ),
+    ]
+    try:
+        assert "thresholds" in figures[0]._suptitle.get_text()
+        assert len(figures[0].axes) == 2
+        assert "Forecast rate" in figures[1]._suptitle.get_text()
+        assert "Variable correlation" in figures[2]._suptitle.get_text()
+        assert "Spearman" in figures[2].axes[-1].get_ylabel()
+    finally:
+        for figure in figures:
+            plt.close(figure)

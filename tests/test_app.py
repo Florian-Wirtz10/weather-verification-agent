@@ -127,7 +127,13 @@ def test_single_stormdit_result_has_ai_and_downloads(monkeypatch):
     assert len(app.image) == 1
     assert any("StormDiT测试解读" in item.value for item in app.markdown)
     labels = {button.label for button in app.download_button}
-    assert {"下载结果包 ZIP", "下载指标 CSV", "下载AI解读", "下载 PNG"} <= labels
+    assert {
+        "下载结果包 ZIP",
+        "下载指标 CSV",
+        "下载AI解读",
+        "下载 PNG",
+        "下载 SVG",
+    } <= labels
 
 
 def test_two_model_batch_uses_final_product_name(monkeypatch):

@@ -77,6 +77,19 @@ def figure_to_png(figure, *, dpi=180) -> bytes:
     return buffer.getvalue()
 
 
+def figure_to_svg(figure) -> bytes:
+    """Serialize a Matplotlib figure as a publication-friendly vector file."""
+    buffer = BytesIO()
+    figure.savefig(
+        buffer,
+        format="svg",
+        bbox_inches="tight",
+        facecolor="white",
+        metadata={"Creator": "Weather Verification Agent"},
+    )
+    return buffer.getvalue()
+
+
 def describe_view(view: Mapping[str, Any]) -> str:
     """Return a short Chinese label for a validated, resolved view."""
     view_type = view.get("type")

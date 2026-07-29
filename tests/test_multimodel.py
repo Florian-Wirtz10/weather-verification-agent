@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+import sqlite3
 
 import numpy as np
 
@@ -128,6 +129,10 @@ def test_case_scoring_and_persistent_cache_share_identical_samples(
     assert result["coverage"]["selected_leads"] == [6]
     assert result["per_lead"][0]["models"][MODEL_STORMDIT][15.0]["csi"] == 0.5
     assert result["per_lead"][0]["models"][MODEL_FENGLEI][15.0]["csi"] == 1.0
+    stormdit_score = result["per_lead"][0]["models"][MODEL_STORMDIT][15.0]
+    assert stormdit_score["reflectivity_mae_dbz"] == 5.0
+    assert stormdit_score["forecast_mean_dbz"] == 5.0
+    assert 1.6 < stormdit_score["centroid_distance_km"] < 1.8
 
     cache = tmp_path / "scores.sqlite3"
     first = multimodel.run_multimodel_batch(
@@ -149,3 +154,56 @@ def test_case_scoring_and_persistent_cache_share_identical_samples(
     assert first["cache"]["computed_initializations"] == 1
     assert second["cache"]["computed_initializations"] == 0
     assert len(second["per_case"]) == 2
+    assert {
+        "reflectivity_mae_dbz",
+        "mean_reflectivity_error_dbz",
+        "centroid_distance_km",
+    } <= set(second["per_case"].columns)
+
+
+def test_phase8_cache_adds_physical_columns_to_legacy_database(tmp_path):
+    cache = tmp_path / "legacy.sqlite3"
+    connection = sqlite3.connect(cache)
+    connection.execute(
+        """
+        CREATE TABLE multimodel_scores (
+            run_key TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            init_time_utc TEXT NOT NULL,
+            init_time_bjt TEXT NOT NULL,
+            valid_time_utc TEXT NOT NULL,
+            lead_minutes INTEGER NOT NULL,
+            threshold_dbz REAL NOT NULL,
+            hits INTEGER NOT NULL,
+            misses INTEGER NOT NULL,
+            false_alarms INTEGER NOT NULL,
+            correct_negatives INTEGER NOT NULL,
+            valid_count INTEGER NOT NULL,
+            invalid_count INTEGER NOT NULL,
+            pod REAL,
+            far REAL,
+            csi REAL,
+            bias_score REAL,
+            ets REAL,
+            PRIMARY KEY (
+                run_key, model_id, init_time_utc, lead_minutes, threshold_dbz
+            )
+        )
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    migrated = multimodel._connect(cache)
+    try:
+        columns = {
+            row[1] for row in migrated.execute("PRAGMA table_info(multimodel_scores)")
+        }
+    finally:
+        migrated.close()
+
+    assert {
+        "forecast_mean_dbz",
+        "reflectivity_mae_dbz",
+        "centroid_distance_km",
+    } <= columns

@@ -25,15 +25,19 @@ from data_io.forecast_sources import (
     build_multimodel_catalog,
     discover_multimodel_initializations,
 )
-from reports import figure_to_png
+from reports import figure_to_png, figure_to_svg
 from verification.multimodel import run_multimodel_batch, run_multimodel_case
 from visualization.batch_plots import plot_forecast_observed_rate_distribution
 from visualization.comparison_plots import (
+    plot_multimodel_batch_multi_metric_curves,
     plot_multimodel_batch_score_curves,
+    plot_multimodel_forecast_observed_rate_scatter,
+    plot_multimodel_multi_metric_curves,
     plot_multimodel_reflectivity_frame,
     plot_multimodel_score_curves,
     plot_multimodel_score_distribution,
     plot_multimodel_score_heatmaps,
+    plot_multimodel_variable_correlation_heatmap,
     render_multimodel_reflectivity_animation,
 )
 
@@ -117,7 +121,20 @@ def _single_rows(result) -> pd.DataFrame:
                         **values["contingency"],
                         **{
                             metric: values[metric]
-                            for metric in ("pod", "far", "csi", "bias_score", "ets")
+                            for metric in ("pod", "far", "csi", "bias_score")
+                        },
+                        **{
+                            metric: values[metric]
+                            for metric in (
+                                "forecast_mean_dbz",
+                                "observation_mean_dbz",
+                                "forecast_max_dbz",
+                                "observation_max_dbz",
+                                "mean_reflectivity_error_dbz",
+                                "reflectivity_mae_dbz",
+                                "centroid_distance_km",
+                            )
+                            if metric in values
                         },
                     }
                 )
@@ -130,10 +147,12 @@ def _add_figure(media, figure, label, stem):
             {
                 "number": len(media) + 1,
                 "label": label,
-                "data": figure_to_png(figure),
+                "data": figure_to_png(figure, dpi=300),
                 "file_name": f"{stem}.png",
                 "mime": "image/png",
                 "kind": "PNG",
+                "svg_data": figure_to_svg(figure),
+                "svg_file_name": f"{stem}.svg",
             }
         )
     finally:
@@ -186,6 +205,17 @@ def _single_media(result, request):
                 f"{metric.upper()} 随预报时效变化",
                 f"{init:%Y%m%d%H%M}_{metric}",
             )
+    if "multi_metric_curve" in views:
+        _add_figure(
+            media,
+            plot_multimodel_multi_metric_curves(
+                result,
+                request["metrics"],
+                request["diagnostic_threshold_dbz"],
+            ),
+            f"{request['diagnostic_threshold_dbz']:g} dBZ CSI、POD、FAR同图比较",
+            f"{init:%Y%m%d%H%M}_multi_metric",
+        )
     return media
 
 
@@ -200,30 +230,63 @@ def _batch_media(result, request):
                 f"汇总 {metric.upper()} 随预报时效变化",
                 f"phase8_batch_{metric}",
             )
+    if "multi_metric_curve" in views:
+        _add_figure(
+            media,
+            plot_multimodel_batch_multi_metric_curves(
+                result["summary"],
+                request["metrics"],
+                request["diagnostic_threshold_dbz"],
+            ),
+            f"{request['diagnostic_threshold_dbz']:g} dBZ 汇总CSI、POD、FAR同图比较",
+            "phase8_batch_multi_metric",
+        )
     if "score_heatmap" in views:
-        for metric in request["metrics"]:
-            _add_figure(
-                media,
-                plot_multimodel_score_heatmaps(
-                    result["per_case"],
-                    metric,
-                    request["diagnostic_threshold_dbz"],
-                ),
-                f"{request['diagnostic_threshold_dbz']:g} dBZ {metric.upper()} 起报×时效热力图",
-                f"phase8_batch_{metric}_heatmap",
-            )
+        metric = request["diagnostic_metric"]
+        _add_figure(
+            media,
+            plot_multimodel_score_heatmaps(
+                result["per_case"],
+                metric,
+                request["diagnostic_threshold_dbz"],
+            ),
+            f"{request['diagnostic_threshold_dbz']:g} dBZ {metric.upper()} 起报—时效评分矩阵",
+            f"phase8_batch_{metric}_heatmap",
+        )
+    if "variable_correlation_heatmap" in views:
+        _add_figure(
+            media,
+            plot_multimodel_variable_correlation_heatmap(
+                result["per_case"],
+                request["diagnostic_threshold_dbz"],
+                method=request["correlation_method"],
+            ),
+            f"{request['diagnostic_threshold_dbz']:g} dBZ "
+            f"{request['correlation_method'].title()}变量相关性热力图",
+            "phase8_batch_variable_correlation",
+        )
     if "score_distribution" in views:
-        for metric in request["metrics"]:
-            _add_figure(
-                media,
-                plot_multimodel_score_distribution(
-                    result["per_case"],
-                    metric,
-                    request["diagnostic_threshold_dbz"],
-                ),
-                f"{request['diagnostic_threshold_dbz']:g} dBZ {metric.upper()} 分布",
-                f"phase8_batch_{metric}_distribution",
-            )
+        metric = request["diagnostic_metric"]
+        _add_figure(
+            media,
+            plot_multimodel_score_distribution(
+                result["per_case"],
+                metric,
+                request["thresholds_dbz"],
+            ),
+            f"{metric.upper()} 多阈值分布",
+            f"phase8_batch_{metric}_distribution",
+        )
+    if "forecast_observed_rate_scatter" in views:
+        _add_figure(
+            media,
+            plot_multimodel_forecast_observed_rate_scatter(
+                result["per_case"],
+                request["thresholds_dbz"],
+            ),
+            "多阈值预报率—观测率散点比较",
+            "phase8_batch_rate_scatter",
+        )
     if "forecast_observed_rate_distribution" in views:
         for model_id in result["context"]["model_ids"]:
             subset = result["per_case"][result["per_case"]["model_id"] == model_id]
@@ -250,7 +313,11 @@ def _finish_attempt(result, request, media, rows):
         {"number": item["number"], "label": item["label"]} for item in media
     ]
     facts = build_comparison_insight_facts(
-        result, request["metrics"], figure_catalog=catalog
+        result,
+        request["metrics"],
+        figure_catalog=catalog,
+        diagnostic_threshold_dbz=request["diagnostic_threshold_dbz"],
+        correlation_method=request["correlation_method"],
     )
     fallback = render_comparison_deterministic_summary(facts)
     try:
@@ -332,7 +399,10 @@ def _execute_batch(
         progress_callback=progress_callback,
     )
     return _finish_attempt(
-        result, request, _batch_media(result, request), result["per_case"]
+        result,
+        request,
+        _batch_media(result, request),
+        result["per_case"].drop(columns=["ets"], errors="ignore"),
     )
 
 
@@ -341,6 +411,8 @@ def _bundle(attempt):
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for item in attempt["media"]:
             archive.writestr(item["file_name"], item["data"])
+            if item.get("svg_data"):
+                archive.writestr(item["svg_file_name"], item["svg_data"])
         archive.writestr(
             "metrics.csv", attempt["rows"].to_csv(index=False).encode("utf-8-sig")
         )
@@ -417,6 +489,14 @@ def _render(attempt):
                         item["mime"],
                         key=f"media_{item['number']}_{item['file_name']}",
                     )
+                    if item.get("svg_data"):
+                        st.download_button(
+                            "下载 SVG",
+                            item["svg_data"],
+                            item["svg_file_name"],
+                            "image/svg+xml",
+                            key=f"media_svg_{item['number']}_{item['svg_file_name']}",
+                        )
         with st.expander("查看结构化指标"):
             st.dataframe(attempt["rows"], width="stretch")
 
@@ -506,11 +586,12 @@ elif mode == "自定义多起报":
 
 batch = mode != "单一起报"
 default_prompt = (
-    "使用5、15、25、35 dBZ阈值，查看6—180分钟StormDiT和风雷的CSI、ETS曲线，"
-    "并生成15 dBZ起报×时效热力图、评分分布和预报率—观测率图，全面解读。"
+    "使用10、20、30、40 dBZ阈值，查看6—180分钟StormDiT和风雷的CSI、POD、FAR曲线，"
+    "在20 dBZ下把三个指标放在一张图比较，并生成起报—时效评分矩阵、"
+    "Spearman变量相关性热力图、多阈值评分分布和预报率—观测率散点图，全面解读。"
     if batch
-    else "使用5、15、25、35 dBZ阈值，查看6—180分钟的预报—观测空间对比、"
-    "同步动画以及CSI、ETS曲线，并结合各图全面解读。"
+    else "使用10、20、30、40 dBZ阈值，查看6—180分钟的预报—观测空间对比、"
+    "同步动画和CSI、POD、FAR曲线，并在20 dBZ下将三个指标放在一张图比较和解读。"
 )
 prompt = st.text_area("检验要求", default_prompt)
 left, right = st.columns(2)
