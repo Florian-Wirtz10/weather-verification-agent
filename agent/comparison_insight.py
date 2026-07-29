@@ -1,4 +1,4 @@
-"""Evidence-bounded interpretation for the Phase 8 two-product comparison."""
+"""Evidence-bounded interpretation for StormDiT/Fenglei verification."""
 
 from __future__ import annotations
 
@@ -10,17 +10,16 @@ from typing import Any
 
 from openai import OpenAI
 
+from data_io.forecast_sources import MODEL_LABELS
 from verification.metrics import CATEGORICAL_SCORES
 
-_SYSTEM_PROMPT = """你是强对流预报检验对比解读助手。用户消息只包含服务端已经计算好的事实JSON。
-不得补造数字，不得声称看过原始图片或像素，也不得把单个起报外推成模型整体结论。
-
-只讨论 requested_metrics 中列出的指标，固定输出三个短章节：
-1. 图表导读：说明图中实线为我们模型、虚线为风雷，相同颜色表示相同阈值。
-2. 主要发现：比较两个产品在本次起报、各阈值和时效范围内的首值、末值、均值与胜出时效数。
-3. 指标分析：指出优势是否随阈值变化；原因只能写成待核查假设。
-
-不要增加“口径与边界”章节，不要提及路径、代码、API或提示词。"""
+_SYSTEM_PROMPT = """你是强对流预报检验平台的AI解读助手。用户消息只包含服务端已经计算好的数字事实JSON。
+不得补造数字，不得声称查看过原始像素，不得把个例或有限起报外推成模型总体结论。
+只讨论 requested_metrics 中的指标，并引用 figure_catalog 里的图号：
+1. 图表导读：用“如图1所示”说明每幅图展示什么。
+2. 主要发现：按产品、阈值和时效概括均值、首末变化及双模型胜出次数。
+3. 数据分析：指出随时效和阈值的变化；成因只能作为待核查假设。
+不要增加“口径与边界”章节，不要提路径、代码、API或提示词。"""
 
 
 def _finite(value) -> float | None:
@@ -31,106 +30,190 @@ def _finite(value) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _stats(values) -> dict[str, float | None]:
+    values = [_finite(value) for value in values]
+    values = [value for value in values if value is not None]
+    return {
+        "first": values[0] if values else None,
+        "last": values[-1] if values else None,
+        "mean": sum(values) / len(values) if values else None,
+        "minimum": min(values) if values else None,
+        "maximum": max(values) if values else None,
+        "count": len(values),
+    }
+
+
 def build_comparison_insight_facts(
-    result: Mapping[str, Any], requested_metrics: Sequence[str]
+    result: Mapping[str, Any],
+    requested_metrics: Sequence[str],
+    *,
+    figure_catalog: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Reduce either a single-init or cached batch result to numerical facts."""
     metrics = list(dict.fromkeys(requested_metrics))
     if not metrics or any(metric not in CATEGORICAL_SCORES for metric in metrics):
         raise ValueError("comparison insight requires supported categorical metrics")
-    entries = list(result.get("per_lead") or [])
-    if not entries:
-        raise ValueError("comparison result contains no leads")
-    thresholds = sorted(entries[0]["model"])
-    summaries = []
-    for threshold in thresholds:
-        products = {}
-        wins = {}
-        for metric in metrics:
-            model_values = [_finite(entry["model"][threshold][metric]) for entry in entries]
-            fenglei_values = [_finite(entry["fenglei"][threshold][metric]) for entry in entries]
-            valid_pairs = [
-                (model, fenglei)
-                for model, fenglei in zip(model_values, fenglei_values)
-                if model is not None and fenglei is not None
-            ]
-            wins[metric] = {
-                "model": sum(model > fenglei for model, fenglei in valid_pairs),
-                "fenglei": sum(fenglei > model for model, fenglei in valid_pairs),
-                "ties": sum(model == fenglei for model, fenglei in valid_pairs),
-            }
-            for name, values in (
-                ("model", model_values),
-                ("fenglei", fenglei_values),
-            ):
-                finite_values = [value for value in values if value is not None]
-                products.setdefault(name, {})[metric] = {
-                    "first": finite_values[0] if finite_values else None,
-                    "last": finite_values[-1] if finite_values else None,
-                    "mean": (
-                        sum(finite_values) / len(finite_values) if finite_values else None
-                    ),
-                    "minimum": min(finite_values) if finite_values else None,
-                    "maximum": max(finite_values) if finite_values else None,
-                }
-        summaries.append(
-            {
-                "threshold_dbz": float(threshold),
-                "products": products,
-                "wins_by_metric": wins,
-            }
-        )
     context = result["context"]
-    return {
-        "context": {
-            "init_time_utc": context["init_time_utc"].isoformat(timespec="minutes"),
-            "init_time_bjt": context["init_time_bjt"].isoformat(timespec="minutes"),
-            "contract": context["model_contract"],
-        },
-        "coverage": {
+    model_ids = list(context["model_ids"])
+    threshold_summaries = []
+    if "per_lead" in result:
+        entries = list(result["per_lead"])
+        if not entries:
+            raise ValueError("comparison result contains no leads")
+        thresholds = sorted(entries[0]["models"][model_ids[0]])
+        for threshold in thresholds:
+            products = {
+                model_id: {
+                    metric: _stats(
+                        entry["models"][model_id][threshold][metric]
+                        for entry in entries
+                    )
+                    for metric in metrics
+                }
+                for model_id in model_ids
+            }
+            wins = {}
+            if len(model_ids) == 2:
+                left, right = model_ids
+                for metric in metrics:
+                    pairs: list[tuple[float, float]] = []
+                    for entry in entries:
+                        left_value = _finite(
+                            entry["models"][left][threshold][metric]
+                        )
+                        right_value = _finite(
+                            entry["models"][right][threshold][metric]
+                        )
+                        if left_value is not None and right_value is not None:
+                            pairs.append((left_value, right_value))
+                    wins[metric] = {
+                        left: sum(a > b for a, b in pairs),
+                        right: sum(b > a for a, b in pairs),
+                        "ties": sum(a == b for a, b in pairs),
+                    }
+            threshold_summaries.append(
+                {
+                    "threshold_dbz": float(threshold),
+                    "products": products,
+                    "wins_by_metric": wins,
+                }
+            )
+        coverage = {
+            "scope": "single_initialization",
+            "initialization_count": 1,
             "lead_start_minutes": entries[0]["lead_minutes"],
             "lead_end_minutes": entries[-1]["lead_minutes"],
             "matched_count": len(entries),
-        },
-        "requested_metrics": metrics,
-        "thresholds": summaries,
-        "figure_catalog": [
-            {
-                "number": index,
-                "metric": metric.upper(),
-                "label": f"我们模型与风雷的 {metric.upper()} 随时效对比",
+        }
+        initialization = {
+            "init_time_utc": context["init_time_utc"].isoformat(timespec="minutes"),
+            "init_time_bjt": context["init_time_bjt"].isoformat(timespec="minutes"),
+        }
+    else:
+        frame = result["per_case"]
+        if frame.empty:
+            raise ValueError("comparison batch contains no scores")
+        for threshold in sorted(frame["threshold_dbz"].unique()):
+            selected = frame[frame["threshold_dbz"] == threshold]
+            products = {
+                model_id: {
+                    metric: _stats(
+                        selected.loc[selected["model_id"] == model_id]
+                        .sort_values(["init_time_utc", "lead_minutes"])[metric]
+                    )
+                    for metric in metrics
+                }
+                for model_id in model_ids
             }
-            for index, metric in enumerate(metrics, 1)
-        ],
+            wins = {}
+            if len(model_ids) == 2:
+                left, right = model_ids
+                keys = ["init_time_utc", "lead_minutes"]
+                left_frame = selected[selected["model_id"] == left]
+                right_frame = selected[selected["model_id"] == right]
+                joined = left_frame.merge(right_frame, on=keys, suffixes=("_left", "_right"))
+                for metric in metrics:
+                    a = joined[f"{metric}_left"]
+                    b = joined[f"{metric}_right"]
+                    finite = a.notna() & b.notna()
+                    wins[metric] = {
+                        left: int((a[finite] > b[finite]).sum()),
+                        right: int((b[finite] > a[finite]).sum()),
+                        "ties": int((a[finite] == b[finite]).sum()),
+                    }
+            threshold_summaries.append(
+                {
+                    "threshold_dbz": float(threshold),
+                    "products": products,
+                    "wins_by_metric": wins,
+                }
+            )
+        coverage = {
+            "scope": "multiple_initializations",
+            "initialization_count": result["coverage"]["selected_initialization_count"],
+            "matched_count": result["coverage"]["selected_pairs"],
+            "lead_start_minutes": int(frame["lead_minutes"].min()),
+            "lead_end_minutes": int(frame["lead_minutes"].max()),
+        }
+        initialization = {}
+    return {
+        "context": {
+            **initialization,
+            "products": [
+                {"id": model_id, "label": MODEL_LABELS[model_id]}
+                for model_id in model_ids
+            ],
+            "contract": context["model_contract"],
+        },
+        "coverage": coverage,
+        "requested_metrics": metrics,
+        "thresholds": threshold_summaries,
+        "figure_catalog": list(figure_catalog or []),
     }
+
+
+def _format(value):
+    return "无有限值" if value is None else f"{value:.3f}"
 
 
 def render_comparison_deterministic_summary(facts: Mapping[str, Any]) -> str:
     coverage = facts["coverage"]
+    labels = {
+        item["id"]: item["label"] for item in facts["context"]["products"]
+    }
+    catalog = facts.get("figure_catalog") or []
+    guide = "；".join(
+        f"图{item['number']}为{item['label']}" for item in catalog
+    ) or "结果图展示所选产品与CREF的同口径检验结果"
     lines = [
         "### 图表导读",
-        "实线表示我们模型，虚线表示风雷；相同颜色表示相同反射率阈值。",
+        f"{guide}。",
         "",
         "### 主要发现",
         (
-            f"本次包含 {coverage['matched_count']} 个严格匹配时效，"
-            f"范围为 {coverage['lead_start_minutes']}—{coverage['lead_end_minutes']} 分钟。"
+            f"本次纳入 {coverage['initialization_count']} 个起报、"
+            f"{coverage['matched_count']} 组严格匹配时效，"
+            f"时效范围 {coverage['lead_start_minutes']}—"
+            f"{coverage['lead_end_minutes']} 分钟。"
         ),
     ]
     for item in facts["thresholds"]:
         threshold = item["threshold_dbz"]
         for metric in facts["requested_metrics"]:
-            model = item["products"]["model"][metric]["mean"]
-            fenglei = item["products"]["fenglei"][metric]["mean"]
-            wins = item["wins_by_metric"][metric]["model"]
+            fragments = [
+                f"{labels[model_id]} {_format(values[metric]['mean'])}"
+                for model_id, values in item["products"].items()
+            ]
             lines.append(
-                f"{threshold:g} dBZ：{metric.upper()} 均值为我们模型 {model:.3f}、"
-                f"风雷 {fenglei:.3f}；我们模型在 {wins}/{coverage['matched_count']} 个时效较高。"
+                f"{threshold:g} dBZ 的 {metric.upper()} 均值："
+                + "、".join(fragments)
+                + "。"
             )
     lines.extend(
         [
             "",
-            "### 指标分析",
-            "以上比较只描述当前起报的同口径评分；不同阈值下的相对表现可能不同。",
+            "### 数据分析",
+            "以上结论来自页面所选起报、阈值、时效和区域的结构化评分。",
         ]
     )
     return "\n".join(lines)

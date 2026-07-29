@@ -1,269 +1,189 @@
-import matplotlib.pyplot as plt
-import numpy as np
+from datetime import datetime, timedelta
+
+import pandas as pd
 from streamlit.testing.v1 import AppTest
 
 import agent
-import verification.triplet
-from tests.test_real_data_io import _make_cref_nc, _make_swan_mosaic_bytes
-from tests.test_catalog import _write_forecast
-from tests.test_radar_binary import _write_binary_cref
-
-
-def _write_app_case(tmp_path):
-    fenglei_dir = tmp_path / "fenglei"
-    radar_dir = tmp_path / "radar"
-    fenglei_dir.mkdir()
-    radar_dir.mkdir()
-
-    raw = np.zeros((6, 6), dtype="u1")
-    raw[2:4, 2:5] = 140
-    (fenglei_dir / "REFMOSAIC-202504110212-006MIN.bz2").write_bytes(
-        _make_swan_mosaic_bytes(
-            nx=6,
-            ny=6,
-            cell_bytes=1,
-            scale=0.5,
-            offset=-33.0,
-            values=raw,
-        )
-    )
-    obs = np.zeros((6, 6), dtype="f4")
-    obs[2:4, 2:5] = 40.0
-    _make_cref_nc(
-        radar_dir / "CREF_with_time_fixture.nc",
-        lat=np.linspace(29.95, 30.0, 6, dtype="f4"),
-        lon=np.linspace(110.0, 110.05, 6, dtype="f4"),
-        data=obs,
-        valid_time_str="2025-04-11 02:18:00",
-    )
-    return fenglei_dir, radar_dir
+import data_io.forecast_sources
+import verification.multimodel
 
 
 def _button(app, label):
     return next(button for button in app.button if button.label == label)
 
 
-def test_streamlit_initial_screen_renders_without_exceptions():
-    app = AppTest.from_file("app.py", default_timeout=30).run()
-
-    assert not app.exception
-    assert [control.value for control in app.number_input] == [29.0, 33.5, 108.0, 116.5]
-    assert any("默认：湖北区域" in item.value for item in app.caption)
-    labels = {button.label for button in app.button}
-    assert "智能解析并运行" in labels
-    assert "使用推荐方案" in labels
-    assert "刷新可用起报" not in labels
-    assert app.radio[0].options == ["全部起报（全天）", "自定义多起报", "单一起报"]
-
-
-def test_phase4_result_has_browser_downloads_and_releases_figures(tmp_path, monkeypatch):
-    fenglei_dir, radar_dir = _write_app_case(tmp_path)
-    monkeypatch.setenv("FENGLEI_CASE_DIR", str(fenglei_dir))
-    monkeypatch.setenv("RADAR_OBS_DIR", str(radar_dir))
-    monkeypatch.setattr(agent, "generate_insight", lambda *_args, **_kwargs: "测试解读")
-    plt.close("all")
-
-    app = AppTest.from_file("app.py", default_timeout=30).run()
-    app = app.selectbox[0].set_value("2025-04-11").run()
-    app = app.radio[0].set_value("单一起报").run()
-    for control, value in zip(app.number_input, (29.9, 30.1, 109.9, 110.1)):
-        app = control.set_value(value).run()
-    app = _button(app, "使用推荐方案").click().run()
-
-    assert not app.exception
-    assert len(app.image) == 1
-    download_labels = {button.label for button in app.download_button}
-    assert {
-        "下载结果包 ZIP",
-        "下载指标 CSV",
-        "下载解读 Markdown",
-        "下载 PNG",
-    } <= download_labels
-    assert any(item.value == "AI 解读" for item in app.subheader)
-    assert not plt.get_fignums()
+def _case():
+    init = datetime(2026, 4, 8, 0)
+    return {
+        "case_id": "multimodel-202604080000",
+        "init_time": init,
+        "init_time_bjt": init + timedelta(hours=8),
+        "available_leads": [6, 12],
+        "complete": True,
+        "missing_leads": [],
+    }
 
 
-def test_single_init_mode_accepts_binary_cref(tmp_path, monkeypatch):
-    forecast_dir = tmp_path / "forecast"
-    obs_dir = tmp_path / "obs"
-    forecast_dir.mkdir()
-    obs_dir.mkdir()
-    _write_forecast(forecast_dir)
-    _write_binary_cref(obs_dir)
-    monkeypatch.setenv("FENGLEI_DAILY_DIR", str(forecast_dir))
-    monkeypatch.setenv("RADAR_DAILY_DIR", str(obs_dir))
-    monkeypatch.setattr(agent, "generate_insight", lambda *_args, **_kwargs: "二进制观测测试解读")
-
-    app = AppTest.from_file("app.py", default_timeout=30).run()
-    app = app.radio[0].set_value("单一起报").run()
-    app = _button(app, "使用推荐方案").click().run()
-
-    assert not app.exception
-    assert len(app.image) == 1
-    assert any("二进制观测测试解读" in item.value for item in app.markdown)
-
-
-def test_phase5_full_day_result_has_three_diagnostics_and_downloads(tmp_path, monkeypatch):
-    forecast_dir = tmp_path / "daily-forecast"
-    obs_dir = tmp_path / "daily-obs"
-    forecast_dir.mkdir()
-    obs_dir.mkdir()
-    _write_forecast(forecast_dir)
-    _write_binary_cref(obs_dir)
-    monkeypatch.setenv("FENGLEI_DAILY_DIR", str(forecast_dir))
-    monkeypatch.setenv("RADAR_DAILY_DIR", str(obs_dir))
-    monkeypatch.setattr(agent, "generate_daily_insight", lambda *_args, **_kwargs: "全天测试解读")
-
-    app = AppTest.from_file("app.py", default_timeout=30).run()
-    for control, value in zip(app.number_input, (28.0, 30.0, 116.0, 120.0)):
-        app = control.set_value(value).run()
-    app = _button(app, "使用推荐方案").click().run()
-
-    assert not app.exception
-    assert len(app.image) == 4
-    download_labels = [button.label for button in app.download_button]
-    assert download_labels.count("下载 PNG") == 4
-    assert "下载逐起报 CSV" in download_labels
-    assert "下载汇总 CSV" in download_labels
-    assert "下载解读 Markdown" in download_labels
-    assert any("1/1 对严格匹配样本" in item.value for item in app.markdown)
-
-
-def test_phase7_custom_multi_initialization_uses_selected_cases(tmp_path, monkeypatch):
-    forecast_dir = tmp_path / "daily-forecast"
-    obs_dir = tmp_path / "daily-obs"
-    forecast_dir.mkdir()
-    obs_dir.mkdir()
-    _write_forecast(forecast_dir, init_bjt="202604071848")
-    _write_forecast(forecast_dir, init_bjt="202604071854")
-    _write_binary_cref(
-        obs_dir, valid="20260407_105400", generated="20260407110012"
-    )
-    _write_binary_cref(
-        obs_dir, valid="20260407_110000", generated="20260407110612"
-    )
-    monkeypatch.setenv("FENGLEI_DAILY_DIR", str(forecast_dir))
-    monkeypatch.setenv("RADAR_DAILY_DIR", str(obs_dir))
-    monkeypatch.setattr(agent, "generate_daily_insight", lambda *_args, **_kwargs: "多起报测试解读")
-
-    app = AppTest.from_file("app.py", default_timeout=30).run()
-    app = app.radio[0].set_value("自定义多起报").run()
-    for control, value in zip(app.number_input, (28.0, 30.0, 116.0, 120.0)):
-        app = control.set_value(value).run()
-    assert len(app.multiselect) == 1
-    assert len(app.multiselect[0].value) == 2
-    app = _button(app, "使用推荐方案").click().run()
-
-    assert not app.exception
-    assert len(app.image) == 4
-    assert any("已选择 2 个起报" in item.value for item in app.markdown)
-    assert any("多起报测试解读" in item.value for item in app.markdown)
-
-
-def test_phase8_triplet_mode_renders_two_product_comparison(tmp_path, monkeypatch):
-    forecast_dir = tmp_path / "fenglei"
-    obs_dir = tmp_path / "obs"
-    model_root = tmp_path / "model"
-    forecast_dir.mkdir()
-    obs_dir.mkdir()
-    model_delivery = model_root / "2025041108_BJT"
-    model_delivery.mkdir(parents=True)
-    (model_delivery / "forecast.npz").touch()
-
-    raw = np.zeros((6, 6), dtype="u1")
-    (forecast_dir / "REFMOSAIC-202504110000-006MIN.bz2").write_bytes(
-        _make_swan_mosaic_bytes(
-            nx=6,
-            ny=6,
-            cell_bytes=1,
-            scale=0.5,
-            offset=-33.0,
-            values=raw,
+def _single_result(model_ids=("stormdit",)):
+    init = datetime(2026, 4, 8, 0)
+    per_lead = []
+    for lead, score in ((6, 0.8), (12, 0.7)):
+        per_lead.append(
+            {
+                "lead_minutes": lead,
+                "valid_time_utc": init + timedelta(minutes=lead),
+                "models": {
+                    model_id: {
+                        15.0: {
+                            "contingency": {
+                                "hits": 8,
+                                "misses": 1,
+                                "false_alarms": 1,
+                                "correct_negatives": 10,
+                                "valid_count": 20,
+                                "invalid_count": 0,
+                            },
+                            "pod": score,
+                            "far": 1 - score,
+                            "csi": score,
+                            "bias_score": 1.0,
+                            "ets": score - 0.1,
+                        }
+                    }
+                    for model_id in model_ids
+                },
+            }
         )
+    return {
+        "context": {
+            "model_ids": list(model_ids),
+            "model_labels": [
+                "StormDiT" if value == "stormdit" else "风雷" for value in model_ids
+            ],
+            "model_contract": "phase8-inferred-v1",
+            "init_time_utc": init,
+            "init_time_bjt": init + timedelta(hours=8),
+        },
+        "coverage": {
+            "selected_leads": [6, 12],
+            "missing_leads": [],
+            "complete": True,
+        },
+        "per_lead": per_lead,
+        "frames": {},
+    }
+
+
+def _patch_catalog(monkeypatch):
+    monkeypatch.setattr(
+        data_io.forecast_sources, "build_multimodel_catalog", lambda **_kwargs: object()
     )
-    _make_cref_nc(
-        obs_dir / "CREF_with_time_fixture.nc",
-        lat=np.linspace(29.0, 33.5, 6, dtype="f4"),
-        lon=np.linspace(108.0, 116.5, 6, dtype="f4"),
-        data=np.zeros((6, 6), dtype="f4"),
-        valid_time_str="2025-04-11 00:06:00",
+    monkeypatch.setattr(
+        data_io.forecast_sources,
+        "discover_multimodel_initializations",
+        lambda *_args, **_kwargs: [_case()],
     )
-    monkeypatch.setenv("FENGLEI_CASE_DIR", str(forecast_dir))
-    monkeypatch.setenv("RADAR_OBS_DIR", str(obs_dir))
-    monkeypatch.setenv("UPSTREAM_MODEL_DIRS", str(model_root))
     monkeypatch.setattr(
         agent,
         "generate_comparison_insight",
-        lambda *_args, **_kwargs: "Phase 8 对比测试解读",
+        lambda *_args, **_kwargs: "StormDiT测试解读",
     )
 
-    def fake_triplet(**kwargs):
-        thresholds = [float(value) for value in kwargs["thresholds"]]
-        per_lead = []
-        for lead, model_score, fenglei_score in (
-            (6, 0.8, 0.7),
-            (12, 0.7, 0.65),
-        ):
-            products = {}
-            for product, score in (
-                ("model", model_score),
-                ("fenglei", fenglei_score),
-            ):
-                products[product] = {
-                    threshold: {
-                        "contingency": {
-                            "hits": 8,
-                            "misses": 1,
-                            "false_alarms": 1,
-                            "correct_negatives": 10,
-                            "valid_count": 20,
-                            "invalid_count": 0,
-                        },
-                        "pod": score,
-                        "far": 1 - score,
-                        "csi": score,
-                        "bias_score": 1.0,
-                        "ets": score - 0.1,
-                    }
-                    for threshold in thresholds
-                }
-            per_lead.append(
-                {
-                    "lead_minutes": lead,
-                    "valid_time_utc": np.datetime64(
-                        f"2025-04-11T00:{lead:02d}:00"
-                    ).astype("datetime64[s]").astype(object),
-                    **products,
-                }
-            )
-        return {
-            "context": {
-                "init_time_utc": np.datetime64("2025-04-11T00:00:00")
-                .astype("datetime64[s]")
-                .astype(object),
-                "init_time_bjt": np.datetime64("2025-04-11T08:00:00")
-                .astype("datetime64[s]")
-                .astype(object),
-                "model_contract": "phase8-inferred-v1",
-            },
-            "coverage": {
-                "selected_leads": [6, 12],
-                "missing_leads": [],
-            },
-            "per_lead": per_lead,
-        }
 
-    monkeypatch.setattr(verification.triplet, "run_triplet_case", fake_triplet)
+def test_streamlit_initial_screen_has_final_phase8_controls(monkeypatch):
+    _patch_catalog(monkeypatch)
 
     app = AppTest.from_file("app.py", default_timeout=30).run()
-    app = app.selectbox[0].set_value("2025-04-11").run()
-    app = app.selectbox[1].set_value("我们模型 vs 风雷（Phase 8）").run()
+
+    assert not app.exception
+    assert [item.value for item in app.number_input] == [29.0, 33.5, 108.0, 116.5]
+    assert app.selectbox[1].options == ["StormDiT", "风雷", "StormDiT vs 风雷"]
+    assert app.radio[0].options == ["全部起报", "自定义多起报", "单一起报"]
+    assert app.checkbox[0].value is True
+    assert "刷新可用起报" not in {button.label for button in app.button}
+
+
+def test_single_stormdit_result_has_ai_and_downloads(monkeypatch):
+    _patch_catalog(monkeypatch)
+    request = agent.default_multimodel_request(batch=False)
+    request["thresholds_dbz"] = [15.0]
+    request["metrics"] = ["csi"]
+    request["views"] = ["score_curve"]
+    monkeypatch.setattr(
+        agent, "default_multimodel_request", lambda **_kwargs: request
+    )
+    monkeypatch.setattr(
+        verification.multimodel,
+        "run_multimodel_case",
+        lambda *_args, **_kwargs: _single_result(),
+    )
+
+    app = AppTest.from_file("app.py", default_timeout=30).run()
+    app = app.selectbox[1].set_value("StormDiT").run()
+    app = app.radio[0].set_value("单一起报").run()
     app = _button(app, "使用推荐方案").click().run()
 
     assert not app.exception
-    assert len(app.image) == 2
-    assert any("Phase 8 实验性三方对比" in item.value for item in app.info)
-    assert any("Phase 8 对比测试解读" in item.value for item in app.markdown)
-    assert {"下载三方指标 CSV", "下载解读 Markdown"} <= {
-        item.label for item in app.download_button
+    assert len(app.image) == 1
+    assert any("StormDiT测试解读" in item.value for item in app.markdown)
+    labels = {button.label for button in app.download_button}
+    assert {"下载结果包 ZIP", "下载指标 CSV", "下载AI解读", "下载 PNG"} <= labels
+
+
+def test_two_model_batch_uses_final_product_name(monkeypatch):
+    _patch_catalog(monkeypatch)
+    request = agent.default_multimodel_request(batch=True)
+    request["thresholds_dbz"] = [15.0]
+    request["metrics"] = ["csi"]
+    request["views"] = ["score_curve"]
+    monkeypatch.setattr(
+        agent, "default_multimodel_request", lambda **_kwargs: request
+    )
+    single = _single_result(("stormdit", "fenglei"))
+    rows = []
+    for entry in single["per_lead"]:
+        for model_id, values in entry["models"].items():
+            score = values[15.0]
+            rows.append(
+                {
+                    "model_id": model_id,
+                    "init_time_utc": "2026-04-08T00:00:00",
+                    "init_time_bjt": "2026-04-08T08:00:00",
+                    "valid_time_utc": entry["valid_time_utc"].isoformat(),
+                    "lead_minutes": entry["lead_minutes"],
+                    "threshold_dbz": 15.0,
+                    **score["contingency"],
+                    **{key: score[key] for key in ("pod", "far", "csi", "bias_score", "ets")},
+                }
+            )
+    frame = pd.DataFrame(rows)
+    summary = frame.copy()
+    summary["case_count"] = 1
+    result = {
+        "context": {
+            "model_ids": ["stormdit", "fenglei"],
+            "model_labels": ["StormDiT", "风雷"],
+            "model_contract": "phase8-inferred-v1",
+        },
+        "coverage": {
+            "selected_initialization_count": 1,
+            "selected_pairs": 2,
+            "complete_initializations": 1,
+        },
+        "per_case": frame,
+        "summary": summary,
+        "cache": {"computed_initializations": 0},
     }
+    monkeypatch.setattr(
+        verification.multimodel,
+        "run_multimodel_batch",
+        lambda *_args, **_kwargs: result,
+    )
+
+    app = AppTest.from_file("app.py", default_timeout=30).run()
+    app = app.selectbox[1].set_value("StormDiT vs 风雷").run()
+    app = _button(app, "使用推荐方案").click().run()
+
+    assert not app.exception
+    assert len(app.image) == 1
+    assert any("StormDiT vs 风雷" in item.value for item in app.info)

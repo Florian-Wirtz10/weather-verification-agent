@@ -1,4 +1,4 @@
-"""Reader for the upstream model's NPZ radar-reflectivity forecasts.
+"""Reader for the StormDiT NPZ radar-reflectivity forecasts.
 
 The delivered files do not contain latitude/longitude arrays or a formal field
 contract.  Phase 8 therefore keeps the independently verified interpretation
@@ -254,7 +254,7 @@ def read_upstream_model_forecasts(
             lat=lat,
             lon=lon,
             valid_time=metadata.init_time_utc + timedelta(minutes=lead_minutes),
-            product="Upstream model reflectivity",
+            product="StormDiT reflectivity",
             units=contract.units,
             init_time=metadata.init_time_utc,
             lead_minutes=lead_minutes,

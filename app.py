@@ -1,8 +1,10 @@
-"""Streamlit demo for fair forecast/CREF verification on the delivered cases."""
+"""Streamlit interface for StormDiT/Fenglei/CREF verification."""
 
-from datetime import date, timedelta
+from __future__ import annotations
+
+from io import BytesIO
 import os
-from typing import Any
+import zipfile
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -10,837 +12,561 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from agent import (
-    AmbiguousCaseError,
-    DataContractError,
-    NoDataError,
-    RequestValidationError,
     build_comparison_insight_facts,
-    build_daily_insight_facts,
-    build_insight_facts,
-    default_daily_request,
-    default_request,
-    discover_fenglei_cases,
-    generate_daily_insight,
+    default_multimodel_request,
     generate_comparison_insight,
-    generate_insight,
-    parse_daily_request,
-    parse_request,
-    render_daily_deterministic_summary,
+    parse_multimodel_request,
     render_comparison_deterministic_summary,
-    render_deterministic_summary,
-    resolve_media_layout,
-    resolve_request,
-    run_fenglei_case_verification,
 )
-from data_io.upstream_model import discover_upstream_model_files
-from reports import build_case_download_artifacts, describe_view, figure_to_png
-from verification.batch import (
-    filter_daily_result_by_initializations,
-    run_daily_fenglei_verification,
+from data_io.forecast_sources import (
+    MODEL_FENGLEI,
+    MODEL_LABELS,
+    MODEL_STORMDIT,
+    build_multimodel_catalog,
+    discover_multimodel_initializations,
 )
-from verification.triplet import run_triplet_case
-from visualization.batch_plots import (
-    plot_forecast_observed_rate_distribution,
-    plot_daily_score_curves,
-    plot_daily_score_distribution,
-    plot_daily_score_heatmap,
+from reports import figure_to_png
+from verification.multimodel import run_multimodel_batch, run_multimodel_case
+from visualization.batch_plots import plot_forecast_observed_rate_distribution
+from visualization.comparison_plots import (
+    plot_multimodel_batch_score_curves,
+    plot_multimodel_reflectivity_frame,
+    plot_multimodel_score_curves,
+    plot_multimodel_score_distribution,
+    plot_multimodel_score_heatmaps,
+    render_multimodel_reflectivity_animation,
 )
-from visualization.comparison_plots import plot_triplet_score_curves
 
 load_dotenv()
 st.set_page_config(page_title="强对流预报检验智能体", layout="wide")
 
-DEFAULT_HUBEI_BBOX = {
-    "lat_min": 29.0,
-    "lat_max": 33.5,
-    "lon_min": 108.0,
-    "lon_max": 116.5,
+DEFAULT_HUBEI_BBOX = (29.0, 33.5, 108.0, 116.5)
+CASES = {
+    "2025-04-11": {
+        "label": "2025-04-11 强对流个例",
+        "forecast_dir": os.getenv(
+            "FENGLEI_CASE_DIR", "external/20250411风雷预测资料"
+        ),
+        "observation_dir": os.getenv(
+            "RADAR_OBS_DIR", "external/20250411观测资料"
+        ),
+    },
+    "2026-04-08": {
+        "label": "2026-04-08 强对流个例",
+        "forecast_dir": os.getenv(
+            "FENGLEI_20260408_DIR",
+            os.getenv("FENGLEI_DAILY_DIR", "external/20260408风雷预测资料"),
+        ),
+        "observation_dir": os.getenv(
+            "RADAR_20260408_DIR",
+            os.getenv("RADAR_DAILY_DIR", "external/20260408观测资料"),
+        ),
+    },
+}
+PRODUCT_OPTIONS = {
+    "StormDiT": (MODEL_STORMDIT,),
+    "风雷": (MODEL_FENGLEI,),
+    "StormDiT vs 风雷": (MODEL_STORMDIT, MODEL_FENGLEI),
 }
 
 
-@st.cache_data(show_spinner="正在建立可用起报索引…")
-def _cached_cases(forecast_dir: str, observation_dir: str):
-    return discover_fenglei_cases(forecast_dir, observation_dir)
-
-
-def _upstream_model_directories() -> tuple[str, ...]:
+def _stormdit_directories() -> tuple[str, ...]:
     raw = os.getenv(
         "UPSTREAM_MODEL_DIRS",
         "external/湖北两个个例;external/湖北个例补充",
     )
-    return tuple(value.strip() for value in raw.split(";") if value.strip())
+    return tuple(item.strip() for item in raw.split(";") if item.strip())
 
 
-@st.cache_data(show_spinner="正在建立我们模型的起报索引…")
-def _cached_upstream_model_files(directories: tuple[str, ...]):
-    return discover_upstream_model_files(directories)
+@st.cache_data(show_spinner="正在建立 StormDiT、风雷与CREF时空索引…")
+def _catalog(stormdit_dirs, fenglei_dir, observation_dir):
+    return build_multimodel_catalog(
+        stormdit_directories=stormdit_dirs,
+        fenglei_directory=fenglei_dir,
+        observation_directory=observation_dir,
+    )
 
 
-CASES = {
-    "2026-04-07": {
-        "label": "2026-04-07｜8:00— 次日02:54 BJT",
-        "forecast_dir": os.getenv("FENGLEI_DAILY_DIR", ""),
-        "observation_dir": os.getenv("RADAR_DAILY_DIR", ""),
-        "display_clock": "BJT",
-        "forecast_case_time_basis": "bjt",
-        "observation_case_time_basis": "utc",
-    },
-    "2025-04-11": {
-        "label": "2025-04-11｜00:06—23:54 UTC",
-        "forecast_dir": os.getenv("FENGLEI_CASE_DIR", ""),
-        "observation_dir": os.getenv("RADAR_OBS_DIR", ""),
-        "display_clock": "UTC",
-        "forecast_case_time_basis": "utc",
-        "observation_case_time_basis": "utc",
-    },
-}
+def _clear_result():
+    st.session_state.pop("phase8_result", None)
 
 
-def _clear_verification_attempt():
-    st.session_state.pop("verification_attempt", None)
+def _case_label(case):
+    return (
+        f"{case['init_time_bjt']:%Y-%m-%d %H:%M} BJT"
+        f"（{case['init_time']:%m-%d %H:%M} UTC）｜"
+        f"{len(case['available_leads'])} 个匹配时效"
+        + ("｜完整" if case["complete"] else f"｜缺 {len(case['missing_leads'])} 帧")
+    )
 
 
-def _default_triplet_request():
-    request = default_request()
-    request["filters"]["thresholds_dbz"] = [5.0, 15.0, 25.0, 35.0]
-    request["filters"]["lead_range_minutes"] = {"start": 6, "end": 180}
-    request["views"] = [
-        {"type": "score_time_series", "metric": "csi"},
-        {"type": "score_time_series", "metric": "ets"},
-    ]
-    request["insight"] = {"enabled": True, "length": "detailed"}
-    return request
-
-
-def _metric_rows(result, metrics):
+def _single_rows(result) -> pd.DataFrame:
     rows = []
     for entry in result["per_lead"]:
-        for threshold, scores in entry["categorical"].items():
-            rows.append(
-                {
-                    "lead_minutes": entry["lead_minutes"],
-                    "valid_time_utc": entry["valid_time"].isoformat(timespec="seconds") + "Z",
-                    "threshold_dbz": threshold,
-                    **{name: scores[name] for name in metrics if name in scores},
-                    **entry["contingency"][threshold],
-                }
-            )
-    return rows
-
-
-def _execute_single(request, *, cases, selected_case_id, config, bbox):
-    decision = resolve_request(request, cases, selected_case_id=selected_case_id)
-    attempt: dict[str, Any] = {"kind": "single", "decision": decision, "request": request}
-    if decision["status"] not in {"ready", "partial"}:
-        return attempt
-    execution = decision["execution"]
-    result = run_fenglei_case_verification(
-        fenglei_dir=config["forecast_dir"],
-        radar_dir=config["observation_dir"],
-        bbox=bbox,
-        thresholds=tuple(execution["thresholds"]),
-        init_time=execution["init_time"],
-        lead_range=(execution["lead_range"]["start"], execution["lead_range"]["end"]),
-        views=execution["views"],
-        presentation=execution["presentation"],
-    )
-    metrics = [view["metric"] for view in execution["views"] if view["type"] == "score_time_series"]
-    facts = build_insight_facts(result, requested_metrics=metrics)
-    deterministic = render_deterministic_summary(facts)
-    try:
-        insight, insight_error = (
-            generate_insight(facts, length=execution["insight"]["length"]),
-            None,
-        )
-    except Exception as exc:  # External AI is optional.
-        insight, insight_error = None, str(exc)
-    rows = _metric_rows(result, metrics)
-    try:
-        downloads = build_case_download_artifacts(
-            result=result,
-            request=request,
-            metric_rows=rows,
-            facts=facts,
-            deterministic_summary=deterministic,
-            ai_insight=insight,
-            execution_status=decision["status"],
-        )
-    finally:
-        for figure in result["figures"].values():
-            plt.close(figure)
-    result["figures"] = {}
-    attempt.update(
-        result=result,
-        metric_rows=rows,
-        downloads=downloads,
-        insight=insight,
-        deterministic=deterministic,
-        insight_error=insight_error,
-    )
-    return attempt
-
-
-def _triplet_metric_rows(result):
-    rows = []
-    for entry in result["per_lead"]:
-        for product in ("model", "fenglei"):
-            for threshold, values in entry[product].items():
-                table = values["contingency"]
+        for model_id, threshold_map in entry["models"].items():
+            for threshold, values in threshold_map.items():
                 rows.append(
                     {
-                        "product": "我们模型" if product == "model" else "风雷",
+                        "model_id": model_id,
+                        "model": MODEL_LABELS[model_id],
+                        "init_time_utc": result["context"]["init_time_utc"].isoformat(),
+                        "init_time_bjt": result["context"]["init_time_bjt"].isoformat(),
+                        "valid_time_utc": entry["valid_time_utc"].isoformat(),
                         "lead_minutes": entry["lead_minutes"],
-                        "valid_time_utc": (
-                            entry["valid_time_utc"].isoformat(timespec="seconds") + "Z"
-                        ),
                         "threshold_dbz": threshold,
+                        **values["contingency"],
                         **{
                             metric: values[metric]
                             for metric in ("pod", "far", "csi", "bias_score", "ets")
                         },
-                        **table,
                     }
                 )
-    return rows
+    return pd.DataFrame(rows)
 
 
-def _execute_triplet(
-    request,
-    *,
-    cases,
-    selected_case_id,
-    model_path,
-    config,
-    bbox,
-):
-    decision = resolve_request(request, cases, selected_case_id=selected_case_id)
-    attempt: dict[str, Any] = {
-        "kind": "triplet",
-        "decision": decision,
-        "request": request,
-    }
-    if decision["status"] not in {"ready", "partial"}:
-        return attempt
-    execution = decision["execution"]
-    metrics = list(
-        dict.fromkeys(
-            view["metric"]
-            for view in execution["views"]
-            if view["type"] == "score_time_series"
+def _add_figure(media, figure, label, stem):
+    try:
+        media.append(
+            {
+                "number": len(media) + 1,
+                "label": label,
+                "data": figure_to_png(figure),
+                "file_name": f"{stem}.png",
+                "mime": "image/png",
+                "kind": "PNG",
+            }
         )
-    )
-    if not metrics:
-        metrics = ["csi"]
-    result = run_triplet_case(
-        model_path=model_path,
-        fenglei_dir=config["forecast_dir"],
-        observation_dir=config["observation_dir"],
-        bbox=bbox,
-        thresholds=tuple(execution["thresholds"]),
-        lead_range=(
-            execution["lead_range"]["start"],
-            execution["lead_range"]["end"],
-        ),
-    )
+    finally:
+        plt.close(figure)
+
+
+def _frame_selection(leads, request):
+    step = request["animation"]["frame_step"]
+    selected = list(leads)[::step]
+    if len(selected) > 30:
+        positions = {
+            round(index * (len(selected) - 1) / 29) for index in range(30)
+        }
+        selected = [selected[index] for index in sorted(positions)]
+    return selected
+
+
+def _single_media(result, request):
     media = []
-    for number, metric in enumerate(metrics, 1):
-        figure = plot_triplet_score_curves(result, metric)
-        try:
-            media.append(
-                {
-                    "number": number,
-                    "metric": metric,
-                    "label": f"我们模型与风雷的 {metric.upper()} 随时效对比",
-                    "data": figure_to_png(figure),
-                    "file_name": (
-                        f"phase8_{result['context']['init_time_utc']:%Y%m%d%H%M}_"
-                        f"{metric}.png"
-                    ),
-                }
+    init = result["context"]["init_time_utc"]
+    views = request["views"]
+    if "spatial_comparison" in views:
+        leads = result["coverage"]["selected_leads"]
+        target = leads[len(leads) // 2]
+        _add_figure(
+            media,
+            plot_multimodel_reflectivity_frame(result["frames"][target]),
+            f"+{target} 分钟预报—CREF空间对比",
+            f"{init:%Y%m%d%H%M}_spatial_{target:03d}",
+        )
+    if "reflectivity_animation" in views:
+        ordered = [result["frames"][lead] for lead in result["coverage"]["animation_leads"]]
+        media.append(
+            {
+                "number": len(media) + 1,
+                "label": "预报—CREF同步时序动画",
+                "data": render_multimodel_reflectivity_animation(
+                    ordered, fps=request["animation"]["fps"]
+                ),
+                "file_name": f"{init:%Y%m%d%H%M}_reflectivity.gif",
+                "mime": "image/gif",
+                "kind": "GIF",
+            }
+        )
+    if "score_curve" in views:
+        for metric in request["metrics"]:
+            _add_figure(
+                media,
+                plot_multimodel_score_curves(result, metric),
+                f"{metric.upper()} 随预报时效变化",
+                f"{init:%Y%m%d%H%M}_{metric}",
             )
-        finally:
-            plt.close(figure)
-    facts = build_comparison_insight_facts(result, metrics)
-    deterministic = render_comparison_deterministic_summary(facts)
+    return media
+
+
+def _batch_media(result, request):
+    media = []
+    views = request["views"]
+    if "score_curve" in views:
+        for metric in request["metrics"]:
+            _add_figure(
+                media,
+                plot_multimodel_batch_score_curves(result["summary"], metric),
+                f"汇总 {metric.upper()} 随预报时效变化",
+                f"phase8_batch_{metric}",
+            )
+    if "score_heatmap" in views:
+        for metric in request["metrics"]:
+            _add_figure(
+                media,
+                plot_multimodel_score_heatmaps(
+                    result["per_case"],
+                    metric,
+                    request["diagnostic_threshold_dbz"],
+                ),
+                f"{request['diagnostic_threshold_dbz']:g} dBZ {metric.upper()} 起报×时效热力图",
+                f"phase8_batch_{metric}_heatmap",
+            )
+    if "score_distribution" in views:
+        for metric in request["metrics"]:
+            _add_figure(
+                media,
+                plot_multimodel_score_distribution(
+                    result["per_case"],
+                    metric,
+                    request["diagnostic_threshold_dbz"],
+                ),
+                f"{request['diagnostic_threshold_dbz']:g} dBZ {metric.upper()} 分布",
+                f"phase8_batch_{metric}_distribution",
+            )
+    if "forecast_observed_rate_distribution" in views:
+        for model_id in result["context"]["model_ids"]:
+            subset = result["per_case"][result["per_case"]["model_id"] == model_id]
+            figure = plot_forecast_observed_rate_distribution(
+                subset, request["diagnostic_threshold_dbz"]
+            )
+            figure.suptitle(
+                f"{'StormDiT' if model_id == MODEL_STORMDIT else 'Fenglei'} "
+                "forecast rate vs observed rate",
+                fontsize=14,
+                fontweight="bold",
+            )
+            _add_figure(
+                media,
+                figure,
+                f"{MODEL_LABELS[model_id]}预报率—观测率联合分布",
+                f"phase8_batch_{model_id}_rates",
+            )
+    return media
+
+
+def _finish_attempt(result, request, media, rows):
+    catalog = [
+        {"number": item["number"], "label": item["label"]} for item in media
+    ]
+    facts = build_comparison_insight_facts(
+        result, request["metrics"], figure_catalog=catalog
+    )
+    fallback = render_comparison_deterministic_summary(facts)
     try:
         insight, insight_error = generate_comparison_insight(facts), None
     except Exception as exc:
         insight, insight_error = None, str(exc)
-    attempt.update(
-        result=result,
-        media=media,
-        rows=_triplet_metric_rows(result),
-        insight=insight,
-        deterministic=deterministic,
-        insight_error=insight_error,
-    )
-    return attempt
-
-
-def _daily_media(result, request):
-    metric, threshold = request["metric"], request["diagnostic_threshold_dbz"]
-    selected_scope = (
-        result["context"].get("selection_scope") == "selected_initializations"
-    )
-    scope_label = "Selected-initialization" if selected_scope else "Full-day"
-    label_prefix = "所选起报" if selected_scope else "全天"
-    factories = {
-        "daily_score_curve": lambda n: plot_daily_score_curves(
-            result["summary"], metric, figure_number=n, scope_label=scope_label
-        ),
-        "daily_score_heatmap": lambda n: plot_daily_score_heatmap(
-            result["per_case"],
-            metric,
-            threshold,
-            figure_number=n,
-            scope_label=scope_label,
-        ),
-        "score_distribution": lambda n: plot_daily_score_distribution(
-            result["per_case"], metric, threshold, figure_number=n
-        ),
-        "forecast_observed_rate_distribution": lambda n: (
-            plot_forecast_observed_rate_distribution(
-                result["per_case"], threshold, figure_number=n
-            )
-        ),
-    }
-    labels = {
-        "daily_score_curve": f"{label_prefix}汇总 {metric.upper()} 随时效变化",
-        "daily_score_heatmap": f"{threshold:g} dBZ 起报时刻×时效",
-        "score_distribution": f"{threshold:g} dBZ 跨起报分布",
-        "forecast_observed_rate_distribution": (
-            f"{threshold:g} dBZ {label_prefix}预报率—观测率联合分布"
-        ),
-    }
-    media = []
-    for number, view in enumerate(request["views"], 1):
-        figure = factories[view](number)
-        try:
-            media.append(
-                {
-                    "number": number,
-                    "label": labels[view],
-                    "data": figure_to_png(figure),
-                    "file_name": f"{result['context']['case_date']}_{metric}_{view}.png",
-                }
-            )
-        finally:
-            plt.close(figure)
-    return media
-
-
-def _execute_daily(
-    request,
-    *,
-    config,
-    case_date,
-    bbox,
-    progress_callback,
-    selected_initializations_utc=None,
-):
-    if not request["views"]:
-        return {
-            "kind": "daily",
-            "status": "unsupported",
-            "message": "没有可执行的全天图表。",
-            "request": request,
-        }
-    lead = request["lead_range_minutes"]
-    result = run_daily_fenglei_verification(
-        forecast_dir=config["forecast_dir"],
-        observation_dir=config["observation_dir"],
-        case_date=request["requested_date"] or case_date,
-        forecast_case_time_basis=config["forecast_case_time_basis"],
-        observation_case_time_basis=config["observation_case_time_basis"],
-        bbox=bbox,
-        thresholds=request["thresholds_dbz"],
-        lead_range=(lead["start"], lead["end"]),
-        progress_callback=progress_callback,
-    )
-    if selected_initializations_utc is not None:
-        result = filter_daily_result_by_initializations(
-            result, selected_initializations_utc
+    status = (
+        "partial"
+        if request["unmatched_requests"]
+        or (
+            "coverage" in result
+            and result["coverage"].get("complete") is False
         )
-    facts = build_daily_insight_facts(
-        result,
-        metric=request["metric"],
-        diagnostic_threshold_dbz=request["diagnostic_threshold_dbz"],
-        views=request["views"],
+        else "ready"
     )
-    deterministic = render_daily_deterministic_summary(facts)
-    try:
-        insight, insight_error = generate_daily_insight(facts), None
-    except Exception as exc:  # External AI is optional.
-        insight, insight_error = None, str(exc)
     return {
-        "kind": "daily",
-        "status": "partial" if request["unmatched_requests"] else "ready",
-        "message": "检验完成。",
+        "status": status,
         "request": request,
         "result": result,
-        "media": _daily_media(result, request),
+        "media": media,
+        "rows": rows,
         "insight": insight,
-        "deterministic": deterministic,
+        "fallback": fallback,
         "insight_error": insight_error,
     }
 
 
-def _render_single(attempt):
-    decision, result = attempt["decision"], attempt.get("result")
-    if decision["status"] not in {"ready", "partial"}:
-        st.error(decision["message"])
+def _execute_single(catalog, model_ids, case, bbox, request):
+    lead = request["lead_range_minutes"]
+    available = [
+        value
+        for value in case["available_leads"]
+        if lead["start"] <= value <= lead["end"]
+    ]
+    if not available:
+        raise ValueError("所选起报在请求的时效范围内没有严格匹配资料。")
+    animation_leads = (
+        _frame_selection(available, request)
+        if "reflectivity_animation" in request["views"]
+        else []
+    )
+    frame_leads = set(animation_leads)
+    if "spatial_comparison" in request["views"]:
+        frame_leads.add(available[len(available) // 2])
+    result = run_multimodel_case(
+        catalog,
+        model_ids,
+        case["init_time"],
+        bbox,
+        thresholds=request["thresholds_dbz"],
+        lead_range=(lead["start"], lead["end"]),
+        frame_leads=sorted(frame_leads),
+    )
+    result["coverage"]["animation_leads"] = animation_leads
+    return _finish_attempt(
+        result, request, _single_media(result, request), _single_rows(result)
+    )
+
+
+def _execute_batch(
+    catalog,
+    model_ids,
+    bbox,
+    request,
+    *,
+    initializations,
+    complete_only,
+    progress_callback,
+):
+    lead = request["lead_range_minutes"]
+    result = run_multimodel_batch(
+        catalog,
+        model_ids,
+        bbox,
+        thresholds=request["thresholds_dbz"],
+        lead_range=(lead["start"], lead["end"]),
+        initializations=initializations,
+        complete_only=complete_only,
+        progress_callback=progress_callback,
+    )
+    return _finish_attempt(
+        result, request, _batch_media(result, request), result["per_case"]
+    )
+
+
+def _bundle(attempt):
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for item in attempt["media"]:
+            archive.writestr(item["file_name"], item["data"])
+        archive.writestr(
+            "metrics.csv", attempt["rows"].to_csv(index=False).encode("utf-8-sig")
+        )
+        archive.writestr(
+            "ai_insight.md",
+            (attempt["insight"] or attempt["fallback"]).encode("utf-8"),
+        )
+    return buffer.getvalue()
+
+
+def _render(attempt):
+    if attempt.get("status") == "execution_error":
+        st.error(attempt["message"])
         return
-    if result is None:
-        st.warning(decision["message"])
-        return
-    main, insight = st.columns([3.2, 1], gap="large")
-    with insight:
+    main, right = st.columns([3.25, 1], gap="large")
+    with right:
         st.subheader("AI 解读")
-        with st.container(height=680, border=False):
-            st.markdown(attempt["insight"] or attempt["deterministic"])
+        with st.container(height=700, border=False):
+            st.markdown(attempt["insight"] or attempt["fallback"])
             if attempt["insight_error"]:
-                st.caption("AI 解读暂不可用，已显示确定性解读。")
+                st.caption("AI服务暂不可用，已显示由同一数字事实生成的确定性解读。")
     with main:
-        downloads = attempt["downloads"]
-        columns = st.columns(3)
-        columns[0].download_button(
+        result = attempt["result"]
+        models = " vs ".join(result["context"]["model_labels"])
+        if "per_lead" in result:
+            context, coverage = result["context"], result["coverage"]
+            st.info(
+                f"{models}｜{context['init_time_bjt']:%Y-%m-%d %H:%M} BJT"
+                f"（{context['init_time_utc']:%m-%d %H:%M} UTC）｜"
+                f"{len(coverage['selected_leads'])} 个严格匹配时效"
+            )
+        else:
+            coverage, cache = result["coverage"], result["cache"]
+            st.info(
+                f"{models}｜{coverage['selected_initialization_count']} 个起报｜"
+                f"{coverage['selected_pairs']} 组严格匹配时效｜"
+                f"本次新计算 {cache['computed_initializations']} 个起报"
+            )
+        if attempt["status"] == "partial":
+            notes = "；".join(attempt["request"]["unmatched_requests"])
+            st.warning(notes or "所选起报资料不完整，已执行可用时效。")
+        controls = st.columns(3)
+        controls[0].download_button(
             "下载结果包 ZIP",
-            downloads["bundle"]["data"],
-            downloads["bundle"]["file_name"],
+            _bundle(attempt),
+            "phase8_verification.zip",
             "application/zip",
             width="stretch",
         )
-        columns[1].download_button(
+        controls[1].download_button(
             "下载指标 CSV",
-            downloads["metrics"]["data"],
-            downloads["metrics"]["file_name"],
+            attempt["rows"].to_csv(index=False).encode("utf-8-sig"),
+            "phase8_metrics.csv",
             "text/csv",
             width="stretch",
         )
-        columns[2].download_button(
-            "下载解读 Markdown",
-            downloads["summary"]["data"],
-            downloads["summary"]["file_name"],
+        controls[2].download_button(
+            "下载AI解读",
+            (attempt["insight"] or attempt["fallback"]).encode("utf-8"),
+            "phase8_ai_insight.md",
             "text/markdown",
             width="stretch",
-        )
-        layout = resolve_media_layout(
-            attempt["request"].get("presentation", {}).get("layout", "auto"),
-            figure_metadata=result["figure_metadata"],
-            animation_metadata=result["animation_metadata"],
-        )
-        items = [
-            ("image", key, item, result["figure_metadata"][key])
-            for key, item in downloads["images"].items()
-        ] + [
-            ("animation", key, item, result["animation_metadata"][key])
-            for key, item in downloads.get("animations", {}).items()
-        ]
-        for start in range(0, len(items), 2 if layout != "single_column" else 1):
-            columns = st.columns(2) if layout != "single_column" else [st.container()]
-            for column, (kind, key, media, view) in zip(
-                columns, items[start : start + len(columns)]
-            ):
-                with column:
-                    st.caption(describe_view(view))
-                    st.image(media["data"])
-                    suffix, mime = (
-                        ("gif", "image/gif") if kind == "animation" else ("png", "image/png")
-                    )
-                    st.download_button(
-                        f"下载 {suffix.upper()}",
-                        media["data"],
-                        media["file_name"],
-                        mime,
-                        key=f"{suffix}_{key}",
-                    )
-        with st.expander("查看本次指标"):
-            st.dataframe(pd.DataFrame(attempt["metric_rows"]), width="stretch")
-
-
-def _render_triplet(attempt):
-    decision, result = attempt["decision"], attempt.get("result")
-    if decision["status"] not in {"ready", "partial"}:
-        st.error(decision["message"])
-        return
-    if result is None:
-        st.warning(decision["message"])
-        return
-    main, insight = st.columns([3.2, 1], gap="large")
-    with insight:
-        st.subheader("AI 解读")
-        with st.container(height=680, border=False):
-            st.markdown(attempt["insight"] or attempt["deterministic"])
-            if attempt["insight_error"]:
-                st.caption("AI 解读暂不可用，已显示确定性对比摘要。")
-    with main:
-        context, coverage = result["context"], result["coverage"]
-        st.info(
-            "Phase 8 实验性三方对比｜"
-            f"{context['init_time_utc']:%Y-%m-%d %H:%M} UTC 起报｜"
-            f"{len(coverage['selected_leads'])} 个严格匹配时效｜"
-            f"模型契约：{context['model_contract']}｜0/缺测语义待上游确认"
-        )
-        for item in attempt["media"]:
-            st.caption(item["label"])
-            st.image(item["data"])
-            st.download_button(
-                "下载 PNG",
-                item["data"],
-                item["file_name"],
-                "image/png",
-                key=f"triplet_{item['metric']}",
-            )
-        frame = pd.DataFrame(attempt["rows"])
-        columns = st.columns(2)
-        columns[0].download_button(
-            "下载三方指标 CSV",
-            frame.to_csv(index=False).encode("utf-8-sig"),
-            f"phase8_{context['init_time_utc']:%Y%m%d%H%M}_metrics.csv",
-            "text/csv",
-            width="stretch",
-        )
-        columns[1].download_button(
-            "下载解读 Markdown",
-            attempt["deterministic"].encode("utf-8"),
-            f"phase8_{context['init_time_utc']:%Y%m%d%H%M}_insight.md",
-            "text/markdown",
-            width="stretch",
-        )
-        with st.expander("查看三方指标"):
-            st.dataframe(frame, width="stretch")
-
-
-def _render_daily(attempt):
-    if attempt["status"] not in {"ready", "partial"}:
-        st.error(attempt["message"])
-        return
-    result = attempt["result"]
-    main, insight = st.columns([3.2, 1], gap="large")
-    with insight:
-        st.subheader("AI 解读")
-        with st.container(height=680, border=False):
-            st.markdown(attempt["insight"] or attempt["deterministic"])
-            if attempt["insight_error"]:
-                st.caption("AI 解读暂不可用，已显示确定性解读。")
-    with main:
-        coverage, cache = result["coverage"], result["cache"]
-        selected_count = coverage.get("selected_initialization_count")
-        selection_text = f"｜已选择 {selected_count} 个起报" if selected_count else ""
-        st.write(
-            f"**{coverage['completed_pairs']}/{coverage['selected_pairs']} 对严格匹配样本**"
-            f"{selection_text}｜本次复用缓存 {cache['metric_pairs_reused']} 对"
         )
         for start in range(0, len(attempt["media"]), 2):
             columns = st.columns(2)
             for column, item in zip(columns, attempt["media"][start : start + 2]):
                 with column:
-                    st.caption(item["label"])
-                    st.image(item["data"])
+                    st.caption(f"图{item['number']}｜{item['label']}")
+                    st.image(item["data"], width="stretch")
                     st.download_button(
-                        "下载 PNG",
+                        f"下载 {item['kind']}",
                         item["data"],
                         item["file_name"],
-                        "image/png",
-                        key=f"daily_{item['file_name']}",
+                        item["mime"],
+                        key=f"media_{item['number']}_{item['file_name']}",
                     )
-        columns = st.columns(3)
-        columns[0].download_button(
-            "下载逐起报 CSV",
-            result["per_case"].to_csv(index=False).encode("utf-8-sig"),
-            f"{result['context']['case_date']}_per_case.csv",
-            "text/csv",
-            width="stretch",
-        )
-        columns[1].download_button(
-            "下载汇总 CSV",
-            result["summary"].to_csv(index=False).encode("utf-8-sig"),
-            f"{result['context']['case_date']}_summary.csv",
-            "text/csv",
-            width="stretch",
-        )
-        columns[2].download_button(
-            "下载解读 Markdown",
-            attempt["deterministic"].encode("utf-8"),
-            f"{result['context']['case_date']}_insight.md",
-            "text/markdown",
-            width="stretch",
-        )
-        with st.expander("查看汇总指标"):
-            st.dataframe(result["summary"], width="stretch")
+        with st.expander("查看结构化指标"):
+            st.dataframe(attempt["rows"], width="stretch")
 
 
 st.title("强对流预报检验智能体")
 with st.sidebar:
     st.header("检验区域")
     st.caption("默认：湖北区域")
-    lat_min = st.number_input("lat_min", value=DEFAULT_HUBEI_BBOX["lat_min"])
-    lat_max = st.number_input("lat_max", value=DEFAULT_HUBEI_BBOX["lat_max"])
-    lon_min = st.number_input("lon_min", value=DEFAULT_HUBEI_BBOX["lon_min"])
-    lon_max = st.number_input("lon_max", value=DEFAULT_HUBEI_BBOX["lon_max"])
+    lat_min = st.number_input("lat_min", value=DEFAULT_HUBEI_BBOX[0])
+    lat_max = st.number_input("lat_max", value=DEFAULT_HUBEI_BBOX[1])
+    lon_min = st.number_input("lon_min", value=DEFAULT_HUBEI_BBOX[2])
+    lon_max = st.number_input("lon_max", value=DEFAULT_HUBEI_BBOX[3])
 
-case_column, product_column, mode_column = st.columns([1.35, 1.05, 1.45])
+case_column, product_column, mode_column = st.columns([1.2, 1.1, 1.5])
 with case_column:
     case_key = st.selectbox(
-        "检验个例", list(CASES), format_func=lambda value: CASES[value]["label"]
+        "检验个例",
+        list(CASES),
+        format_func=lambda value: CASES[value]["label"],
+        on_change=_clear_result,
     )
 with product_column:
-    product_mode = st.selectbox(
+    product_name = st.selectbox(
         "预报产品",
-        ["风雷检验", "我们模型 vs 风雷（Phase 8）"],
-        on_change=_clear_verification_attempt,
+        list(PRODUCT_OPTIONS),
+        index=2,
+        on_change=_clear_result,
     )
 with mode_column:
-    mode_options = (
-        ["单一起报"]
-        if product_mode == "我们模型 vs 风雷（Phase 8）"
-        else ["全部起报（全天）", "自定义多起报", "单一起报"]
-    )
     mode = st.radio(
         "检验范围",
-        mode_options,
+        ["全部起报", "自定义多起报", "单一起报"],
         horizontal=True,
+        on_change=_clear_result,
     )
 
-config = CASES[case_key]
+complete_only = st.checkbox(
+    "仅使用6—180分钟完整起报",
+    value=True,
+    help="关闭后可选择资料不完整的起报；缺帧不会被时间插值。",
+    on_change=_clear_result,
+)
 bbox = (lat_min, lat_max, lon_min, lon_max)
-scope = (case_key, product_mode, mode, *bbox)
-if st.session_state.get("active_scope") != scope:
-    st.session_state["active_scope"] = scope
-    st.session_state.pop("verification_attempt", None)
-
-if product_mode == "我们模型 vs 风雷（Phase 8）":
-    try:
-        fenglei_cases = _cached_cases(
-            config["forecast_dir"], config["observation_dir"]
-        )
-        model_files = _cached_upstream_model_files(
-            _upstream_model_directories()
-        )
-        triplet_cases = [
-            item for item in fenglei_cases if item["init_time"] in model_files
-        ]
-    except Exception as exc:
-        st.error(str(exc))
-        st.stop()
-    if not triplet_cases:
-        st.error(
-            "当前个例没有我们模型、风雷和CREF三方严格重叠的起报。"
-            "现有2026模型资料实际对应2026-04-08 UTC，暂不在此入口中混用。"
-        )
-        st.stop()
-
-    triplet_by_id = {item["case_id"]: item for item in triplet_cases}
-    triplet_labels = {
-        item["case_id"]: (
-            f"{item['init_time']:%Y-%m-%d %H:%M} UTC｜"
-            f"{len(item['available_leads'])} 个风雷匹配时效"
-        )
-        for item in triplet_cases
-    }
-    selected_case_id = st.selectbox(
-        "共同起报",
-        list(triplet_labels),
-        format_func=lambda value: triplet_labels[value],
-        on_change=_clear_verification_attempt,
+config = CASES[case_key]
+model_ids = PRODUCT_OPTIONS[product_name]
+try:
+    catalog = _catalog(
+        _stormdit_directories(),
+        config["forecast_dir"],
+        config["observation_dir"],
     )
-    prompt = st.text_area(
-        "对比要求",
-        "使用5、15、25、35 dBZ阈值，对比6—180分钟我们模型与风雷的CSI和ETS曲线，"
-        "并解读不同阈值下两者表现。",
+    available_cases = discover_multimodel_initializations(
+        catalog, model_ids, lead_range=(6, 180), common_only=len(model_ids) > 1
     )
-    parse, default = st.columns(2)
-    run_parse = parse.button("智能解析并运行", type="primary", width="stretch")
-    run_default = default.button("使用推荐方案", width="stretch")
-    if run_parse or run_default:
-        try:
-            request = (
-                _default_triplet_request()
-                if run_default
-                else parse_request(prompt, available_cases=triplet_cases)
-            )
-            selected_case = triplet_by_id[selected_case_id]
-            with st.spinner("正在进行三方严格对齐计算…"):
-                st.session_state["verification_attempt"] = _execute_triplet(
-                    request,
-                    cases=triplet_cases,
-                    selected_case_id=selected_case_id,
-                    model_path=model_files[selected_case["init_time"]],
-                    config=config,
-                    bbox=bbox,
-                )
-        except Exception as exc:
-            st.session_state["verification_attempt"] = {
-                "kind": "triplet",
-                "decision": {"status": "execution_error", "message": str(exc)},
-            }
-    attempt = st.session_state.get("verification_attempt")
-    if attempt and attempt.get("kind") == "triplet":
-        _render_triplet(attempt)
+    if complete_only:
+        available_cases = [case for case in available_cases if case["complete"]]
+except Exception as exc:
+    st.error(f"资料索引失败：{exc}")
+    st.stop()
+if not available_cases:
+    st.error("当前个例、产品和完整性条件下没有可检验起报。")
     st.stop()
 
-available_cases = None
-labels = None
-if mode in {"单一起报", "自定义多起报"}:
-    try:
-        available_cases = _cached_cases(
-            config["forecast_dir"], config["observation_dir"]
-        )
-    except Exception as exc:
-        available_cases, catalog_error = [], str(exc)
-    else:
-        catalog_error = None
-    if catalog_error or not available_cases:
-        st.error(catalog_error or "当前个例没有可用起报。")
-        st.stop()
-
-    def _case_label(item):
-        init = item["init_time"]
-        if config["display_clock"] == "BJT":
-            init += timedelta(hours=8)
-        return f"{init:%Y-%m-%d %H:%M} {config['display_clock']}｜{len(item['available_leads'])} 个时效"
-
-    labels = {item["case_id"]: _case_label(item) for item in available_cases}
-
+case_by_id = {case["case_id"]: case for case in available_cases}
+selected_case_ids = None
+selected_case_id = None
 if mode == "单一起报":
     selected_case_id = st.selectbox(
-        "风雷起报", list(labels), format_func=lambda value: labels[value]
+        "起报时间",
+        list(case_by_id),
+        format_func=lambda value: _case_label(case_by_id[value]),
+        on_change=_clear_result,
     )
-    prompt = st.text_area(
-        "检验要求",
-        "使用35 dBZ阈值，只看前1小时，生成 CSI ， ETS 曲线和预报-观测时序变化图，并简要解读结果。",
-    )
-    parse, default = st.columns(2)
-    run_parse = parse.button("智能解析并运行", type="primary", width="stretch")
-    run_default = default.button("使用推荐方案", width="stretch")
-    if run_parse or run_default:
-        try:
-            request = (
-                default_request()
-                if run_default
-                else parse_request(prompt, available_cases=available_cases)
-            )
-            with st.spinner("正在计算…"):
-                st.session_state["verification_attempt"] = _execute_single(
-                    request,
-                    cases=available_cases,
-                    selected_case_id=selected_case_id,
-                    config=config,
-                    bbox=bbox,
-                )
-        except (
-            AmbiguousCaseError,
-            DataContractError,
-            NoDataError,
-            RequestValidationError,
-            ValueError,
-        ) as exc:
-            st.session_state["verification_attempt"] = {
-                "kind": "single",
-                "decision": {"status": "execution_error", "message": str(exc)},
-            }
-    attempt = st.session_state.get("verification_attempt")
-    if attempt and attempt.get("kind") == "single":
-        _render_single(attempt)
 elif mode == "自定义多起报":
     if len(available_cases) < 2:
-        st.error("当前个例至少需要两个可用起报，才能进行多起报比较。")
+        st.error("当前条件下不足两个起报，无法进行多起报比较。")
         st.stop()
-    if len(available_cases) <= 3:
-        default_case_ids = [item["case_id"] for item in available_cases]
-    else:
-        default_case_ids = [
-            available_cases[index]["case_id"]
-            for index in (0, len(available_cases) // 2, len(available_cases) - 1)
-        ]
+    indexes = sorted({0, len(available_cases) // 2, len(available_cases) - 1})
     selected_case_ids = st.multiselect(
-        "选择风雷起报（2—8个）",
-        list(labels),
-        default=default_case_ids,
+        "选择起报（2—8个）",
+        list(case_by_id),
+        default=[available_cases[index]["case_id"] for index in indexes],
         max_selections=8,
-        format_func=lambda value: labels[value],
-        on_change=_clear_verification_attempt,
+        format_func=lambda value: _case_label(case_by_id[value]),
+        on_change=_clear_result,
     )
-    prompt = st.text_area(
-        "检验要求",
-        "比较页面选中的多个起报，使用5、15、25、35 dBZ阈值，查看6—180分钟CSI曲线；"
-        "再用15 dBZ画起报时刻×时效热力图、跨起报分布图和预报率—观测率联合分布，并全面解读。",
-    )
-    parse, default = st.columns(2)
-    run_parse = parse.button("智能解析并运行", type="primary", width="stretch")
-    run_default = default.button("使用推荐方案", width="stretch")
-    if run_parse or run_default:
-        if not 2 <= len(selected_case_ids) <= 8:
-            st.session_state["verification_attempt"] = {
-                "kind": "daily",
-                "status": "execution_error",
-                "message": "请选择2—8个不同的起报时间。",
-            }
+
+batch = mode != "单一起报"
+default_prompt = (
+    "使用5、15、25、35 dBZ阈值，查看6—180分钟StormDiT和风雷的CSI、ETS曲线，"
+    "并生成15 dBZ起报×时效热力图、评分分布和预报率—观测率图，全面解读。"
+    if batch
+    else "使用5、15、25、35 dBZ阈值，查看6—180分钟的预报—观测空间对比、"
+    "同步动画以及CSI、ETS曲线，并结合各图全面解读。"
+)
+prompt = st.text_area("检验要求", default_prompt)
+left, right = st.columns(2)
+run_ai = left.button("智能解析并运行", type="primary", width="stretch")
+run_default = right.button("使用推荐方案", width="stretch")
+if run_ai or run_default:
+    try:
+        request = (
+            default_multimodel_request(batch=batch)
+            if run_default
+            else parse_multimodel_request(prompt, batch=batch)
+        )
+        if mode == "单一起报":
+            if selected_case_id is None:
+                raise ValueError("请选择一个起报时间。")
+            with st.spinner("正在读取并严格对齐预报与CREF…"):
+                attempt = _execute_single(
+                    catalog,
+                    model_ids,
+                    case_by_id[selected_case_id],
+                    bbox,
+                    request,
+                )
         else:
+            if mode == "自定义多起报":
+                if not selected_case_ids or not 2 <= len(selected_case_ids) <= 8:
+                    raise ValueError("请选择2—8个起报时间。")
+                initializations = [
+                    case_by_id[value]["init_time"] for value in selected_case_ids
+                ]
+            else:
+                initializations = None
             progress = st.progress(0.0)
 
             def _progress(done, total, _label):
                 progress.progress(done / total)
 
-            selected_by_id = {item["case_id"]: item for item in available_cases}
-            selected_times = [
-                selected_by_id[case_id]["init_time"] for case_id in selected_case_ids
-            ]
             try:
-                request = (
-                    default_daily_request(case_key)
-                    if run_default
-                    else parse_daily_request(prompt)
-                )
-                st.session_state["verification_attempt"] = _execute_daily(
+                attempt = _execute_batch(
+                    catalog,
+                    model_ids,
+                    bbox,
                     request,
-                    config=config,
-                    case_date=case_key,
-                    bbox=bbox,
+                    initializations=initializations,
+                    complete_only=complete_only,
                     progress_callback=_progress,
-                    selected_initializations_utc=selected_times,
                 )
-            except Exception as exc:
-                st.session_state["verification_attempt"] = {
-                    "kind": "daily",
-                    "status": "execution_error",
-                    "message": str(exc),
-                }
             finally:
                 progress.empty()
-    attempt = st.session_state.get("verification_attempt")
-    if attempt and attempt.get("kind") == "daily":
-        _render_daily(attempt)
-else:
-    prompt = st.text_area(
-        "检验要求",
-        f"检验{date.fromisoformat(case_key):%Y年%m月%d日}全部起报，使用5、15、25、35 dBZ阈值，"
-        "查看 CSI 曲线、15 dBZ 热力图、跨起报分布图和预报率—观测率联合分布，并全面解读。",
-    )
-    parse, default = st.columns(2)
-    run_parse = parse.button("智能解析并运行", type="primary", width="stretch")
-    run_default = default.button("使用推荐方案", width="stretch")
-    if run_parse or run_default:
-        progress = st.progress(0.0)
+        st.session_state["phase8_result"] = attempt
+    except Exception as exc:
+        st.session_state["phase8_result"] = {
+            "status": "execution_error",
+            "message": str(exc),
+        }
 
-        def _progress(done, total, _label):
-            progress.progress(done / total)
-
-        try:
-            request = (
-                default_daily_request(case_key) if run_default else parse_daily_request(prompt)
-            )
-            st.session_state["verification_attempt"] = _execute_daily(
-                request, config=config, case_date=case_key, bbox=bbox, progress_callback=_progress
-            )
-        except Exception as exc:
-            st.session_state["verification_attempt"] = {
-                "kind": "daily",
-                "status": "execution_error",
-                "message": str(exc),
-            }
-        finally:
-            progress.empty()
-    attempt = st.session_state.get("verification_attempt")
-    if attempt and attempt.get("kind") == "daily":
-        _render_daily(attempt)
+attempt = st.session_state.get("phase8_result")
+if attempt:
+    _render(attempt)

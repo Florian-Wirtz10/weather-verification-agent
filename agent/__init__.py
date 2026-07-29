@@ -14,6 +14,11 @@ from agent.daily_insight import (
 from agent.daily_request import default_daily_request, parse_daily_request, validate_daily_request
 from agent.insight import build_insight_facts, generate_insight, render_deterministic_summary
 from agent.nl_parser import parse_request
+from agent.multimodel_request import (
+    default_multimodel_request,
+    parse_multimodel_request,
+    validate_multimodel_request,
+)
 from agent.orchestrator import (
     discover_fenglei_cases,
     run_fenglei_case_verification,
@@ -48,4 +53,7 @@ __all__ = [
     "build_comparison_insight_facts",
     "render_comparison_deterministic_summary",
     "generate_comparison_insight",
+    "default_multimodel_request",
+    "parse_multimodel_request",
+    "validate_multimodel_request",
 ]
