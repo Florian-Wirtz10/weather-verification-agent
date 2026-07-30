@@ -37,6 +37,8 @@ from visualization.comparison_plots import (
     plot_multimodel_score_curves,
     plot_multimodel_score_distribution,
     plot_multimodel_score_heatmaps,
+    plot_multimodel_selected_init_dumbbells,
+    plot_multimodel_selected_init_trajectories,
     plot_multimodel_variable_correlation_heatmap,
     render_multimodel_reflectivity_animation,
 )
@@ -141,7 +143,7 @@ def _single_rows(result) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _add_figure(media, figure, label, stem):
+def _add_figure(media, figure, label, stem, *, full_width=False):
     try:
         media.append(
             {
@@ -151,6 +153,7 @@ def _add_figure(media, figure, label, stem):
                 "file_name": f"{stem}.png",
                 "mime": "image/png",
                 "kind": "PNG",
+                "full_width": bool(full_width),
                 "svg_data": figure_to_svg(figure),
                 "svg_file_name": f"{stem}.svg",
             }
@@ -221,6 +224,38 @@ def _single_media(result, request):
 def _batch_media(result, request):
     media = []
     views = request["views"]
+    diagnostic_metrics = [
+        metric.upper()
+        for metric in request["metrics"]
+        if metric in {"csi", "pod", "far"}
+    ]
+    diagnostic_metric_text = "、".join(diagnostic_metrics)
+    if "selected_init_trajectories" in views:
+        _add_figure(
+            media,
+            plot_multimodel_selected_init_trajectories(
+                result["per_case"],
+                request["metrics"],
+                request["diagnostic_threshold_dbz"],
+            ),
+            f"{request['diagnostic_threshold_dbz']:g} dBZ逐起报"
+            f"{diagnostic_metric_text}轨迹",
+            "phase8_selected_init_trajectories",
+            full_width=True,
+        )
+    if "selected_init_dumbbell" in views:
+        _add_figure(
+            media,
+            plot_multimodel_selected_init_dumbbells(
+                result["per_case"],
+                request["metrics"],
+                request["diagnostic_threshold_dbz"],
+            ),
+            f"{request['diagnostic_threshold_dbz']:g} dBZ逐起报"
+            f"{diagnostic_metric_text}平均评分配对比较",
+            "phase8_selected_init_dumbbell",
+            full_width=True,
+        )
     if "score_curve" in views:
         for metric in request["metrics"]:
             _add_figure(
@@ -482,30 +517,46 @@ def _render(attempt):
             "text/markdown",
             width="stretch",
         )
-        for start in range(0, len(attempt["media"]), 2):
-            columns = st.columns(2)
-            for column, item in zip(columns, attempt["media"][start : start + 2]):
+        def render_item(item):
+            st.caption(f"图{item['number']}｜{item['label']}")
+            # Comparison GIFs are encoded below Streamlit's internal
+            # 1460 px media limit, so this native component receives
+            # their original multi-frame bytes and retains fullscreen.
+            st.image(item["data"], width="stretch")
+            st.download_button(
+                f"下载 {item['kind']}",
+                item["data"],
+                item["file_name"],
+                item["mime"],
+                key=f"media_{item['number']}_{item['file_name']}",
+            )
+            if item.get("svg_data"):
+                st.download_button(
+                    "下载 SVG",
+                    item["svg_data"],
+                    item["svg_file_name"],
+                    "image/svg+xml",
+                    key=f"media_svg_{item['number']}_{item['svg_file_name']}",
+                )
+
+        position = 0
+        while position < len(attempt["media"]):
+            item = attempt["media"][position]
+            if item.get("full_width"):
+                render_item(item)
+                position += 1
+                continue
+            row = []
+            while (
+                position < len(attempt["media"])
+                and not attempt["media"][position].get("full_width")
+                and len(row) < 2
+            ):
+                row.append(attempt["media"][position])
+                position += 1
+            for column, row_item in zip(st.columns(2), row):
                 with column:
-                    st.caption(f"图{item['number']}｜{item['label']}")
-                    # Comparison GIFs are encoded below Streamlit's internal
-                    # 1460 px media limit, so this native component receives
-                    # their original multi-frame bytes and retains fullscreen.
-                    st.image(item["data"], width="stretch")
-                    st.download_button(
-                        f"下载 {item['kind']}",
-                        item["data"],
-                        item["file_name"],
-                        item["mime"],
-                        key=f"media_{item['number']}_{item['file_name']}",
-                    )
-                    if item.get("svg_data"):
-                        st.download_button(
-                            "下载 SVG",
-                            item["svg_data"],
-                            item["svg_file_name"],
-                            "image/svg+xml",
-                            key=f"media_svg_{item['number']}_{item['svg_file_name']}",
-                        )
+                    render_item(row_item)
         with st.expander("查看结构化指标"):
             st.dataframe(attempt["rows"], width="stretch")
 
@@ -594,14 +645,30 @@ elif mode == "自定义多起报":
     )
 
 batch = mode != "单一起报"
-default_prompt = (
-    "使用10、20、30、40 dBZ阈值，查看6—180分钟StormDiT和风雷的CSI、POD、FAR曲线，"
-    "在20 dBZ下把三个指标放在一张图比较，并生成起报—时效评分矩阵、"
-    "Spearman变量相关性热力图、多阈值评分分布和预报率—观测率散点图，全面解读。"
-    if batch
-    else "使用10、20、30、40 dBZ阈值，查看6—180分钟的预报—观测同步动画和"
-    "CSI、POD、FAR曲线，并在20 dBZ下将三个指标放在一张图比较和解读。"
-)
+request_scope = {
+    "单一起报": "single",
+    "自定义多起报": "custom",
+    "全部起报": "all",
+}[mode]
+if request_scope == "single":
+    default_prompt = (
+        "使用10、20、30、40 dBZ阈值，查看6—180分钟的预报—观测同步动画和"
+        "CSI、POD、FAR曲线，并在20 dBZ下将三个指标放在一张图比较和解读。"
+    )
+elif request_scope == "custom":
+    default_prompt = (
+        "针对我选择的多个起报，使用20 dBZ阈值，比较6—180分钟StormDiT和风雷的"
+        "表现。为每个起报分别展示CSI、POD、FAR随预报时效变化的轨迹，并共享坐标"
+        "范围；再用配对哑铃图比较各起报在所选时效范围内的平均CSI、POD和FAR。"
+        "请逐个起报说明评分变化、模型差异和异常时效，最后总结共同特征。"
+    )
+else:
+    default_prompt = (
+        "使用10、20、30、40 dBZ阈值，查看6—180分钟StormDiT和风雷的"
+        "CSI、POD、FAR曲线，在20 dBZ下把三个指标放在一张图比较，并生成"
+        "起报—时效评分矩阵、Spearman变量相关性热力图、多阈值评分分布和"
+        "预报率—观测率散点图，全面解读。"
+    )
 prompt = st.text_area("检验要求", default_prompt)
 left, right = st.columns(2)
 run_ai = left.button("智能解析并运行", type="primary", width="stretch")
@@ -609,9 +676,13 @@ run_default = right.button("使用推荐方案", width="stretch")
 if run_ai or run_default:
     try:
         request = (
-            default_multimodel_request(batch=batch)
+            default_multimodel_request(batch=batch, scope=request_scope)
             if run_default
-            else parse_multimodel_request(prompt, batch=batch)
+            else parse_multimodel_request(
+                prompt,
+                batch=batch,
+                scope=request_scope,
+            )
         )
         if mode == "单一起报":
             if selected_case_id is None:

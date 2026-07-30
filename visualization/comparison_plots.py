@@ -333,6 +333,218 @@ def plot_multimodel_batch_multi_metric_curves(
     return fig
 
 
+def _selected_init_rows(per_case: pd.DataFrame, threshold: float) -> pd.DataFrame:
+    if per_case.empty:
+        raise ValueError("selected-initialization data is empty")
+    subset = pd.DataFrame(
+        per_case[np.isclose(per_case["threshold_dbz"], float(threshold))]
+    ).copy()
+    if subset.empty:
+        raise ValueError("diagnostic threshold is absent from selected initializations")
+    subset["init_time_bjt"] = pd.to_datetime(subset["init_time_bjt"])
+    if subset["init_time_bjt"].nunique() > 8:
+        raise ValueError("selected-initialization views support at most eight initializations")
+    return subset
+
+
+def plot_multimodel_selected_init_trajectories(
+    per_case: pd.DataFrame,
+    metrics,
+    threshold: float,
+):
+    """Facet lead-time trajectories without pooling away initialization identity."""
+    metrics = [
+        metric
+        for metric in dict.fromkeys(str(value).lower() for value in metrics)
+        if metric in METRIC_COLORS
+    ]
+    if not metrics:
+        raise ValueError("trajectory facets require CSI, POD or FAR")
+    subset = _selected_init_rows(per_case, threshold)
+    model_ids = _ordered_model_ids(subset["model_id"])
+    initializations = sorted(subset["init_time_bjt"].unique())
+    if len(initializations) <= 3:
+        column_count = len(initializations)
+    elif len(initializations) == 4:
+        column_count = 2
+    elif len(initializations) <= 6:
+        column_count = 3
+    else:
+        column_count = 4
+    row_count = int(np.ceil(len(initializations) / column_count))
+    fig, axes = plt.subplots(
+        row_count,
+        column_count,
+        figsize=(max(6.2, 4.45 * column_count), 3.65 * row_count),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
+    axes_flat = list(axes.flat)
+    all_leads = sorted(int(value) for value in subset["lead_minutes"].unique())
+    for axis, initialization in zip(axes_flat, initializations):
+        init_rows = subset[subset["init_time_bjt"] == initialization]
+        for metric in metrics:
+            for model_id in model_ids:
+                rows = pd.DataFrame(
+                    init_rows[init_rows["model_id"] == model_id]
+                ).sort_values("lead_minutes")
+                if rows.empty:
+                    continue
+                axis.plot(
+                    rows["lead_minutes"],
+                    rows[metric],
+                    color=METRIC_COLORS[metric],
+                    markersize=2.8,
+                    **MODEL_STYLES[model_id],
+                )
+        timestamp = pd.Timestamp(initialization)
+        axis.set_title(f"Initialization {timestamp:%m-%d %H:%M} BJT", loc="left")
+        axis.set(
+            xlim=(min(all_leads), max(all_leads)),
+            ylim=(0.0, 1.0),
+            xlabel="Lead time (min)",
+            ylabel="Categorical score",
+        )
+        style_axes(axis)
+    for axis in axes_flat[len(initializations) :]:
+        axis.set_visible(False)
+    model_legend = fig.legend(
+        handles=model_legend_handles(model_ids),
+        title="Forecast product",
+        loc="upper right",
+        bbox_to_anchor=(0.985, 0.985),
+        frameon=False,
+        ncol=len(model_ids),
+    )
+    fig.add_artist(model_legend)
+    fig.legend(
+        handles=[
+            Line2D(
+                [0],
+                [0],
+                color=METRIC_COLORS[metric],
+                linewidth=2.2,
+                label=METRIC_LABELS[metric],
+            )
+            for metric in metrics
+        ],
+        title="Metric",
+        loc="upper left",
+        bbox_to_anchor=(0.015, 0.985),
+        frameon=False,
+        ncol=len(metrics),
+    )
+    fig.suptitle(
+        f"Selected-initialization score trajectories at {float(threshold):g} dBZ",
+        fontsize=15,
+        fontweight="bold",
+    )
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.91))
+    return fig
+
+
+def plot_multimodel_selected_init_dumbbells(
+    per_case: pd.DataFrame,
+    metrics,
+    threshold: float,
+):
+    """Compare lead-mean scores by selected initialization without pooling cases."""
+    metrics = [
+        metric
+        for metric in dict.fromkeys(str(value).lower() for value in metrics)
+        if metric in METRIC_COLORS
+    ]
+    if not metrics:
+        raise ValueError("dumbbell comparison requires CSI, POD or FAR")
+    subset = _selected_init_rows(per_case, threshold)
+    model_ids = _ordered_model_ids(subset["model_id"])
+    initializations = sorted(subset["init_time_bjt"].unique())
+    means = (
+        subset.groupby(["init_time_bjt", "model_id"], as_index=False)[metrics]
+        .mean(numeric_only=True)
+    )
+    model_colors = {"stormdit": "#0072B2", "fenglei": "#D55E00"}
+    marker_by_model = {"stormdit": "o", "fenglei": "s"}
+    y_positions = np.arange(len(initializations))
+    fig, axes = plt.subplots(
+        1,
+        len(metrics),
+        figsize=(5.0 * len(metrics), max(4.6, 0.56 * len(initializations) + 2.5)),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
+    axes = axes[0]
+    for axis, metric in zip(axes, metrics):
+        for y_position, initialization in zip(y_positions, initializations):
+            row = means[means["init_time_bjt"] == initialization]
+            points = {
+                model_id: float(
+                    row.loc[row["model_id"] == model_id, metric].iloc[0]
+                )
+                for model_id in model_ids
+                if not row.loc[row["model_id"] == model_id, metric].empty
+            }
+            if len(points) > 1:
+                axis.plot(
+                    list(points.values()),
+                    [y_position] * len(points),
+                    color="#B8BDC7",
+                    linewidth=1.5,
+                    zorder=1,
+                )
+            for model_id, value in points.items():
+                axis.scatter(
+                    value,
+                    y_position,
+                    s=48,
+                    color=model_colors.get(model_id, "#4C566A"),
+                    marker=marker_by_model.get(model_id, "o"),
+                    edgecolor="white",
+                    linewidth=0.7,
+                    zorder=2,
+                )
+        axis.set(
+            title=METRIC_LABELS[metric],
+            xlabel="Lead-mean score",
+            xlim=(0.0, 1.0),
+            yticks=y_positions,
+        )
+        axis.set_yticklabels(
+            [pd.Timestamp(value).strftime("%m-%d %H:%M") for value in initializations]
+        )
+        style_axes(axis)
+    axes[0].set_ylabel("Selected initialization (BJT)")
+    axes[0].invert_yaxis()
+    fig.legend(
+        handles=[
+            Line2D(
+                [0],
+                [0],
+                color=model_colors.get(model_id, "#4C566A"),
+                marker=marker_by_model.get(model_id, "o"),
+                linestyle="none",
+                markersize=7,
+                label=PLOT_LABELS[model_id],
+            )
+            for model_id in model_ids
+        ],
+        title="Forecast product",
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.94),
+        frameon=False,
+        ncol=len(model_ids),
+    )
+    fig.suptitle(
+        f"Selected-initialization lead-mean scores at {float(threshold):g} dBZ",
+        fontsize=15,
+        fontweight="bold",
+    )
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.86))
+    return fig
+
+
 def plot_multimodel_score_heatmaps(
     per_case: pd.DataFrame,
     metric: str,
