@@ -244,6 +244,100 @@ def run_multimodel_case(
     }
 
 
+def common_valid_times(cases, *, lead_range=(6, 180)) -> list[datetime]:
+    """Return exact valid times shared by every selected initialization."""
+    cases = list(cases)
+    if not cases:
+        return []
+    start_lead, end_lead = map(int, lead_range)
+    valid_time_sets = []
+    for case in cases:
+        init_time = case["init_time"]
+        valid_time_sets.append(
+            {
+                init_time + timedelta(minutes=int(lead))
+                for lead in case["available_leads"]
+                if start_lead <= int(lead) <= end_lead
+            }
+        )
+    return sorted(set.intersection(*valid_time_sets))
+
+
+def run_multimodel_same_valid_time(
+    catalog: MultiModelCatalog,
+    model_ids,
+    initializations,
+    valid_time_utc: datetime,
+    bbox,
+    *,
+    thresholds=(20,),
+) -> dict:
+    """Read different initializations that verify at one exact valid time."""
+    initializations = sorted(dict.fromkeys(initializations))
+    if not 2 <= len(initializations) <= 8:
+        raise ValueError("same-valid-time comparison requires 2—8 initializations")
+    items = []
+    rows = []
+    for init_time in initializations:
+        lead_seconds = (valid_time_utc - init_time).total_seconds()
+        lead = int(round(lead_seconds / 60))
+        if (
+            lead_seconds != lead * 60
+            or lead < 6
+            or lead > 180
+            or lead % 6
+        ):
+            raise ValueError(
+                f"{valid_time_utc:%Y-%m-%d %H:%M} UTC is not a native "
+                f"6—180 minute valid time for initialization "
+                f"{init_time:%Y-%m-%d %H:%M} UTC"
+            )
+        result = run_multimodel_case(
+            catalog,
+            model_ids,
+            init_time,
+            bbox,
+            thresholds=thresholds,
+            lead_range=(lead, lead),
+            frame_leads=(lead,),
+        )
+        items.append(
+            {
+                "init_time_utc": init_time,
+                "init_time_bjt": result["context"]["init_time_bjt"],
+                "lead_minutes": lead,
+                "scores": result["per_lead"][0]["models"],
+                "frame": result["frames"][lead],
+            }
+        )
+        for model_id, threshold_map in result["per_lead"][0]["models"].items():
+            for threshold, values in threshold_map.items():
+                rows.append(
+                    {
+                        "model_id": model_id,
+                        "init_time_utc": init_time.isoformat(),
+                        "init_time_bjt": result[
+                            "context"
+                        ]["init_time_bjt"].isoformat(),
+                        "valid_time_utc": valid_time_utc.isoformat(),
+                        "lead_minutes": lead,
+                        "threshold_dbz": threshold,
+                        **values["contingency"],
+                        **{
+                            name: values.get(name)
+                            for name in (*_SCORE_COLUMNS, *_DIAGNOSTIC_COLUMNS)
+                        },
+                    }
+                )
+    return {
+        "valid_time_utc": valid_time_utc,
+        "valid_time_bjt": valid_time_utc + timedelta(hours=8),
+        "model_ids": list(dict.fromkeys(model_ids)),
+        "items": items,
+        "per_case": pd.DataFrame(rows),
+    }
+
+
 def _path_fingerprint(paths) -> str:
     digest = hashlib.sha256()
     for path in sorted({Path(value) for value in paths}):

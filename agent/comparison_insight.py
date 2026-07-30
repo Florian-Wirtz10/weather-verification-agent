@@ -19,6 +19,8 @@ _SYSTEM_PROMPT = """你是强对流预报检验平台的AI解读助手。用户�
 1. 图表导读：用“如图1所示”说明每幅图展示什么。
 2. 主要发现：按产品、阈值和时效概括均值、首末变化及双模型胜出次数。
 3. 数据分析：指出随时效和阈值的变化，并结合physical_correlations解释相关性热图。
+若 same_valid_time_comparison 非空，重点比较同一有效时间下不同起报对应的不同时效，
+只能依据其中的结构化评分和诊断量解释，不能声称直接看到了图像像素。
 CSI和POD越高越好，FAR越低越好，Bias越接近1越好。
 相关系数只能描述共同变化，不能表述为因果关系；成因只能作为待核查假设。
 不要增加“口径与边界”章节，不要提路径、代码、API或提示词。"""
@@ -153,6 +155,49 @@ def _physical_correlation_facts(
     }
 
 
+def _same_valid_time_facts(result, metrics, threshold):
+    comparison = result.get("same_valid_time_comparison")
+    if not comparison:
+        return {}
+    selected_threshold = float(threshold)
+    items = []
+    for item in comparison["items"]:
+        products = {}
+        for model_id, threshold_map in item["scores"].items():
+            values = threshold_map.get(selected_threshold)
+            if values is None:
+                continue
+            products[model_id] = {
+                **{metric: _finite(values.get(metric)) for metric in metrics},
+                **{
+                    name: _finite(values.get(name))
+                    for name in (
+                        "forecast_mean_dbz",
+                        "observation_mean_dbz",
+                        "forecast_max_dbz",
+                        "observation_max_dbz",
+                        "mean_reflectivity_error_dbz",
+                        "reflectivity_mae_dbz",
+                        "centroid_distance_km",
+                    )
+                },
+            }
+        items.append(
+            {
+                "init_time_utc": item["init_time_utc"].isoformat(timespec="minutes"),
+                "init_time_bjt": item["init_time_bjt"].isoformat(timespec="minutes"),
+                "lead_minutes": item["lead_minutes"],
+                "products": products,
+            }
+        )
+    return {
+        "valid_time_utc": comparison["valid_time_utc"].isoformat(timespec="minutes"),
+        "valid_time_bjt": comparison["valid_time_bjt"].isoformat(timespec="minutes"),
+        "threshold_dbz": selected_threshold,
+        "initializations": items,
+    }
+
+
 def build_comparison_insight_facts(
     result: Mapping[str, Any],
     requested_metrics: Sequence[str],
@@ -275,11 +320,20 @@ def build_comparison_insight_facts(
             "lead_end_minutes": int(frame["lead_minutes"].max()),
         }
         initialization = {}
-    physical_correlations = _physical_correlation_facts(
-        result.get("per_case"),
+    same_valid_time = _same_valid_time_facts(
+        result,
         metrics,
-        threshold=diagnostic_threshold_dbz,
-        method=correlation_method,
+        diagnostic_threshold_dbz,
+    ) if diagnostic_threshold_dbz is not None else {}
+    physical_correlations = (
+        {}
+        if same_valid_time
+        else _physical_correlation_facts(
+            result.get("per_case"),
+            metrics,
+            threshold=diagnostic_threshold_dbz,
+            method=correlation_method,
+        )
     )
     return {
         "context": {
@@ -294,6 +348,7 @@ def build_comparison_insight_facts(
         "requested_metrics": metrics,
         "thresholds": threshold_summaries,
         "physical_correlations": physical_correlations,
+        "same_valid_time_comparison": same_valid_time,
         "figure_catalog": list(figure_catalog or []),
     }
 
@@ -323,6 +378,12 @@ def render_comparison_deterministic_summary(facts: Mapping[str, Any]) -> str:
             f"{coverage['lead_end_minutes']} 分钟。"
         ),
     ]
+    same_valid_time = facts.get("same_valid_time_comparison") or {}
+    if same_valid_time:
+        lines.append(
+            f"空间对比固定在 {same_valid_time['valid_time_bjt']} BJT；"
+            "不同起报对应不同预报时效，并共同对照同一CREF观测。"
+        )
     for item in facts["thresholds"]:
         threshold = item["threshold_dbz"]
         for metric in facts["requested_metrics"]:

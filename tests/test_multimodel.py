@@ -83,6 +83,81 @@ def test_dual_model_catalog_uses_strict_common_leads(tmp_path):
     assert cases[0]["complete"] is False
 
 
+def test_common_valid_times_align_different_initializations():
+    first = datetime(2026, 4, 8, 0)
+    second = first + timedelta(hours=1)
+    cases = [
+        {"init_time": first, "available_leads": [60, 120, 180]},
+        {"init_time": second, "available_leads": [60, 120]},
+    ]
+
+    shared = multimodel.common_valid_times(cases)
+
+    assert shared == [
+        first + timedelta(hours=2),
+        first + timedelta(hours=3),
+    ]
+
+
+def test_same_valid_time_comparison_uses_native_lead_for_each_init(monkeypatch):
+    first = datetime(2026, 4, 8, 0)
+    second = first + timedelta(hours=1)
+    valid_time = first + timedelta(hours=2)
+    calls = []
+
+    def fake_case(
+        _catalog,
+        model_ids,
+        init_time,
+        _bbox,
+        *,
+        thresholds,
+        lead_range,
+        frame_leads,
+    ):
+        lead = lead_range[0]
+        calls.append((init_time, lead, tuple(frame_leads)))
+        return {
+            "context": {"init_time_bjt": init_time + timedelta(hours=8)},
+            "per_lead": [
+                {
+                    "models": {
+                        model_id: {
+                            20.0: {
+                                "contingency": {
+                                    "hits": 1,
+                                    "misses": 0,
+                                    "false_alarms": 0,
+                                    "correct_negatives": 1,
+                                    "valid_count": 2,
+                                    "invalid_count": 0,
+                                },
+                                "csi": 0.5,
+                            }
+                        }
+                        for model_id in model_ids
+                    }
+                }
+            ],
+            "frames": {lead: {"lead_minutes": lead}},
+        }
+
+    monkeypatch.setattr(multimodel, "run_multimodel_case", fake_case)
+    result = multimodel.run_multimodel_same_valid_time(
+        object(),
+        (MODEL_STORMDIT, MODEL_FENGLEI),
+        (first, second),
+        valid_time,
+        (29, 30, 110, 111),
+        thresholds=(20,),
+    )
+
+    assert calls == [(first, 120, (120,)), (second, 60, (60,))]
+    assert [item["lead_minutes"] for item in result["items"]] == [120, 60]
+    assert result["valid_time_bjt"] == valid_time + timedelta(hours=8)
+    assert len(result["per_case"]) == 4
+
+
 def test_case_scoring_and_persistent_cache_share_identical_samples(
     tmp_path, monkeypatch
 ):

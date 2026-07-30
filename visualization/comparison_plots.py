@@ -247,6 +247,86 @@ def render_multimodel_reflectivity_animation(frames, *, fps=2):
     )
 
 
+def plot_multimodel_same_valid_time_comparison(comparison, model_id: str):
+    """Compare forecasts from different initializations at one valid time."""
+    if model_id not in comparison["model_ids"]:
+        raise ValueError(f"model is absent from same-valid-time comparison: {model_id}")
+    items = list(comparison["items"])
+    if not items:
+        raise ValueError("same-valid-time comparison contains no initializations")
+    observation = items[0]["frame"]["observation"]
+    extent = (
+        float(observation.lon.min()),
+        float(observation.lon.max()),
+        float(observation.lat.min()),
+        float(observation.lat.max()),
+    )
+    panels = [
+        (
+            item["frame"]["forecasts"][model_id],
+            f"Init {item['init_time_bjt']:%m-%d %H:%M} BJT\n"
+            f"Lead +{item['lead_minutes']} min",
+        )
+        for item in items
+    ]
+    panels.append(
+        (
+            observation,
+            f"CREF observation\n{comparison['valid_time_bjt']:%m-%d %H:%M} BJT",
+        )
+    )
+    if len(panels) <= 3:
+        column_count = len(panels)
+    elif len(panels) == 4:
+        column_count = 2
+    elif len(panels) <= 6 or len(panels) == 9:
+        column_count = 3
+    else:
+        column_count = 4
+    row_count = int(np.ceil(len(panels) / column_count))
+    fig, axes = plt.subplots(
+        row_count,
+        column_count,
+        figsize=(5.0 * column_count, 4.4 * row_count),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+        layout="constrained",
+    )
+    axes_flat = list(axes.flat)
+    cmap, norm = _reflectivity_cmap_norm()
+    image = None
+    for axis, (field, title) in zip(axes_flat, panels):
+        image = axis.imshow(
+            _reflectivity_display_data(field.data),
+            cmap=cmap,
+            norm=norm,
+            origin="lower",
+            extent=extent,
+            aspect="auto",
+        )
+        axis.set_title(title)
+        axis.set_xlabel("Longitude")
+        axis.set_ylabel("Latitude")
+        add_admin_boundaries(axis, extent)
+    for axis in axes_flat[len(panels) :]:
+        axis.set_visible(False)
+    if image is not None:
+        fig.colorbar(
+            image,
+            ax=[axis for axis in axes_flat if axis.get_visible()],
+            label="Reflectivity (dBZ; display floor 0)",
+            shrink=0.86,
+        )
+    fig.suptitle(
+        f"{PLOT_LABELS[model_id]} forecasts from different initializations "
+        f"at one valid time | {comparison['valid_time_bjt']:%Y-%m-%d %H:%M} BJT",
+        fontsize=14,
+        fontweight="bold",
+    )
+    return fig
+
+
 def plot_multimodel_batch_score_curves(summary: pd.DataFrame, metric: str):
     if metric not in CATEGORICAL_SCORES:
         raise ValueError(f"unsupported comparison metric: {metric!r}")

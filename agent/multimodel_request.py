@@ -12,6 +12,7 @@ from openai import OpenAI
 MULTIMODEL_VIEWS = (
     "spatial_comparison",
     "reflectivity_animation",
+    "same_valid_time_comparison",
     "score_curve",
     "multi_metric_curve",
     "score_heatmap",
@@ -32,6 +33,7 @@ _SYSTEM_PROMPT = f"""你是强对流预报检验平台的受限请求规划器�
 支持图表：
 - spatial_comparison：指定单个预报时效的预报和 CREF 静态空间对比；
 - reflectivity_animation：所选时效的同步预报—观测动画；
+- same_valid_time_comparison：自定义多起报在页面所选同一有效时刻的空间对比；
 - score_curve：一个指标在多个阈值下的时效曲线；
 - multi_metric_curve：固定诊断阈值，在一张图比较CSI、POD、FAR；
 - score_heatmap：起报时刻×预报时效评分矩阵，双模型时同时给差值图；
@@ -41,16 +43,18 @@ _SYSTEM_PROMPT = f"""你是强对流预报检验平台的受限请求规划器�
 - forecast_observed_rate_distribution：预报率—观测率散点与边缘分布。
 
 规则：
-1. 单一起报支持空间图、动画和两类时效曲线；多起报/全部起报支持评分矩阵、
-   相关性、分布和预报率图，但不支持空间图和动画。
+1. 单一起报支持空间图、动画和两类时效曲线；自定义多起报默认使用
+   same_valid_time_comparison，对比不同起报在同一有效时刻的预报；
+   全部起报默认使用汇总曲线、评分矩阵、相关性、分布和预报率图。
 2. “全套、全面、演示”时：单起报选 reflectivity_animation、score_curve、
    multi_metric_curve；同步动画已经包含各时效空间对比，不重复添加任意静态帧。
    只有用户明确要求某个时效的静态空间图时，才同时选择 spatial_comparison，
    并填写 spatial_lead_minutes；只要求“一张静态空间图”但未指定时效时填 null，
-   执行层使用所选范围的首个严格匹配时效。多起报选 score_curve、
-   multi_metric_curve、score_heatmap、
+   执行层使用所选范围的首个严格匹配时效。自定义多起报选
+   same_valid_time_comparison；全部起报选 score_curve、multi_metric_curve、score_heatmap、
    variable_correlation_heatmap、score_distribution、forecast_observed_rate_scatter。
-3. 未指定指标用 [csi,pod,far]；不支持ETS。未指定阈值用 [10,20,30,40]；
+3. 未指定指标用 [csi,pod,far]；不支持ETS。自定义多起报未指定阈值时用 [20]，
+   其余范围未指定阈值时用 [10,20,30,40]；
    诊断阈值默认20并必须包含于阈值数组；评分矩阵和分布图的diagnostic_metric
    默认csi并必须包含于metrics。
 4. 未指定时效用 6—180 分钟，起止必须为6的倍数。
@@ -58,6 +62,8 @@ _SYSTEM_PROMPT = f"""你是强对流预报检验平台的受限请求规划器�
 6. 不支持的要求原样放到 unmatched_requests，不能悄悄换图。
 7. multi_metric_curve 只组合 CSI、POD、FAR；Bias需使用score_curve单独展示。
 8. 相关性方法只能是spearman或pearson，默认spearman。
+9. same_valid_time_comparison 只用于自定义多起报；有效时间由页面在所选起报的
+   严格公共有效时间中选择，LLM不能编造或改变。
 
 JSON结构：
 {{
@@ -75,16 +81,39 @@ JSON结构：
 }}"""
 
 
-def default_multimodel_request(*, batch: bool) -> dict:
+def _validate_scope(*, batch: bool, scope: str | None) -> str:
+    resolved = scope or ("all" if batch else "single")
+    if resolved not in {"single", "custom", "all"}:
+        raise ValueError("scope must be single, custom or all")
+    if batch == (resolved == "single"):
+        raise ValueError("scope is inconsistent with batch mode")
+    return resolved
+
+
+def default_multimodel_request(
+    *,
+    batch: bool,
+    scope: str | None = None,
+) -> dict:
+    scope = _validate_scope(batch=batch, scope=scope)
     return {
+        "scope": scope,
         "metrics": ["csi", "pod", "far"],
-        "thresholds_dbz": [10.0, 20.0, 30.0, 40.0],
+        "thresholds_dbz": (
+            [20.0]
+            if scope == "custom"
+            else [10.0, 20.0, 30.0, 40.0]
+        ),
         "diagnostic_threshold_dbz": 20.0,
         "diagnostic_metric": "csi",
         "lead_range_minutes": {"start": 6, "end": 180},
         "spatial_lead_minutes": None,
         "views": (
             [
+                "same_valid_time_comparison",
+            ]
+            if scope == "custom"
+            else [
                 "score_curve",
                 "multi_metric_curve",
                 "score_heatmap",
@@ -92,7 +121,7 @@ def default_multimodel_request(*, batch: bool) -> dict:
                 "score_distribution",
                 "forecast_observed_rate_scatter",
             ]
-            if batch
+            if scope == "all"
             else [
                 "reflectivity_animation",
                 "score_curve",
@@ -114,9 +143,15 @@ def _lead(value, name):
     return value
 
 
-def validate_multimodel_request(parsed, *, batch: bool) -> dict:
+def validate_multimodel_request(
+    parsed,
+    *,
+    batch: bool,
+    scope: str | None = None,
+) -> dict:
     if not isinstance(parsed, dict):
         raise ValueError("multi-model request must be a JSON object")
+    scope = _validate_scope(batch=batch, scope=scope or parsed.get("scope"))
     raw_metrics = parsed.get("metrics", ["csi", "pod", "far"])
     if not isinstance(raw_metrics, list) or not raw_metrics:
         raise ValueError("metrics must be a non-empty list")
@@ -127,7 +162,10 @@ def validate_multimodel_request(parsed, *, batch: bool) -> dict:
             raise ValueError(f"unsupported metric: {metric}")
         if metric not in metrics:
             metrics.append(metric)
-    raw_thresholds = parsed.get("thresholds_dbz", [10, 20, 30, 40])
+    raw_thresholds = parsed.get(
+        "thresholds_dbz",
+        default_multimodel_request(batch=batch, scope=scope)["thresholds_dbz"],
+    )
     if not isinstance(raw_thresholds, list) or not raw_thresholds:
         raise ValueError("thresholds_dbz must be a non-empty list")
     thresholds = []
@@ -165,7 +203,10 @@ def validate_multimodel_request(parsed, *, batch: bool) -> dict:
     if not isinstance(unmatched, list) or not all(isinstance(item, str) for item in unmatched):
         raise ValueError("unmatched_requests must be a string list")
     views = []
-    raw_views = parsed.get("views", default_multimodel_request(batch=batch)["views"])
+    raw_views = parsed.get(
+        "views",
+        default_multimodel_request(batch=batch, scope=scope)["views"],
+    )
     if not isinstance(raw_views, list):
         raise ValueError("views must be a list")
     for value in raw_views:
@@ -175,6 +216,7 @@ def validate_multimodel_request(parsed, *, batch: bool) -> dict:
         elif batch and view in {"spatial_comparison", "reflectivity_animation"}:
             unmatched.append(f"多起报模式暂不支持：{view}")
         elif not batch and view in {
+            "same_valid_time_comparison",
             "score_heatmap",
             "variable_correlation_heatmap",
             "score_distribution",
@@ -182,6 +224,8 @@ def validate_multimodel_request(parsed, *, batch: bool) -> dict:
             "forecast_observed_rate_distribution",
         }:
             unmatched.append(f"单一起报模式暂不支持：{view}")
+        elif view == "same_valid_time_comparison" and scope != "custom":
+            unmatched.append("仅自定义多起报支持：same_valid_time_comparison")
         elif view not in views:
             views.append(view)
     if (
@@ -218,6 +262,7 @@ def validate_multimodel_request(parsed, *, batch: bool) -> dict:
     ):
         raise ValueError("animation.frame_step must be 1—30")
     return {
+        "scope": scope,
         "metrics": metrics,
         "thresholds_dbz": thresholds,
         "diagnostic_threshold_dbz": diagnostic,
@@ -236,15 +281,20 @@ def parse_multimodel_request(
     user_text,
     *,
     batch: bool,
+    scope: str | None = None,
     model="deepseek-chat",
     api_key=None,
     base_url="https://api.deepseek.com",
 ) -> dict:
+    scope = _validate_scope(batch=batch, scope=scope)
     client = OpenAI(api_key=api_key or os.environ["DEEPSEEK_API_KEY"], base_url=base_url)
     response = client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {
+                "role": "system",
+                "content": f"{_SYSTEM_PROMPT}\n当前检验范围：{scope}。",
+            },
             {"role": "user", "content": str(user_text)},
         ],
         response_format={"type": "json_object"},
@@ -253,5 +303,7 @@ def parse_multimodel_request(
     if not response.choices or not response.choices[0].message.content:
         raise ValueError("DeepSeek returned an empty multi-model request")
     return validate_multimodel_request(
-        json.loads(response.choices[0].message.content), batch=batch
+        json.loads(response.choices[0].message.content),
+        batch=batch,
+        scope=scope,
     )

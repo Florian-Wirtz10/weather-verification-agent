@@ -126,3 +126,70 @@ def test_batch_facts_include_descriptive_physical_correlations():
     assert correlations["method"] == "spearman"
     assert correlations["products"]["stormdit"]["sample_count"] == 5
     assert correlations["products"]["stormdit"]["strongest_score_relationships"]
+
+
+def test_same_valid_time_facts_preserve_init_and_native_lead():
+    valid_time = datetime(2025, 4, 11, 3)
+    frame = pd.DataFrame(
+        [
+            {
+                "model_id": model_id,
+                "init_time_utc": init_time.isoformat(),
+                "lead_minutes": lead,
+                "threshold_dbz": 20.0,
+                "csi": score,
+            }
+            for init_time, lead, score in (
+                (datetime(2025, 4, 11, 1), 120, 0.4),
+                (datetime(2025, 4, 11, 2), 60, 0.6),
+            )
+            for model_id in ("stormdit", "fenglei")
+        ]
+    )
+    result = {
+        "context": {
+            "model_ids": ["stormdit", "fenglei"],
+            "model_contract": "phase8-inferred-v1",
+        },
+        "coverage": {
+            "selected_initialization_count": 2,
+            "selected_pairs": 2,
+        },
+        "per_case": frame,
+        "same_valid_time_comparison": {
+            "valid_time_utc": valid_time,
+            "valid_time_bjt": valid_time + pd.Timedelta(hours=8),
+            "items": [
+                {
+                    "init_time_utc": init_time,
+                    "init_time_bjt": init_time + pd.Timedelta(hours=8),
+                    "lead_minutes": lead,
+                    "scores": {
+                        model_id: {
+                            20.0: {
+                                "csi": score,
+                                "reflectivity_mae_dbz": 3.0,
+                            }
+                        }
+                        for model_id in ("stormdit", "fenglei")
+                    },
+                }
+                for init_time, lead, score in (
+                    (datetime(2025, 4, 11, 1), 120, 0.4),
+                    (datetime(2025, 4, 11, 2), 60, 0.6),
+                )
+            ],
+        },
+    }
+
+    facts = build_comparison_insight_facts(
+        result,
+        ["csi"],
+        diagnostic_threshold_dbz=20,
+    )
+
+    comparison = facts["same_valid_time_comparison"]
+    assert comparison["valid_time_bjt"] == "2025-04-11T11:00"
+    assert [
+        item["lead_minutes"] for item in comparison["initializations"]
+    ] == [120, 60]

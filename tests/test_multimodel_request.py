@@ -8,6 +8,7 @@ from agent.multimodel_request import (
 
 def test_single_default_includes_synchronized_animation():
     request = default_multimodel_request(batch=False)
+    assert request["scope"] == "single"
     assert request["views"] == [
         "reflectivity_animation",
         "score_curve",
@@ -19,6 +20,36 @@ def test_single_default_includes_synchronized_animation():
     assert request["diagnostic_threshold_dbz"] == 20.0
     assert request["diagnostic_metric"] == "csi"
     assert request["correlation_method"] == "spearman"
+
+
+def test_custom_default_compares_different_inits_at_one_valid_time():
+    request = default_multimodel_request(batch=True, scope="custom")
+    assert request["scope"] == "custom"
+    assert request["views"] == ["same_valid_time_comparison"]
+    assert request["thresholds_dbz"] == [20.0]
+
+
+def test_all_default_keeps_population_views():
+    request = default_multimodel_request(batch=True, scope="all")
+    assert request["scope"] == "all"
+    assert request["views"] == [
+        "score_curve",
+        "multi_metric_curve",
+        "score_heatmap",
+        "variable_correlation_heatmap",
+        "score_distribution",
+        "forecast_observed_rate_scatter",
+    ]
+
+
+def test_same_valid_time_view_is_custom_only():
+    parsed = default_multimodel_request(batch=True, scope="all")
+    parsed["views"] = ["same_valid_time_comparison"]
+    request = validate_multimodel_request(parsed, batch=True, scope="all")
+    assert request["views"] == []
+    assert request["unmatched_requests"] == [
+        "仅自定义多起报支持：same_valid_time_comparison"
+    ]
 
 
 def test_animation_subsumes_unrequested_static_spatial_frame():

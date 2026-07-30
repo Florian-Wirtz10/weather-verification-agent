@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from io import BytesIO
 import os
 import zipfile
@@ -26,7 +27,12 @@ from data_io.forecast_sources import (
     discover_multimodel_initializations,
 )
 from reports import figure_to_png, figure_to_svg
-from verification.multimodel import run_multimodel_batch, run_multimodel_case
+from verification.multimodel import (
+    common_valid_times,
+    run_multimodel_batch,
+    run_multimodel_case,
+    run_multimodel_same_valid_time,
+)
 from visualization.batch_plots import plot_forecast_observed_rate_distribution
 from visualization.comparison_plots import (
     plot_multimodel_batch_multi_metric_curves,
@@ -37,6 +43,7 @@ from visualization.comparison_plots import (
     plot_multimodel_score_curves,
     plot_multimodel_score_distribution,
     plot_multimodel_score_heatmaps,
+    plot_multimodel_same_valid_time_comparison,
     plot_multimodel_variable_correlation_heatmap,
     render_multimodel_reflectivity_animation,
 )
@@ -141,7 +148,7 @@ def _single_rows(result) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _add_figure(media, figure, label, stem):
+def _add_figure(media, figure, label, stem, *, full_width=False):
     try:
         media.append(
             {
@@ -151,6 +158,7 @@ def _add_figure(media, figure, label, stem):
                 "file_name": f"{stem}.png",
                 "mime": "image/png",
                 "kind": "PNG",
+                "full_width": bool(full_width),
                 "svg_data": figure_to_svg(figure),
                 "svg_file_name": f"{stem}.svg",
             }
@@ -221,6 +229,21 @@ def _single_media(result, request):
 def _batch_media(result, request):
     media = []
     views = request["views"]
+    if "same_valid_time_comparison" in views:
+        comparison = result["same_valid_time_comparison"]
+        for model_id in comparison["model_ids"]:
+            _add_figure(
+                media,
+                plot_multimodel_same_valid_time_comparison(
+                    comparison,
+                    model_id,
+                ),
+                f"{MODEL_LABELS[model_id]}不同起报在"
+                f"{comparison['valid_time_bjt']:%m-%d %H:%M} BJT的预报对比",
+                f"phase8_same_valid_{model_id}_"
+                f"{comparison['valid_time_utc']:%Y%m%d%H%M}",
+                full_width=True,
+            )
     if "score_curve" in views:
         for metric in request["metrics"]:
             _add_figure(
@@ -390,20 +413,67 @@ def _execute_batch(
     request,
     *,
     initializations,
+    comparison_valid_time,
     complete_only,
     progress_callback,
 ):
     lead = request["lead_range_minutes"]
-    result = run_multimodel_batch(
-        catalog,
-        model_ids,
-        bbox,
-        thresholds=request["thresholds_dbz"],
-        lead_range=(lead["start"], lead["end"]),
-        initializations=initializations,
-        complete_only=complete_only,
-        progress_callback=progress_callback,
-    )
+    same_valid_time_requested = "same_valid_time_comparison" in request["views"]
+    comparison = None
+    if same_valid_time_requested:
+        if initializations is None or comparison_valid_time is None:
+            raise ValueError("请选择至少两个具有共同有效时间的起报。")
+        comparison = run_multimodel_same_valid_time(
+            catalog,
+            model_ids,
+            initializations,
+            comparison_valid_time,
+            bbox,
+            thresholds=request["thresholds_dbz"],
+        )
+    if set(request["views"]) == {"same_valid_time_comparison"}:
+        result = {
+            "context": {
+                "model_ids": list(model_ids),
+                "model_labels": [MODEL_LABELS[value] for value in model_ids],
+                "model_contract": catalog.stormdit_contract,
+                "bbox": list(map(float, bbox)),
+                "thresholds_dbz": request["thresholds_dbz"],
+                "lead_range_minutes": [lead["start"], lead["end"]],
+                "sample_policy": (
+                    "common intersection"
+                    if len(model_ids) > 1
+                    else "model-specific matches"
+                ),
+            },
+            "coverage": {
+                "selected_initialization_count": len(comparison["items"]),
+                "selected_pairs": len(comparison["items"]),
+                "complete_initializations": len(comparison["items"]),
+            },
+            "per_case": comparison["per_case"],
+            "summary": pd.DataFrame(),
+            "cache": {
+                "path": "",
+                "run_key": "same-valid-time-direct",
+                "computed_initializations": len(comparison["items"]),
+                "complete": True,
+            },
+            "same_valid_time_comparison": comparison,
+        }
+    else:
+        result = run_multimodel_batch(
+            catalog,
+            model_ids,
+            bbox,
+            thresholds=request["thresholds_dbz"],
+            lead_range=(lead["start"], lead["end"]),
+            initializations=initializations,
+            complete_only=complete_only,
+            progress_callback=progress_callback,
+        )
+        if comparison is not None:
+            result["same_valid_time_comparison"] = comparison
     return _finish_attempt(
         result,
         request,
@@ -452,11 +522,25 @@ def _render(attempt):
             )
         else:
             coverage, cache = result["coverage"], result["cache"]
-            st.info(
-                f"{models}｜{coverage['selected_initialization_count']} 个起报｜"
-                f"{coverage['selected_pairs']} 组严格匹配时效｜"
-                f"本次新计算 {cache['computed_initializations']} 个起报"
-            )
+            comparison = result.get("same_valid_time_comparison")
+            if comparison and set(attempt["request"]["views"]) == {
+                "same_valid_time_comparison"
+            }:
+                lead_text = "、".join(
+                    f"+{item['lead_minutes']}" for item in comparison["items"]
+                )
+                st.info(
+                    f"{models}｜共同有效时间 "
+                    f"{comparison['valid_time_bjt']:%Y-%m-%d %H:%M} BJT｜"
+                    f"{coverage['selected_initialization_count']} 个起报｜"
+                    f"对应时效 {lead_text} 分钟"
+                )
+            else:
+                st.info(
+                    f"{models}｜{coverage['selected_initialization_count']} 个起报｜"
+                    f"{coverage['selected_pairs']} 组严格匹配时效｜"
+                    f"本次新计算 {cache['computed_initializations']} 个起报"
+                )
         if attempt["status"] == "partial":
             notes = "；".join(attempt["request"]["unmatched_requests"])
             st.warning(notes or "所选起报资料不完整，已执行可用时效。")
@@ -482,30 +566,46 @@ def _render(attempt):
             "text/markdown",
             width="stretch",
         )
-        for start in range(0, len(attempt["media"]), 2):
-            columns = st.columns(2)
-            for column, item in zip(columns, attempt["media"][start : start + 2]):
+        def render_item(item):
+            st.caption(f"图{item['number']}｜{item['label']}")
+            # Comparison GIFs are encoded below Streamlit's internal
+            # 1460 px media limit, so this native component receives
+            # their original multi-frame bytes and retains fullscreen.
+            st.image(item["data"], width="stretch")
+            st.download_button(
+                f"下载 {item['kind']}",
+                item["data"],
+                item["file_name"],
+                item["mime"],
+                key=f"media_{item['number']}_{item['file_name']}",
+            )
+            if item.get("svg_data"):
+                st.download_button(
+                    "下载 SVG",
+                    item["svg_data"],
+                    item["svg_file_name"],
+                    "image/svg+xml",
+                    key=f"media_svg_{item['number']}_{item['svg_file_name']}",
+                )
+
+        position = 0
+        while position < len(attempt["media"]):
+            item = attempt["media"][position]
+            if item.get("full_width"):
+                render_item(item)
+                position += 1
+                continue
+            row = []
+            while (
+                position < len(attempt["media"])
+                and not attempt["media"][position].get("full_width")
+                and len(row) < 2
+            ):
+                row.append(attempt["media"][position])
+                position += 1
+            for column, row_item in zip(st.columns(2), row):
                 with column:
-                    st.caption(f"图{item['number']}｜{item['label']}")
-                    # Comparison GIFs are encoded below Streamlit's internal
-                    # 1460 px media limit, so this native component receives
-                    # their original multi-frame bytes and retains fullscreen.
-                    st.image(item["data"], width="stretch")
-                    st.download_button(
-                        f"下载 {item['kind']}",
-                        item["data"],
-                        item["file_name"],
-                        item["mime"],
-                        key=f"media_{item['number']}_{item['file_name']}",
-                    )
-                    if item.get("svg_data"):
-                        st.download_button(
-                            "下载 SVG",
-                            item["svg_data"],
-                            item["svg_file_name"],
-                            "image/svg+xml",
-                            key=f"media_svg_{item['number']}_{item['svg_file_name']}",
-                        )
+                    render_item(row_item)
         with st.expander("查看结构化指标"):
             st.dataframe(attempt["rows"], width="stretch")
 
@@ -572,6 +672,7 @@ if not available_cases:
 case_by_id = {case["case_id"]: case for case in available_cases}
 selected_case_ids = None
 selected_case_id = None
+comparison_valid_time = None
 if mode == "单一起报":
     selected_case_id = st.selectbox(
         "起报时间",
@@ -583,7 +684,13 @@ elif mode == "自定义多起报":
     if len(available_cases) < 2:
         st.error("当前条件下不足两个起报，无法进行多起报比较。")
         st.stop()
-    indexes = sorted({0, len(available_cases) // 2, len(available_cases) - 1})
+    selection_count = min(3, len(available_cases))
+    middle = len(available_cases) // 2
+    start = max(
+        0,
+        min(middle - selection_count // 2, len(available_cases) - selection_count),
+    )
+    indexes = list(range(start, start + selection_count))
     selected_case_ids = st.multiselect(
         "选择起报（2—8个）",
         list(case_by_id),
@@ -592,16 +699,66 @@ elif mode == "自定义多起报":
         format_func=lambda value: _case_label(case_by_id[value]),
         on_change=_clear_result,
     )
+    selected_cases = [
+        case_by_id[value]
+        for value in selected_case_ids or []
+        if value in case_by_id
+    ]
+    shared_valid_times = (
+        common_valid_times(selected_cases)
+        if len(selected_cases) >= 2
+        else []
+    )
+    if shared_valid_times:
+
+        def _valid_time_label(value):
+            lead_text = "、".join(
+                f"{case['init_time_bjt']:%m-%d %H:%M}起报→"
+                f"+{int((value - case['init_time']).total_seconds() / 60)}分钟"
+                for case in selected_cases
+            )
+            return (
+                f"{value + timedelta(hours=8):%Y-%m-%d %H:%M} BJT"
+                f"（{value:%m-%d %H:%M} UTC）｜{lead_text}"
+            )
+
+        comparison_valid_time = st.selectbox(
+            "共同有效时间",
+            shared_valid_times,
+            index=len(shared_valid_times) // 2,
+            format_func=_valid_time_label,
+            help="各起报在该时刻均有严格匹配的原生预报，并共同对照同一张CREF观测。",
+            on_change=_clear_result,
+        )
+    elif len(selected_cases) >= 2:
+        st.warning("所选起报在6—180分钟范围内没有共同有效时间，请选择更接近的起报。")
 
 batch = mode != "单一起报"
-default_prompt = (
-    "使用10、20、30、40 dBZ阈值，查看6—180分钟StormDiT和风雷的CSI、POD、FAR曲线，"
-    "在20 dBZ下把三个指标放在一张图比较，并生成起报—时效评分矩阵、"
-    "Spearman变量相关性热力图、多阈值评分分布和预报率—观测率散点图，全面解读。"
-    if batch
-    else "使用10、20、30、40 dBZ阈值，查看6—180分钟的预报—观测同步动画和"
-    "CSI、POD、FAR曲线，并在20 dBZ下将三个指标放在一张图比较和解读。"
-)
+request_scope = {
+    "单一起报": "single",
+    "自定义多起报": "custom",
+    "全部起报": "all",
+}[mode]
+if request_scope == "single":
+    default_prompt = (
+        "使用10、20、30、40 dBZ阈值，查看6—180分钟的预报—观测同步动画和"
+        "CSI、POD、FAR曲线，并在20 dBZ下将三个指标放在一张图比较和解读。"
+    )
+elif request_scope == "custom":
+    default_prompt = (
+        "对比我选择的多个起报在页面所选同一有效时间的预报信息。"
+        "StormDiT和风雷分别生成空间对比图：每个面板对应一个起报，明确标注"
+        "起报时间和预报时效，并共同对照该有效时间的CREF观测；使用统一地理范围"
+        "和反射率色标，结合20 dBZ评分说明随着起报更新、时效缩短，回波位置、"
+        "强度和命中空报发生了什么变化。"
+    )
+else:
+    default_prompt = (
+        "使用10、20、30、40 dBZ阈值，查看6—180分钟StormDiT和风雷的"
+        "CSI、POD、FAR曲线，在20 dBZ下把三个指标放在一张图比较，并生成"
+        "起报—时效评分矩阵、Spearman变量相关性热力图、多阈值评分分布和"
+        "预报率—观测率散点图，全面解读。"
+    )
 prompt = st.text_area("检验要求", default_prompt)
 left, right = st.columns(2)
 run_ai = left.button("智能解析并运行", type="primary", width="stretch")
@@ -609,9 +766,13 @@ run_default = right.button("使用推荐方案", width="stretch")
 if run_ai or run_default:
     try:
         request = (
-            default_multimodel_request(batch=batch)
+            default_multimodel_request(batch=batch, scope=request_scope)
             if run_default
-            else parse_multimodel_request(prompt, batch=batch)
+            else parse_multimodel_request(
+                prompt,
+                batch=batch,
+                scope=request_scope,
+            )
         )
         if mode == "单一起报":
             if selected_case_id is None:
@@ -645,6 +806,7 @@ if run_ai or run_default:
                     bbox,
                     request,
                     initializations=initializations,
+                    comparison_valid_time=comparison_valid_time,
                     complete_only=complete_only,
                     progress_callback=_progress,
                 )

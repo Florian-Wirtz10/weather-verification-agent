@@ -10,6 +10,7 @@ from data_io.grid import GriddedField
 from visualization.comparison_plots import (
     plot_multimodel_forecast_observed_rate_scatter,
     plot_multimodel_multi_metric_curves,
+    plot_multimodel_same_valid_time_comparison,
     plot_multimodel_score_distribution,
     plot_multimodel_variable_correlation_heatmap,
     plot_triplet_score_curves,
@@ -77,6 +78,63 @@ def test_triplet_gif_stays_below_streamlit_resize_limit_and_keeps_frames():
     with Image.open(BytesIO(gif)) as image:
         assert image.width < 1460
         assert image.n_frames == 2
+
+
+def test_same_valid_time_plot_labels_each_init_lead_and_one_observation():
+    valid_time = datetime(2025, 4, 11, 3)
+    lat = np.array([30.0, 31.0])
+    lon = np.array([112.0, 113.0])
+
+    def field(product, init_time, lead, offset):
+        return GriddedField(
+            data=np.array([[10, 20], [30, 40]], dtype=float) + offset,
+            lat=lat,
+            lon=lon,
+            valid_time=valid_time,
+            product=product,
+            units="dBZ",
+            init_time=init_time,
+            lead_minutes=lead,
+        )
+
+    observation = field("CREF", None, None, 0)
+    items = []
+    for init_time, lead, offset in (
+        (datetime(2025, 4, 11, 0), 180, 1),
+        (datetime(2025, 4, 11, 1), 120, 2),
+        (datetime(2025, 4, 11, 2), 60, 3),
+    ):
+        items.append(
+            {
+                "init_time_utc": init_time,
+                "init_time_bjt": init_time + timedelta(hours=8),
+                "lead_minutes": lead,
+                "frame": {
+                    "forecasts": {
+                        "stormdit": field("StormDiT", init_time, lead, offset),
+                    },
+                    "observation": observation,
+                },
+            }
+        )
+    comparison = {
+        "valid_time_utc": valid_time,
+        "valid_time_bjt": valid_time + timedelta(hours=8),
+        "model_ids": ["stormdit"],
+        "items": items,
+    }
+
+    figure = plot_multimodel_same_valid_time_comparison(
+        comparison,
+        "stormdit",
+    )
+    try:
+        titles = [axis.get_title() for axis in figure.axes]
+        assert sum("Lead +" in title for title in titles) == 3
+        assert sum("CREF observation" in title for title in titles) == 1
+        assert "one valid time" in figure._suptitle.get_text()
+    finally:
+        plt.close(figure)
 
 
 def _comparison_result():
