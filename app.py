@@ -63,11 +63,11 @@ CASES = {
         "label": "2026-04-08 强对流个例",
         "forecast_dir": os.getenv(
             "FENGLEI_20260408_DIR",
-            os.getenv("FENGLEI_DAILY_DIR", "external/20260408风雷预测资料"),
+            "external/20260408风雷预测资料",
         ),
         "observation_dir": os.getenv(
             "RADAR_20260408_DIR",
-            os.getenv("RADAR_DAILY_DIR", "external/20260408观测资料"),
+            "external/20260408观测资料",
         ),
     },
 }
@@ -105,6 +105,7 @@ def _clear_result():
 def _clear_result_and_prompt():
     _clear_result()
     st.session_state.pop("verification_prompt", None)
+    st.session_state.pop("verification_prompt_context", None)
 
 
 def _case_label(case):
@@ -750,9 +751,12 @@ else:
         "起报—时效评分矩阵、Spearman变量相关性热力图、多阈值评分分布和"
         "预报率—观测率散点图，全面解读。"
     )
+prompt_context = (product_name, request_scope)
+if st.session_state.get("verification_prompt_context") != prompt_context:
+    st.session_state["verification_prompt"] = default_prompt
+    st.session_state["verification_prompt_context"] = prompt_context
 prompt = st.text_area(
     "检验要求",
-    default_prompt,
     key="verification_prompt",
 )
 left, right = st.columns(2)
