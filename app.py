@@ -76,6 +76,19 @@ PRODUCT_OPTIONS = {
     "风雷": (MODEL_FENGLEI,),
     "StormDiT vs 风雷": (MODEL_STORMDIT, MODEL_FENGLEI),
 }
+AI_PANEL_CSS = """
+<style>
+.st-key-ai_insight_panel {
+    position: sticky;
+    top: 1rem;
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    padding-right: 0.5rem;
+}
+</style>
+"""
 
 
 def _stormdit_directories() -> tuple[str, ...]:
@@ -488,10 +501,11 @@ def _render(attempt):
     if attempt.get("status") == "execution_error":
         st.error(attempt["message"])
         return
+    st.markdown(AI_PANEL_CSS, unsafe_allow_html=True)
     main, right = st.columns([3.25, 1], gap="large")
     with right:
-        st.subheader("AI 解读")
-        with st.container(height=700, border=False):
+        with st.container(key="ai_insight_panel"):
+            st.subheader("AI 解读")
             st.markdown(attempt["insight"] or attempt["fallback"])
             if attempt["insight_error"]:
                 st.caption("AI服务暂不可用，已显示由同一数字事实生成的确定性解读。")
