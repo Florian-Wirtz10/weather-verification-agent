@@ -57,8 +57,12 @@ def test_comparison_fallback_has_required_sections_and_figure_reference():
     assert "### 图表导读" in text
     assert "图1" in text
     assert "StormDiT" in text
-    assert "### 主要发现" in text
-    assert "### 数据分析" in text
+    assert "### 结论摘要" in text
+    assert "平均表现以" in text
+    assert "### 数据证据与诊断分析" in text
+    assert "均值" in text
+    assert "首值" in text
+    assert "末值" in text
     assert "口径与边界" not in text
 
 

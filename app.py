@@ -595,7 +595,11 @@ def _render(attempt):
 st.title("强对流预报检验智能体")
 with st.sidebar:
     st.header("检验区域")
-    st.caption("默认：湖北区域")
+    st.caption(
+        "默认：湖北区域\n\n"
+        "支持范围：StormDiT/双模型为 21.83—41.00°N、101.40—122.97°E；"
+        "仅风雷为 17.01—54.20°N、73.00—135.00°E。"
+    )
     lat_min = st.number_input("lat_min", value=DEFAULT_HUBEI_BBOX[0])
     lat_max = st.number_input("lat_max", value=DEFAULT_HUBEI_BBOX[1])
     lon_min = st.number_input("lon_min", value=DEFAULT_HUBEI_BBOX[2])

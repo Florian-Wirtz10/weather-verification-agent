@@ -678,13 +678,13 @@ def plot_multimodel_forecast_observed_rate_scatter(
         style_axes(axis)
     axes[0][0].set_ylabel("Forecast rate")
     handles, labels = axes[0][0].get_legend_handles_labels()
-    fig.legend(
+    axes[0][-1].legend(
         handles,
         labels,
         title="Threshold",
-        loc="lower center",
-        bbox_to_anchor=(0.5, -0.055),
-        ncols=max(1, len(thresholds)),
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        ncols=1,
         frameon=False,
     )
     fig.suptitle("Forecast rate versus observed rate")

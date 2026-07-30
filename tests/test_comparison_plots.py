@@ -229,6 +229,13 @@ def test_batch_publication_views_support_multiple_thresholds_and_correlations():
         assert "thresholds" in figures[0]._suptitle.get_text()
         assert len(figures[0].axes) == 2
         assert "Forecast rate" in figures[1]._suptitle.get_text()
+        assert figures[1].legends == []
+        assert figures[1].axes[-1].get_legend().get_title().get_text() == "Threshold"
+        figures[1].canvas.draw()
+        renderer = figures[1].canvas.get_renderer()
+        legend_box = figures[1].axes[-1].get_legend().get_window_extent(renderer)
+        xlabel_box = figures[1].axes[-1].xaxis.label.get_window_extent(renderer)
+        assert not legend_box.overlaps(xlabel_box)
         assert "Variable correlation" in figures[2]._suptitle.get_text()
         assert "Spearman" in figures[2].axes[-1].get_ylabel()
     finally:

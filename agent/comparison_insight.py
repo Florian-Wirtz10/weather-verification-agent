@@ -15,10 +15,15 @@ from verification.metrics import CATEGORICAL_SCORES
 
 _SYSTEM_PROMPT = """你是强对流预报检验平台的AI解读助手。用户消息只包含服务端已经计算好的数字事实JSON。
 不得补造数字，不得声称查看过原始像素，不得把个例或有限起报外推成模型总体结论。
-只讨论 requested_metrics 中的指标，并引用 figure_catalog 里的图号：
-1. 图表导读：用“如图1所示”说明每幅图展示什么。
-2. 主要发现：按产品、阈值和时效概括均值、首末变化及双模型胜出次数。
-3. 数据分析：指出随时效和阈值的变化，并结合physical_correlations解释相关性热图。
+只讨论 requested_metrics 中的指标，并且只输出以下三个章节，Markdown标题必须逐字使用
+“### 图表导读”“### 结论摘要”“### 数据证据与诊断分析”：
+1. 图表导读：逐图使用“如图1所示”，说明图形编码、比较对象和它能回答的问题；
+   不在这里提前罗列评分结论。
+2. 结论摘要：用2—5条简洁结论直接回答“表现怎样、谁更优、最明显的变化或异常是什么”；
+   只保留最有判断价值的关键数字，不逐项抄写全部均值、首末值和胜出次数。
+3. 数据证据与诊断分析：逐条为结论摘要提供可核对的数字证据，包括产品、阈值、时效、
+   首末变化和双模型胜出次数；再结合physical_correlations解释相关性热图，并把可能成因
+   明确写成待核查假设。不得只换一种说法重复第二部分。
 若 same_valid_time_comparison 非空，重点比较同一有效时间下不同起报对应的不同时效，
 只能依据其中的结构化评分和诊断量解释，不能声称直接看到了图像像素。
 CSI和POD越高越好，FAR越低越好，Bias越接近1越好。
@@ -357,6 +362,30 @@ def _format(value):
     return "无有限值" if value is None else f"{value:.3f}"
 
 
+def _change_text(first, last):
+    if first is None or last is None:
+        return "首末变化不可定义"
+    delta = last - first
+    if abs(delta) < 0.0005:
+        return "首末基本持平"
+    return f"由 {_format(first)} {'升至' if delta > 0 else '降至'} {_format(last)}"
+
+
+def _mean_leader(metric, products):
+    finite = [
+        (model_id, values[metric]["mean"])
+        for model_id, values in products.items()
+        if values[metric]["mean"] is not None
+    ]
+    if not finite:
+        return None
+    if metric == "far":
+        return min(finite, key=lambda item: item[1])
+    if metric == "bias_score":
+        return min(finite, key=lambda item: abs(item[1] - 1.0))
+    return max(finite, key=lambda item: item[1])
+
+
 def render_comparison_deterministic_summary(facts: Mapping[str, Any]) -> str:
     coverage = facts["coverage"]
     labels = {
@@ -370,7 +399,7 @@ def render_comparison_deterministic_summary(facts: Mapping[str, Any]) -> str:
         "### 图表导读",
         f"{guide}。",
         "",
-        "### 主要发现",
+        "### 结论摘要",
         (
             f"本次纳入 {coverage['initialization_count']} 个起报、"
             f"{coverage['matched_count']} 组严格匹配时效，"
@@ -387,22 +416,60 @@ def render_comparison_deterministic_summary(facts: Mapping[str, Any]) -> str:
     for item in facts["thresholds"]:
         threshold = item["threshold_dbz"]
         for metric in facts["requested_metrics"]:
-            fragments = [
-                f"{labels[model_id]} {_format(values[metric]['mean'])}"
-                for model_id, values in item["products"].items()
-            ]
-            lines.append(
-                f"{threshold:g} dBZ 的 {metric.upper()} 均值："
-                + "、".join(fragments)
-                + "。"
-            )
+            if len(item["products"]) > 1:
+                leader = _mean_leader(metric, item["products"])
+                if leader is not None:
+                    lines.append(
+                        f"{threshold:g} dBZ 的 {metric.upper()} 平均表现以"
+                        f"{labels[leader[0]]}更优。"
+                    )
+            else:
+                model_id, values = next(iter(item["products"].items()))
+                stats = values[metric]
+                lines.append(
+                    f"{threshold:g} dBZ 的 {labels[model_id]} {metric.upper()} "
+                    f"{_change_text(stats['first'], stats['last'])}。"
+                )
     lines.extend(
         [
             "",
-            "### 数据分析",
-            "以上结论来自页面所选起报、阈值、时效和区域的结构化评分。",
+            "### 数据证据与诊断分析",
         ]
     )
+    for item in facts["thresholds"]:
+        threshold = item["threshold_dbz"]
+        for metric in facts["requested_metrics"]:
+            fragments = []
+            for model_id, values in item["products"].items():
+                stats = values[metric]
+                fragments.append(
+                    f"{labels[model_id]}均值 {_format(stats['mean'])}，"
+                    f"首值 {_format(stats['first'])}，末值 {_format(stats['last'])}"
+                )
+            evidence = f"{threshold:g} dBZ {metric.upper()}：" + "；".join(fragments)
+            wins = item["wins_by_metric"].get(metric) or {}
+            if wins:
+                win_fragments = [
+                    f"{labels[model_id]}胜 {wins[model_id]} 次"
+                    for model_id in item["products"]
+                ]
+                evidence += "；同样本比较中" + "、".join(win_fragments)
+                evidence += f"、持平 {wins['ties']} 次"
+            lines.append(evidence + "。")
+
+    correlations = facts.get("physical_correlations") or {}
+    for model_id, values in correlations.get("products", {}).items():
+        relationships = values.get("strongest_score_relationships") or []
+        if not relationships:
+            continue
+        strongest = relationships[0]
+        lines.append(
+            f"{labels.get(model_id, model_id)}在"
+            f"{correlations['threshold_dbz']:g} dBZ下，"
+            f"{strongest['variable']}与{strongest['metric'].upper()}的"
+            f"{correlations['method'].title()}相关系数为"
+            f"{_format(strongest['coefficient'])}；这仅表示共同变化，不代表因果。"
+        )
     return "\n".join(lines)
 
 
