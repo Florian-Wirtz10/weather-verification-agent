@@ -26,6 +26,57 @@ _FENGLEI_RE = re.compile(
 _BJT_OFFSET = timedelta(hours=8)
 
 
+def catalog_source_signature(
+    *,
+    stormdit_directories,
+    fenglei_directory,
+    observation_directory,
+) -> tuple:
+    """Return a lightweight, hashable version stamp for catalog source files.
+
+    Streamlit caches the parsed catalog because indexing thousands of Fenglei
+    files on every widget interaction is wasteful.  Directory paths alone are
+    not a sufficient cache key, however: adding a new delivery under the same
+    path would otherwise leave the old catalog alive.  Flat Fenglei/CREF
+    deliveries are stamped by directory metadata and relevant file counts;
+    the much smaller nested StormDiT delivery is stamped per NPZ archive.
+    """
+
+    def flat_stamp(directory, suffixes):
+        root = Path(directory)
+        if not root.is_dir():
+            return (str(root), None, 0)
+        suffixes = tuple(value.lower() for value in suffixes)
+        count = sum(
+            entry.is_file() and entry.name.lower().endswith(suffixes) for entry in root.iterdir()
+        )
+        return (str(root), root.stat().st_mtime_ns, count)
+
+    stormdit_stamp = []
+    for directory in stormdit_directories:
+        root = Path(directory)
+        if not root.is_dir():
+            stormdit_stamp.append((str(root), None, ()))
+            continue
+        archives = []
+        for path in sorted(root.glob("*/*.npz")):
+            stat = path.stat()
+            archives.append(
+                (
+                    str(path.relative_to(root)),
+                    stat.st_size,
+                    stat.st_mtime_ns,
+                )
+            )
+        stormdit_stamp.append((str(root), root.stat().st_mtime_ns, tuple(archives)))
+
+    return (
+        tuple(stormdit_stamp),
+        flat_stamp(fenglei_directory, (".bz2",)),
+        flat_stamp(observation_directory, (".nc", ".bin")),
+    )
+
+
 @dataclass(frozen=True)
 class ForecastRecord:
     model_id: str
@@ -52,8 +103,7 @@ class MultiModelCatalog:
             sorted(
                 lead
                 for (init_time, lead), record in records.items()
-                if init_time == init_time_utc
-                and record.valid_time_utc in self.observations
+                if init_time == init_time_utc and record.valid_time_utc in self.observations
             )
         )
 
@@ -64,10 +114,7 @@ class MultiModelCatalog:
         *,
         common_only: bool,
     ) -> tuple[int, ...]:
-        lead_sets = [
-            set(self.matched_leads(model_id, init_time_utc))
-            for model_id in model_ids
-        ]
+        lead_sets = [set(self.matched_leads(model_id, init_time_utc)) for model_id in model_ids]
         if not lead_sets:
             return ()
         values = set.intersection(*lead_sets) if common_only else set.union(*lead_sets)
@@ -81,9 +128,7 @@ def index_fenglei_forecasts(directory) -> dict[tuple[datetime, int], ForecastRec
         if match is None:
             continue
         filename_init = datetime.strptime(match.group("init"), "%Y%m%d%H%M")
-        init_utc = (
-            filename_init - _BJT_OFFSET if match.group("v11") else filename_init
-        )
+        init_utc = filename_init - _BJT_OFFSET if match.group("v11") else filename_init
         lead = int(match.group("lead"))
         key = (init_utc, lead)
         if key in records:
@@ -107,9 +152,7 @@ def index_stormdit_forecasts(directories) -> dict[tuple[datetime, int], Forecast
     for init_utc, path in discover_upstream_model_files(directories).items():
         for lead in range(
             PHASE8_INFERRED_CONTRACT.step_minutes,
-            PHASE8_INFERRED_CONTRACT.prediction_count
-            * PHASE8_INFERRED_CONTRACT.step_minutes
-            + 1,
+            PHASE8_INFERRED_CONTRACT.prediction_count * PHASE8_INFERRED_CONTRACT.step_minutes + 1,
             PHASE8_INFERRED_CONTRACT.step_minutes,
         ):
             records[(init_utc, lead)] = ForecastRecord(
@@ -147,23 +190,17 @@ def discover_multimodel_initializations(
     common_only: bool,
 ) -> list[dict]:
     model_ids = tuple(model_ids)
-    init_sets = [
-        set(catalog.initializations(model_id)) for model_id in model_ids
-    ]
+    init_sets = [set(catalog.initializations(model_id)) for model_id in model_ids]
     if not init_sets:
         return []
-    initializations = (
-        set.intersection(*init_sets) if common_only else set.union(*init_sets)
-    )
+    initializations = set.intersection(*init_sets) if common_only else set.union(*init_sets)
     start_lead, end_lead = map(int, lead_range)
     expected = tuple(range(max(6, start_lead), end_lead + 1, 6))
     cases = []
     for init_time in sorted(initializations):
         leads = tuple(
             lead
-            for lead in catalog.available_leads(
-                model_ids, init_time, common_only=common_only
-            )
+            for lead in catalog.available_leads(model_ids, init_time, common_only=common_only)
             if start_lead <= lead <= end_lead
         )
         if not leads:

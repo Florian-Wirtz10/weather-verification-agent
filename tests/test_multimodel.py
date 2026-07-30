@@ -8,6 +8,7 @@ from data_io.forecast_sources import (
     MODEL_STORMDIT,
     ForecastRecord,
     MultiModelCatalog,
+    catalog_source_signature,
     discover_multimodel_initializations,
 )
 from data_io.grid import GriddedField
@@ -81,6 +82,29 @@ def test_dual_model_catalog_uses_strict_common_leads(tmp_path):
     assert cases[0]["available_leads"] == [6]
     assert cases[0]["missing_leads"] == [12]
     assert cases[0]["complete"] is False
+
+
+def test_catalog_source_signature_changes_when_new_delivery_arrives(tmp_path):
+    stormdit = tmp_path / "stormdit"
+    fenglei = tmp_path / "fenglei"
+    observations = tmp_path / "observations"
+    init_directory = stormdit / "2026040808_BJT"
+    for directory in (init_directory, fenglei, observations):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    kwargs = {
+        "stormdit_directories": (stormdit,),
+        "fenglei_directory": fenglei,
+        "observation_directory": observations,
+    }
+    before = catalog_source_signature(**kwargs)
+
+    (init_directory / "forecast_2026040808_BJT.npz").write_bytes(b"npz")
+    (fenglei / "REFMOSAIC-202604080000-006MIN.bz2").write_bytes(b"bz2")
+    (observations / "CREF_with_time_20260408_0006.nc").write_bytes(b"nc")
+    after = catalog_source_signature(**kwargs)
+
+    assert after != before
 
 
 def test_common_valid_times_align_different_initializations():
@@ -158,13 +182,9 @@ def test_same_valid_time_comparison_uses_native_lead_for_each_init(monkeypatch):
     assert len(result["per_case"]) == 4
 
 
-def test_case_scoring_and_persistent_cache_share_identical_samples(
-    tmp_path, monkeypatch
-):
+def test_case_scoring_and_persistent_cache_share_identical_samples(tmp_path, monkeypatch):
     catalog, init = _catalog(tmp_path)
-    observation = _field(
-        [[20, 0], [20, 0]], init + timedelta(minutes=6), product="CREF"
-    )
+    observation = _field([[20, 0], [20, 0]], init + timedelta(minutes=6), product="CREF")
     stormdit = _field(
         [[20, 0], [0, 0]],
         init + timedelta(minutes=6),
@@ -189,9 +209,7 @@ def test_case_scoring_and_persistent_cache_share_identical_samples(
         "read_upstream_model_forecasts",
         lambda *_args, **_kwargs: {6: stormdit},
     )
-    monkeypatch.setattr(
-        multimodel, "read_swan_mosaic", lambda *_args, **_kwargs: fenglei
-    )
+    monkeypatch.setattr(multimodel, "read_swan_mosaic", lambda *_args, **_kwargs: fenglei)
 
     result = multimodel.run_multimodel_case(
         catalog,
@@ -271,9 +289,7 @@ def test_phase8_cache_adds_physical_columns_to_legacy_database(tmp_path):
 
     migrated = multimodel._connect(cache)
     try:
-        columns = {
-            row[1] for row in migrated.execute("PRAGMA table_info(multimodel_scores)")
-        }
+        columns = {row[1] for row in migrated.execute("PRAGMA table_info(multimodel_scores)")}
     finally:
         migrated.close()
 

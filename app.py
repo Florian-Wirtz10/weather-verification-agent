@@ -24,6 +24,7 @@ from data_io.forecast_sources import (
     MODEL_LABELS,
     MODEL_STORMDIT,
     build_multimodel_catalog,
+    catalog_source_signature,
     discover_multimodel_initializations,
 )
 from reports import figure_to_png, figure_to_svg
@@ -55,12 +56,8 @@ DEFAULT_HUBEI_BBOX = (29.0, 33.5, 108.0, 116.5)
 CASES = {
     "2025-04-11": {
         "label": "2025-04-11 强对流个例",
-        "forecast_dir": os.getenv(
-            "FENGLEI_CASE_DIR", "external/20250411风雷预测资料"
-        ),
-        "observation_dir": os.getenv(
-            "RADAR_OBS_DIR", "external/20250411观测资料"
-        ),
+        "forecast_dir": os.getenv("FENGLEI_CASE_DIR", "external/20250411风雷预测资料"),
+        "observation_dir": os.getenv("RADAR_OBS_DIR", "external/20250411观测资料"),
     },
     "2026-04-08": {
         "label": "2026-04-08 强对流个例",
@@ -90,7 +87,10 @@ def _stormdit_directories() -> tuple[str, ...]:
 
 
 @st.cache_data(show_spinner="正在建立 StormDiT、风雷与CREF时空索引…")
-def _catalog(stormdit_dirs, fenglei_dir, observation_dir):
+def _catalog(stormdit_dirs, fenglei_dir, observation_dir, source_signature):
+    # ``source_signature`` intentionally participates in Streamlit's cache key.
+    # The catalog builder itself only needs the three source paths.
+    _ = source_signature
     return build_multimodel_catalog(
         stormdit_directories=stormdit_dirs,
         fenglei_directory=fenglei_dir,
@@ -100,6 +100,11 @@ def _catalog(stormdit_dirs, fenglei_dir, observation_dir):
 
 def _clear_result():
     st.session_state.pop("phase8_result", None)
+
+
+def _clear_result_and_prompt():
+    _clear_result()
+    st.session_state.pop("verification_prompt", None)
 
 
 def _case_label(case):
@@ -127,8 +132,7 @@ def _single_rows(result) -> pd.DataFrame:
                         "threshold_dbz": threshold,
                         **values["contingency"],
                         **{
-                            metric: values[metric]
-                            for metric in ("pod", "far", "csi", "bias_score")
+                            metric: values[metric] for metric in ("pod", "far", "csi", "bias_score")
                         },
                         **{
                             metric: values[metric]
@@ -171,9 +175,7 @@ def _frame_selection(leads, request):
     step = request["animation"]["frame_step"]
     selected = list(leads)[::step]
     if len(selected) > 30:
-        positions = {
-            round(index * (len(selected) - 1) / 29) for index in range(30)
-        }
+        positions = {round(index * (len(selected) - 1) / 29) for index in range(30)}
         selected = [selected[index] for index in sorted(positions)]
     return selected
 
@@ -240,8 +242,7 @@ def _batch_media(result, request):
                 ),
                 f"{MODEL_LABELS[model_id]}不同起报在"
                 f"{comparison['valid_time_bjt']:%m-%d %H:%M} BJT的预报对比",
-                f"phase8_same_valid_{model_id}_"
-                f"{comparison['valid_time_utc']:%Y%m%d%H%M}",
+                f"phase8_same_valid_{model_id}_{comparison['valid_time_utc']:%Y%m%d%H%M}",
                 full_width=True,
             )
     if "score_curve" in views:
@@ -331,9 +332,7 @@ def _batch_media(result, request):
 
 
 def _finish_attempt(result, request, media, rows):
-    catalog = [
-        {"number": item["number"], "label": item["label"]} for item in media
-    ]
+    catalog = [{"number": item["number"], "label": item["label"]} for item in media]
     facts = build_comparison_insight_facts(
         result,
         request["metrics"],
@@ -349,10 +348,7 @@ def _finish_attempt(result, request, media, rows):
     status = (
         "partial"
         if request["unmatched_requests"]
-        or (
-            "coverage" in result
-            and result["coverage"].get("complete") is False
-        )
+        or ("coverage" in result and result["coverage"].get("complete") is False)
         else "ready"
     )
     return {
@@ -370,25 +366,19 @@ def _finish_attempt(result, request, media, rows):
 def _execute_single(catalog, model_ids, case, bbox, request):
     lead = request["lead_range_minutes"]
     available = [
-        value
-        for value in case["available_leads"]
-        if lead["start"] <= value <= lead["end"]
+        value for value in case["available_leads"] if lead["start"] <= value <= lead["end"]
     ]
     if not available:
         raise ValueError("所选起报在请求的时效范围内没有严格匹配资料。")
     animation_leads = (
-        _frame_selection(available, request)
-        if "reflectivity_animation" in request["views"]
-        else []
+        _frame_selection(available, request) if "reflectivity_animation" in request["views"] else []
     )
     frame_leads = set(animation_leads)
     spatial_lead = None
     if "spatial_comparison" in request["views"]:
         spatial_lead = request["spatial_lead_minutes"] or available[0]
         if spatial_lead not in available:
-            raise ValueError(
-                f"请求的 +{spatial_lead} 分钟没有严格匹配的预报与观测资料。"
-            )
+            raise ValueError(f"请求的 +{spatial_lead} 分钟没有严格匹配的预报与观测资料。")
         frame_leads.add(spatial_lead)
     result = run_multimodel_case(
         catalog,
@@ -401,9 +391,7 @@ def _execute_single(catalog, model_ids, case, bbox, request):
     )
     result["coverage"]["animation_leads"] = animation_leads
     result["coverage"]["spatial_lead"] = spatial_lead
-    return _finish_attempt(
-        result, request, _single_media(result, request), _single_rows(result)
-    )
+    return _finish_attempt(result, request, _single_media(result, request), _single_rows(result))
 
 
 def _execute_batch(
@@ -441,9 +429,7 @@ def _execute_batch(
                 "thresholds_dbz": request["thresholds_dbz"],
                 "lead_range_minutes": [lead["start"], lead["end"]],
                 "sample_policy": (
-                    "common intersection"
-                    if len(model_ids) > 1
-                    else "model-specific matches"
+                    "common intersection" if len(model_ids) > 1 else "model-specific matches"
                 ),
             },
             "coverage": {
@@ -489,9 +475,7 @@ def _bundle(attempt):
             archive.writestr(item["file_name"], item["data"])
             if item.get("svg_data"):
                 archive.writestr(item["svg_file_name"], item["svg_data"])
-        archive.writestr(
-            "metrics.csv", attempt["rows"].to_csv(index=False).encode("utf-8-sig")
-        )
+        archive.writestr("metrics.csv", attempt["rows"].to_csv(index=False).encode("utf-8-sig"))
         archive.writestr(
             "ai_insight.md",
             (attempt["insight"] or attempt["fallback"]).encode("utf-8"),
@@ -523,12 +507,8 @@ def _render(attempt):
         else:
             coverage, cache = result["coverage"], result["cache"]
             comparison = result.get("same_valid_time_comparison")
-            if comparison and set(attempt["request"]["views"]) == {
-                "same_valid_time_comparison"
-            }:
-                lead_text = "、".join(
-                    f"+{item['lead_minutes']}" for item in comparison["items"]
-                )
+            if comparison and set(attempt["request"]["views"]) == {"same_valid_time_comparison"}:
+                lead_text = "、".join(f"+{item['lead_minutes']}" for item in comparison["items"])
                 st.info(
                     f"{models}｜共同有效时间 "
                     f"{comparison['valid_time_bjt']:%Y-%m-%d %H:%M} BJT｜"
@@ -566,6 +546,7 @@ def _render(attempt):
             "text/markdown",
             width="stretch",
         )
+
         def render_item(item):
             st.caption(f"图{item['number']}｜{item['label']}")
             # Comparison GIFs are encoded below Streamlit's internal
@@ -632,14 +613,14 @@ with product_column:
         "预报产品",
         list(PRODUCT_OPTIONS),
         index=2,
-        on_change=_clear_result,
+        on_change=_clear_result_and_prompt,
     )
 with mode_column:
     mode = st.radio(
         "检验范围",
         ["全部起报", "自定义多起报", "单一起报"],
         horizontal=True,
-        on_change=_clear_result,
+        on_change=_clear_result_and_prompt,
     )
 
 complete_only = st.checkbox(
@@ -652,10 +633,16 @@ bbox = (lat_min, lat_max, lon_min, lon_max)
 config = CASES[case_key]
 model_ids = PRODUCT_OPTIONS[product_name]
 try:
+    stormdit_dirs = _stormdit_directories()
     catalog = _catalog(
-        _stormdit_directories(),
+        stormdit_dirs,
         config["forecast_dir"],
         config["observation_dir"],
+        catalog_source_signature(
+            stormdit_directories=stormdit_dirs,
+            fenglei_directory=config["forecast_dir"],
+            observation_directory=config["observation_dir"],
+        ),
     )
     available_cases = discover_multimodel_initializations(
         catalog, model_ids, lead_range=(6, 180), common_only=len(model_ids) > 1
@@ -699,16 +686,8 @@ elif mode == "自定义多起报":
         format_func=lambda value: _case_label(case_by_id[value]),
         on_change=_clear_result,
     )
-    selected_cases = [
-        case_by_id[value]
-        for value in selected_case_ids or []
-        if value in case_by_id
-    ]
-    shared_valid_times = (
-        common_valid_times(selected_cases)
-        if len(selected_cases) >= 2
-        else []
-    )
+    selected_cases = [case_by_id[value] for value in selected_case_ids or [] if value in case_by_id]
+    shared_valid_times = common_valid_times(selected_cases) if len(selected_cases) >= 2 else []
     if shared_valid_times:
 
         def _valid_time_label(value):
@@ -739,27 +718,43 @@ request_scope = {
     "自定义多起报": "custom",
     "全部起报": "all",
 }[mode]
+product_subject = {
+    "StormDiT": "StormDiT",
+    "风雷": "风雷",
+    "StormDiT vs 风雷": "StormDiT和风雷",
+}[product_name]
 if request_scope == "single":
     default_prompt = (
-        "使用10、20、30、40 dBZ阈值，查看6—180分钟的预报—观测同步动画和"
+        f"使用10、20、30、40 dBZ阈值，查看6—180分钟{product_subject}预报"
+        "与CREF观测的同步动画和"
         "CSI、POD、FAR曲线，并在20 dBZ下将三个指标放在一张图比较和解读。"
     )
 elif request_scope == "custom":
+    spatial_instruction = (
+        "StormDiT和风雷分别生成空间对比图"
+        if len(model_ids) > 1
+        else f"为{product_subject}生成空间对比图"
+    )
     default_prompt = (
         "对比我选择的多个起报在页面所选同一有效时间的预报信息。"
-        "StormDiT和风雷分别生成空间对比图：每个面板对应一个起报，明确标注"
+        f"{spatial_instruction}：每个面板对应一个起报，明确标注"
         "起报时间和预报时效，并共同对照该有效时间的CREF观测；使用统一地理范围"
         "和反射率色标，结合20 dBZ评分说明随着起报更新、时效缩短，回波位置、"
         "强度和命中空报发生了什么变化。"
     )
 else:
+    analysis_verb = "比较" if len(model_ids) > 1 else "分析"
     default_prompt = (
-        "使用10、20、30、40 dBZ阈值，查看6—180分钟StormDiT和风雷的"
-        "CSI、POD、FAR曲线，在20 dBZ下把三个指标放在一张图比较，并生成"
+        f"使用10、20、30、40 dBZ阈值，查看6—180分钟{product_subject}的"
+        f"CSI、POD、FAR曲线，在20 dBZ下把三个指标放在一张图{analysis_verb}，并生成"
         "起报—时效评分矩阵、Spearman变量相关性热力图、多阈值评分分布和"
         "预报率—观测率散点图，全面解读。"
     )
-prompt = st.text_area("检验要求", default_prompt)
+prompt = st.text_area(
+    "检验要求",
+    default_prompt,
+    key="verification_prompt",
+)
 left, right = st.columns(2)
 run_ai = left.button("智能解析并运行", type="primary", width="stretch")
 run_default = right.button("使用推荐方案", width="stretch")
@@ -789,9 +784,7 @@ if run_ai or run_default:
             if mode == "自定义多起报":
                 if not selected_case_ids or not 2 <= len(selected_case_ids) <= 8:
                     raise ValueError("请选择2—8个起报时间。")
-                initializations = [
-                    case_by_id[value]["init_time"] for value in selected_case_ids
-                ]
+                initializations = [case_by_id[value]["init_time"] for value in selected_case_ids]
             else:
                 initializations = None
             progress = st.progress(0.0)
