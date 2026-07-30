@@ -196,7 +196,10 @@ def plot_multimodel_reflectivity_frame(frame, *, title=None):
     fig, axes = plt.subplots(
         1,
         len(panels),
-        figsize=(5.2 * len(panels), 5.0),
+        # At GIF encoding's 100 dpi, three panels are exactly 1440 px wide.
+        # This stays below Streamlit's 1460 px media-processing threshold;
+        # crossing that threshold makes Pillow resize only the first GIF frame.
+        figsize=(4.8 * len(panels), 5.0),
         sharex=True,
         sharey=True,
         layout="constrained",

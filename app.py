@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 from io import BytesIO
 import os
 import zipfile
@@ -488,28 +487,10 @@ def _render(attempt):
             for column, item in zip(columns, attempt["media"][start : start + 2]):
                 with column:
                     st.caption(f"图{item['number']}｜{item['label']}")
-                    if item["mime"] == "image/gif":
-                        # Streamlit 1.59 still sends GIFs through an image
-                        # processing path that can expose only frame one.
-                        # Give the original bytes directly to the browser so
-                        # its native GIF decoder controls playback.
-                        encoded = base64.b64encode(item["data"]).decode("ascii")
-                        gif_url = f"data:image/gif;base64,{encoded}"
-                        st.markdown(
-                            '<a href="'
-                            + gif_url
-                            + '" target="_blank" rel="noopener" '
-                            'title="点击在新标签页全屏查看动画">'
-                            '<img alt="预报与观测同步动画" src="'
-                            + gif_url
-                            + '" style="display:block;width:100%;height:auto;'
-                            'cursor:zoom-in;" />'
-                            "</a>",
-                            unsafe_allow_html=True,
-                        )
-                        st.caption("点击动画可在新标签页放大查看，并保持 GIF 播放。")
-                    else:
-                        st.image(item["data"], width="stretch")
+                    # Comparison GIFs are encoded below Streamlit's internal
+                    # 1460 px media limit, so this native component receives
+                    # their original multi-frame bytes and retains fullscreen.
+                    st.image(item["data"], width="stretch")
                     st.download_button(
                         f"下载 {item['kind']}",
                         item["data"],

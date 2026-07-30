@@ -1,14 +1,19 @@
-from datetime import datetime
+from datetime import datetime, timedelta
+from io import BytesIO
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+from PIL import Image
 
+from data_io.grid import GriddedField
 from visualization.comparison_plots import (
     plot_multimodel_forecast_observed_rate_scatter,
     plot_multimodel_multi_metric_curves,
     plot_multimodel_score_distribution,
     plot_multimodel_variable_correlation_heatmap,
     plot_triplet_score_curves,
+    render_multimodel_reflectivity_animation,
 )
 
 
@@ -35,6 +40,43 @@ def test_triplet_score_plot_uses_product_line_styles_without_grid():
         assert not any(line.get_visible() for line in axis.get_xgridlines())
     finally:
         plt.close(figure)
+
+
+def test_triplet_gif_stays_below_streamlit_resize_limit_and_keeps_frames():
+    init_time = datetime(2025, 4, 11)
+    lat = np.array([30.0, 31.0])
+    lon = np.array([112.0, 113.0])
+    frames = []
+    for lead, offset in ((6, 0.0), (12, 8.0)):
+        valid_time = init_time + timedelta(minutes=lead)
+
+        def field(product, values):
+            return GriddedField(
+                data=np.asarray(values, dtype=float) + offset,
+                lat=lat,
+                lon=lon,
+                valid_time=valid_time,
+                product=product,
+                units="dBZ",
+                init_time=init_time,
+                lead_minutes=lead,
+            )
+
+        frames.append(
+            {
+                "lead_minutes": lead,
+                "forecasts": {
+                    "stormdit": field("StormDiT", [[10, 20], [30, 40]]),
+                    "fenglei": field("Fenglei", [[12, 18], [28, 38]]),
+                },
+                "observation": field("CREF", [[8, 22], [32, 36]]),
+            }
+        )
+
+    gif = render_multimodel_reflectivity_animation(frames, fps=2)
+    with Image.open(BytesIO(gif)) as image:
+        assert image.width < 1460
+        assert image.n_frames == 2
 
 
 def _comparison_result():
