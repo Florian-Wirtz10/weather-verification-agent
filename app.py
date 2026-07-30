@@ -175,8 +175,7 @@ def _single_media(result, request):
     init = result["context"]["init_time_utc"]
     views = request["views"]
     if "spatial_comparison" in views:
-        leads = result["coverage"]["selected_leads"]
-        target = leads[len(leads) // 2]
+        target = result["coverage"]["spatial_lead"]
         _add_figure(
             media,
             plot_multimodel_reflectivity_frame(result["frames"][target]),
@@ -360,8 +359,14 @@ def _execute_single(catalog, model_ids, case, bbox, request):
         else []
     )
     frame_leads = set(animation_leads)
+    spatial_lead = None
     if "spatial_comparison" in request["views"]:
-        frame_leads.add(available[len(available) // 2])
+        spatial_lead = request["spatial_lead_minutes"] or available[0]
+        if spatial_lead not in available:
+            raise ValueError(
+                f"请求的 +{spatial_lead} 分钟没有严格匹配的预报与观测资料。"
+            )
+        frame_leads.add(spatial_lead)
     result = run_multimodel_case(
         catalog,
         model_ids,
@@ -372,6 +377,7 @@ def _execute_single(catalog, model_ids, case, bbox, request):
         frame_leads=sorted(frame_leads),
     )
     result["coverage"]["animation_leads"] = animation_leads
+    result["coverage"]["spatial_lead"] = spatial_lead
     return _finish_attempt(
         result, request, _single_media(result, request), _single_rows(result)
     )
@@ -481,7 +487,13 @@ def _render(attempt):
             for column, item in zip(columns, attempt["media"][start : start + 2]):
                 with column:
                     st.caption(f"图{item['number']}｜{item['label']}")
-                    st.image(item["data"], width="stretch")
+                    if item["mime"] == "image/gif":
+                        # Width processing can re-encode a GIF through Pillow
+                        # and flatten it to frame one. The original bytes keep
+                        # playback and Streamlit's native fullscreen viewer.
+                        st.image(item["data"])
+                    else:
+                        st.image(item["data"], width="stretch")
                     st.download_button(
                         f"下载 {item['kind']}",
                         item["data"],
@@ -590,8 +602,8 @@ default_prompt = (
     "在20 dBZ下把三个指标放在一张图比较，并生成起报—时效评分矩阵、"
     "Spearman变量相关性热力图、多阈值评分分布和预报率—观测率散点图，全面解读。"
     if batch
-    else "使用10、20、30、40 dBZ阈值，查看6—180分钟的预报—观测空间对比、"
-    "同步动画和CSI、POD、FAR曲线，并在20 dBZ下将三个指标放在一张图比较和解读。"
+    else "使用10、20、30、40 dBZ阈值，查看6—180分钟的预报—观测同步动画和"
+    "CSI、POD、FAR曲线，并在20 dBZ下将三个指标放在一张图比较和解读。"
 )
 prompt = st.text_area("检验要求", default_prompt)
 left, right = st.columns(2)

@@ -30,7 +30,7 @@ _SYSTEM_PROMPT = f"""你是强对流预报检验平台的受限请求规划器�
 
 支持指标：{list(MULTIMODEL_METRICS)}
 支持图表：
-- spatial_comparison：同一有效时刻的预报和 CREF 空间对比；
+- spatial_comparison：指定单个预报时效的预报和 CREF 静态空间对比；
 - reflectivity_animation：所选时效的同步预报—观测动画；
 - score_curve：一个指标在多个阈值下的时效曲线；
 - multi_metric_curve：固定诊断阈值，在一张图比较CSI、POD、FAR；
@@ -43,8 +43,12 @@ _SYSTEM_PROMPT = f"""你是强对流预报检验平台的受限请求规划器�
 规则：
 1. 单一起报支持空间图、动画和两类时效曲线；多起报/全部起报支持评分矩阵、
    相关性、分布和预报率图，但不支持空间图和动画。
-2. “全套、全面、演示”时：单起报选 spatial_comparison、reflectivity_animation、score_curve；
-   多起报选 score_curve、multi_metric_curve、score_heatmap、
+2. “全套、全面、演示”时：单起报选 reflectivity_animation、score_curve、
+   multi_metric_curve；同步动画已经包含各时效空间对比，不重复添加任意静态帧。
+   只有用户明确要求某个时效的静态空间图时，才同时选择 spatial_comparison，
+   并填写 spatial_lead_minutes；只要求“一张静态空间图”但未指定时效时填 null，
+   执行层使用所选范围的首个严格匹配时效。多起报选 score_curve、
+   multi_metric_curve、score_heatmap、
    variable_correlation_heatmap、score_distribution、forecast_observed_rate_scatter。
 3. 未指定指标用 [csi,pod,far]；不支持ETS。未指定阈值用 [10,20,30,40]；
    诊断阈值默认20并必须包含于阈值数组；评分矩阵和分布图的diagnostic_metric
@@ -62,7 +66,8 @@ JSON结构：
   "diagnostic_threshold_dbz": 20,
   "diagnostic_metric": "csi",
   "lead_range_minutes": {{"start": 6, "end": 180}},
-  "views": ["spatial_comparison","reflectivity_animation","score_curve","multi_metric_curve"],
+  "spatial_lead_minutes": null,
+  "views": ["reflectivity_animation","score_curve","multi_metric_curve"],
   "correlation_method": "spearman",
   "animation": {{"fps": 2, "frame_step": 1}},
   "unmatched_requests": [],
@@ -77,6 +82,7 @@ def default_multimodel_request(*, batch: bool) -> dict:
         "diagnostic_threshold_dbz": 20.0,
         "diagnostic_metric": "csi",
         "lead_range_minutes": {"start": 6, "end": 180},
+        "spatial_lead_minutes": None,
         "views": (
             [
                 "score_curve",
@@ -88,7 +94,6 @@ def default_multimodel_request(*, batch: bool) -> dict:
             ]
             if batch
             else [
-                "spatial_comparison",
                 "reflectivity_animation",
                 "score_curve",
                 "multi_metric_curve",
@@ -151,6 +156,11 @@ def validate_multimodel_request(parsed, *, batch: bool) -> dict:
     end = _lead(lead_range.get("end", 180), "lead end")
     if start > end:
         raise ValueError("lead start cannot exceed lead end")
+    spatial_lead = parsed.get("spatial_lead_minutes")
+    if spatial_lead is not None:
+        spatial_lead = _lead(spatial_lead, "spatial lead")
+        if not start <= spatial_lead <= end:
+            raise ValueError("spatial_lead_minutes must be inside lead_range_minutes")
     unmatched = parsed.get("unmatched_requests", [])
     if not isinstance(unmatched, list) or not all(isinstance(item, str) for item in unmatched):
         raise ValueError("unmatched_requests must be a string list")
@@ -174,6 +184,14 @@ def validate_multimodel_request(parsed, *, batch: bool) -> dict:
             unmatched.append(f"单一起报模式暂不支持：{view}")
         elif view not in views:
             views.append(view)
+    if (
+        "spatial_comparison" in views
+        and "reflectivity_animation" in views
+        and spatial_lead is None
+    ):
+        # The animation already contains the spatial comparison at every
+        # selected lead. Do not invent an unexplained standalone middle frame.
+        views.remove("spatial_comparison")
     if "multi_metric_curve" in views:
         combined = [metric for metric in metrics if metric in COMBINABLE_METRICS]
         if len(combined) < 2:
@@ -205,6 +223,7 @@ def validate_multimodel_request(parsed, *, batch: bool) -> dict:
         "diagnostic_threshold_dbz": diagnostic,
         "diagnostic_metric": diagnostic_metric,
         "lead_range_minutes": {"start": start, "end": end},
+        "spatial_lead_minutes": spatial_lead,
         "views": views,
         "correlation_method": correlation_method,
         "animation": {"fps": fps, "frame_step": frame_step},
