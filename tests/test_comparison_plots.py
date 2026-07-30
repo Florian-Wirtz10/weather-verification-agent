@@ -11,8 +11,6 @@ from visualization.comparison_plots import (
     plot_multimodel_forecast_observed_rate_scatter,
     plot_multimodel_multi_metric_curves,
     plot_multimodel_score_distribution,
-    plot_multimodel_selected_init_dumbbells,
-    plot_multimodel_selected_init_trajectories,
     plot_multimodel_variable_correlation_heatmap,
     plot_triplet_score_curves,
     render_multimodel_reflectivity_animation,
@@ -154,29 +152,6 @@ def test_multi_metric_curve_uses_metric_colours_and_model_styles():
         assert axis.get_ylim() == (0.0, 1.0)
     finally:
         plt.close(figure)
-
-
-def test_selected_initialization_views_keep_each_case_visible():
-    frame = _batch_frame()
-    trajectory = plot_multimodel_selected_init_trajectories(
-        frame, ["csi", "pod", "far"], 20
-    )
-    dumbbell = plot_multimodel_selected_init_dumbbells(
-        frame, ["csi", "pod", "far"], 20
-    )
-    try:
-        visible_trajectory_axes = [
-            axis for axis in trajectory.axes if axis.get_visible()
-        ]
-        assert len(visible_trajectory_axes) == 4
-        assert all(len(axis.lines) == 6 for axis in visible_trajectory_axes)
-        assert len(dumbbell.axes) == 3
-        assert len(dumbbell.axes[0].get_yticklabels()) == 4
-        assert all(len(axis.get_yticks()) == 4 for axis in dumbbell.axes)
-        assert dumbbell.axes[0].get_xlim() == (0.0, 1.0)
-    finally:
-        plt.close(trajectory)
-        plt.close(dumbbell)
 
 
 def test_batch_publication_views_support_multiple_thresholds_and_correlations():

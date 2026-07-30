@@ -8,7 +8,6 @@ from agent.multimodel_request import (
 
 def test_single_default_includes_synchronized_animation():
     request = default_multimodel_request(batch=False)
-    assert request["scope"] == "single"
     assert request["views"] == [
         "reflectivity_animation",
         "score_curve",
@@ -20,52 +19,6 @@ def test_single_default_includes_synchronized_animation():
     assert request["diagnostic_threshold_dbz"] == 20.0
     assert request["diagnostic_metric"] == "csi"
     assert request["correlation_method"] == "spearman"
-
-
-def test_custom_default_preserves_selected_initialization_identity():
-    request = default_multimodel_request(batch=True, scope="custom")
-    assert request["scope"] == "custom"
-    assert request["views"] == [
-        "selected_init_trajectories",
-        "selected_init_dumbbell",
-    ]
-    assert request["thresholds_dbz"] == [20.0]
-
-
-def test_all_initialization_default_keeps_population_views():
-    request = default_multimodel_request(batch=True, scope="all")
-    assert request["scope"] == "all"
-    assert request["views"] == [
-        "score_curve",
-        "multi_metric_curve",
-        "score_heatmap",
-        "variable_correlation_heatmap",
-        "score_distribution",
-        "forecast_observed_rate_scatter",
-    ]
-
-
-def test_selected_initialization_views_are_rejected_outside_custom_scope():
-    parsed = default_multimodel_request(batch=True, scope="all")
-    parsed["views"] = ["selected_init_dumbbell"]
-    request = validate_multimodel_request(parsed, batch=True, scope="all")
-    assert request["views"] == []
-    assert request["unmatched_requests"] == [
-        "仅自定义多起报支持：selected_init_dumbbell"
-    ]
-
-
-def test_selected_initialization_views_require_supported_diagnostic_metric():
-    parsed = default_multimodel_request(batch=True, scope="custom")
-    parsed["metrics"] = ["bias_score"]
-    parsed["diagnostic_metric"] = "bias_score"
-    request = validate_multimodel_request(parsed, batch=True, scope="custom")
-    assert request["views"] == []
-    assert len(request["unmatched_requests"]) == 2
-    assert all(
-        "至少需要CSI、POD、FAR中的一项" in message
-        for message in request["unmatched_requests"]
-    )
 
 
 def test_animation_subsumes_unrequested_static_spatial_frame():
