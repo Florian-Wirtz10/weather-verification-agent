@@ -95,7 +95,18 @@ def test_streamlit_initial_screen_has_final_phase8_controls(monkeypatch):
 
     assert not app.exception
     assert [item.value for item in app.number_input] == [29.0, 33.5, 108.0, 116.5]
-    assert app.selectbox[1].options == ["StormDiT", "风雷", "StormDiT vs 风雷"]
+    assert app.multiselect[0].options == [
+        "StormDiT",
+        "风雷",
+        "ConvLSTM",
+        "PredRNN",
+        "Earthformer",
+        "NowCastNet",
+        "SimVP",
+        "DiffCast",
+        "Persistence",
+    ]
+    assert app.multiselect[0].value == ["StormDiT", "风雷"]
     assert app.radio[0].options == ["全部起报", "自定义多起报", "单一起报"]
     assert app.checkbox[0].value is True
     button_labels = {button.label for button in app.button}
@@ -103,7 +114,6 @@ def test_streamlit_initial_screen_has_final_phase8_controls(monkeypatch):
     assert "智能解析并运行" not in button_labels
     assert "使用推荐方案" not in button_labels
     assert {"恢复湖北默认范围", "恢复推荐要求", "生成检验结果"} <= button_labels
-    assert any("支持范围：" in item.value for item in app.caption)
     assert any("强对流预报智能检验平台" in item.value for item in app.markdown)
 
 
@@ -113,11 +123,11 @@ def test_default_prompt_tracks_selected_product(monkeypatch):
     app = AppTest.from_file("app.py", default_timeout=30).run()
     assert "StormDiT和风雷" in app.text_area[0].value
 
-    app = app.selectbox[1].set_value("StormDiT").run()
+    app = app.multiselect[0].set_value(["StormDiT"]).run()
     assert "StormDiT的CSI" in app.text_area[0].value
     assert "StormDiT和风雷" not in app.text_area[0].value
 
-    app = app.selectbox[1].set_value("风雷").run()
+    app = app.multiselect[0].set_value(["风雷"]).run()
     assert "风雷的CSI" in app.text_area[0].value
     assert "StormDiT" not in app.text_area[0].value
 
@@ -139,7 +149,7 @@ def test_single_stormdit_result_has_ai_and_downloads(monkeypatch):
     )
 
     app = AppTest.from_file("app.py", default_timeout=30).run()
-    app = app.selectbox[1].set_value("StormDiT").run()
+    app = app.multiselect[0].set_value(["StormDiT"]).run()
     app = app.radio[0].set_value("单一起报").run()
     app = _button(app, "生成检验结果").click().run()
 
@@ -207,7 +217,7 @@ def test_two_model_batch_uses_final_product_name(monkeypatch):
     )
 
     app = AppTest.from_file("app.py", default_timeout=30).run()
-    app = app.selectbox[1].set_value("StormDiT vs 风雷").run()
+    app = app.multiselect[0].set_value(["StormDiT", "风雷"]).run()
     app = _button(app, "生成检验结果").click().run()
 
     assert not app.exception

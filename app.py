@@ -27,6 +27,7 @@ from data_io.forecast_sources import (
     catalog_source_signature,
     discover_multimodel_initializations,
 )
+from data_io.benchmark import BENCHMARK_MODEL_LABELS
 from reports import figure_to_png, figure_to_svg
 from verification.multimodel import (
     common_valid_times,
@@ -71,11 +72,22 @@ CASES = {
         ),
     },
 }
-PRODUCT_OPTIONS = {
-    "StormDiT": (MODEL_STORMDIT,),
-    "风雷": (MODEL_FENGLEI,),
-    "StormDiT vs 风雷": (MODEL_STORMDIT, MODEL_FENGLEI),
+BENCHMARK_LABEL_TO_MODEL = {label: model for model, label in BENCHMARK_MODEL_LABELS.items()}
+CASE_MODEL_OPTIONS = {
+    "2025-04-11": [
+        "StormDiT",
+        "风雷",
+        "ConvLSTM",
+        "PredRNN",
+        "Earthformer",
+        "NowCastNet",
+        "SimVP",
+        "DiffCast",
+        "Persistence",
+    ],
+    "2026-04-08": ["StormDiT", "风雷"],
 }
+BENCHMARK_ONLY_MODELS = set(CASE_MODEL_OPTIONS["2025-04-11"][2:])
 APP_CSS = """
 <style>
 :root {
@@ -308,6 +320,14 @@ def _clear_result_and_prompt():
     _clear_result()
     st.session_state.pop("verification_prompt", None)
     st.session_state.pop("verification_prompt_context", None)
+    st.session_state.pop("benchmark_attempt", None)
+    st.session_state.pop("benchmark_prompt", None)
+    st.session_state.pop("benchmark_prompt_context", None)
+
+
+def _case_changed():
+    _clear_result_and_prompt()
+    st.session_state.pop("selected_models", None)
 
 
 def _case_label(case):
@@ -846,63 +866,88 @@ def _reset_bbox():
     _clear_result()
 
 
-with st.sidebar:
-    st.header("检验区域", divider="blue")
-    st.caption("默认采用湖北区域，可直接输入经纬度调整检验范围。")
-    latitude_columns = st.columns(2)
-    lat_min = latitude_columns[0].number_input(
-        "南界（°N）", value=DEFAULT_HUBEI_BBOX[0], step=0.1, format="%.2f", key="lat_min"
-    )
-    lat_max = latitude_columns[1].number_input(
-        "北界（°N）", value=DEFAULT_HUBEI_BBOX[1], step=0.1, format="%.2f", key="lat_max"
-    )
-    longitude_columns = st.columns(2)
-    lon_min = longitude_columns[0].number_input(
-        "西界（°E）", value=DEFAULT_HUBEI_BBOX[2], step=0.1, format="%.2f", key="lon_min"
-    )
-    lon_max = longitude_columns[1].number_input(
-        "东界（°E）", value=DEFAULT_HUBEI_BBOX[3], step=0.1, format="%.2f", key="lon_max"
-    )
-    st.button("恢复湖北默认范围", on_click=_reset_bbox, width="stretch")
-    with st.expander("查看产品支持范围"):
-        st.caption(
-            "支持范围：StormDiT/双模型为 21.83—41.00°N、101.40—122.97°E；"
-            "仅风雷为 17.01—54.20°N、73.00—135.00°E。"
-        )
-
 with st.container(key="configuration_card"):
-    _step_header(1, "选择检验任务", "确定个例、预报产品和样本组织方式。")
-    case_column, product_column, mode_column = st.columns([1.15, 1.05, 1.55])
+    _step_header(1, "选择检验任务", "确定个例、预报模型和样本组织方式。")
+    case_column, product_column, mode_column = st.columns([1.1, 1.8, 1.5])
     with case_column:
         case_key = st.selectbox(
             "检验个例",
             list(CASES),
             format_func=lambda value: CASES[value]["label"],
-            on_change=_clear_result,
+            on_change=_case_changed,
         )
     with product_column:
-        product_name = st.selectbox(
-            "预报产品",
-            list(PRODUCT_OPTIONS),
-            index=2,
+        selected_model_labels = st.multiselect(
+            "预报模型",
+            CASE_MODEL_OPTIONS[case_key],
+            default=["StormDiT", "风雷"],
+            key="selected_models",
             on_change=_clear_result_and_prompt,
         )
     with mode_column:
         mode = st.radio(
-            "检验方式",
+            "检验范围",
             ["全部起报", "自定义多起报", "单一起报"],
             horizontal=True,
             on_change=_clear_result_and_prompt,
         )
-    complete_only = st.checkbox(
-        "仅使用 6—180 分钟资料完整的起报",
-        value=True,
-        help="关闭后可选择资料不完整的起报；缺帧不会被时间插值。",
-        on_change=_clear_result,
+
+if not selected_model_labels:
+    st.error("请至少选择一个预报模型。")
+    st.stop()
+
+benchmark_mode = bool(set(selected_model_labels) & BENCHMARK_ONLY_MODELS)
+with st.sidebar:
+    st.header("检验区域", divider="blue")
+    if benchmark_mode:
+        st.caption("武汉固定区域：28.70—32.51°N，112.38—116.19°E")
+        lat_min = st.number_input("南界（°N）", value=28.70, disabled=True)
+        lat_max = st.number_input("北界（°N）", value=32.51, disabled=True)
+        lon_min = st.number_input("西界（°E）", value=112.38, disabled=True)
+        lon_max = st.number_input("东界（°E）", value=116.19, disabled=True)
+    else:
+        st.caption("默认采用湖北区域，可直接输入经纬度调整检验范围。")
+        latitude_columns = st.columns(2)
+        lat_min = latitude_columns[0].number_input(
+            "南界（°N）", value=DEFAULT_HUBEI_BBOX[0], step=0.1, format="%.2f", key="lat_min"
+        )
+        lat_max = latitude_columns[1].number_input(
+            "北界（°N）", value=DEFAULT_HUBEI_BBOX[1], step=0.1, format="%.2f", key="lat_max"
+        )
+        longitude_columns = st.columns(2)
+        lon_min = longitude_columns[0].number_input(
+            "西界（°E）", value=DEFAULT_HUBEI_BBOX[2], step=0.1, format="%.2f", key="lon_min"
+        )
+        lon_max = longitude_columns[1].number_input(
+            "东界（°E）", value=DEFAULT_HUBEI_BBOX[3], step=0.1, format="%.2f", key="lon_max"
+        )
+        st.button("恢复湖北默认范围", on_click=_reset_bbox, width="stretch")
+        with st.expander("查看产品支持范围"):
+            st.caption(
+                "StormDiT/双模型：21.83—41.00°N、101.40—122.97°E；"
+                "仅风雷：17.01—54.20°N、73.00—135.00°E。"
+            )
+
+if benchmark_mode:
+    from benchmark_ui import render_benchmark_page
+
+    render_benchmark_page(
+        models=tuple(BENCHMARK_LABEL_TO_MODEL[label] for label in selected_model_labels),
+        scope=mode,
     )
+    st.stop()
+
+complete_only = st.checkbox(
+    "仅使用 6—180 分钟资料完整的起报",
+    value=True,
+    help="关闭后可选择资料不完整的起报；缺帧不会被时间插值。",
+    on_change=_clear_result,
+)
 bbox = (lat_min, lat_max, lon_min, lon_max)
 config = CASES[case_key]
-model_ids = PRODUCT_OPTIONS[product_name]
+model_ids = tuple(
+    MODEL_STORMDIT if label == "StormDiT" else MODEL_FENGLEI for label in selected_model_labels
+)
 try:
     stormdit_dirs = _stormdit_directories()
     catalog = _catalog(
@@ -1004,11 +1049,7 @@ request_scope = {
     "自定义多起报": "custom",
     "全部起报": "all",
 }[mode]
-product_subject = {
-    "StormDiT": "StormDiT",
-    "风雷": "风雷",
-    "StormDiT vs 风雷": "StormDiT和风雷",
-}[product_name]
+product_subject = "StormDiT和风雷" if len(selected_model_labels) > 1 else selected_model_labels[0]
 if request_scope == "single":
     default_prompt = (
         f"使用10、20、30、40 dBZ阈值，查看6—180分钟{product_subject}预报"
@@ -1036,7 +1077,7 @@ else:
         "起报—时效评分矩阵、Spearman变量相关性热力图、多阈值评分分布和"
         "预报率—观测率散点图，全面解读。"
     )
-prompt_context = (product_name, request_scope)
+prompt_context = (tuple(selected_model_labels), request_scope)
 if st.session_state.get("verification_prompt_context") != prompt_context:
     st.session_state["verification_prompt"] = default_prompt
     st.session_state["verification_prompt_context"] = prompt_context
