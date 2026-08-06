@@ -63,7 +63,7 @@ export function Shell({
           <div className="agent-mark"><Gauge size={22} /></div>
           <div>
             <strong>Convection Agent</strong>
-            <span>EXPERT WORKSPACE · TEST</span>
+            <span>EXPERT WORKSPACE</span>
           </div>
         </div>
         <button className="execute-button" onClick={() => onNavigate('task')}>
