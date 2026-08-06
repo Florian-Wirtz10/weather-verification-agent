@@ -43,7 +43,7 @@
 
   // Install Codex for this development environment and the project's Python
   // dependencies. No other AI command-line tools are installed.
-  "postCreateCommand": "sudo mkdir -p /home/dev/.codex && sudo chown -R dev:dev /home/dev/.codex && npm install -g @openai/codex@0.144.1 && pip install --user -e \".[dev]\"",
+  "postCreateCommand": "sudo mkdir -p /home/dev/.codex && sudo chown -R dev:dev /home/dev/.codex && npm install -g @openai/codex@0.144.1 && pip install --user -e \".[dev]\" && npm --prefix frontend ci",
 
   "customizations": {
     "vscode": {
@@ -63,5 +63,5 @@
     }
   },
 
-  "forwardPorts": [8501]
+  "forwardPorts": [5173, 8000, 8501]
 }

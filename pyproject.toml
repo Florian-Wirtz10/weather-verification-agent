@@ -22,7 +22,12 @@ dependencies = [
     "netCDF4>=1.6",
     "openai>=1.30",
     "Pillow>=10.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
 ]
+
+[project.scripts]
+weather-agent-web = "webapi.main:run"
 
 # Dev-only tooling — kept out of the runtime dependency set so a deployed
 # environment doesn't pull in test/lint tooling it will never use.
@@ -39,6 +44,7 @@ packages = [
     "data_io",
     "visualization",
     "reports",
+    "webapi",
 ]
 
 [tool.setuptools.package-data]

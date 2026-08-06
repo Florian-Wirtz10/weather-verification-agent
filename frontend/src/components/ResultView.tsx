@@ -1,0 +1,114 @@
+import {
+  BrainCircuit,
+  CheckCircle2,
+  Download,
+  Expand,
+  FileDown,
+  Image as ImageIcon,
+  Layers3,
+  Table2,
+  X,
+} from 'lucide-react'
+import { useMemo, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import type { Artifact, Job } from '../types'
+import { MetricChart } from './MetricChart'
+
+function display(value: unknown): string {
+  if (value === null || value === undefined) return '—'
+  if (typeof value === 'number') return Number.isInteger(value) ? String(value) : value.toFixed(3)
+  if (Array.isArray(value)) return value.join(' · ')
+  return String(value)
+}
+
+function GalleryImage({ item, onExpand }: { item: Artifact; onExpand: (item: Artifact) => void }) {
+  return (
+    <article className="gallery-card">
+      <div className="gallery-image"><img src={item.url} alt={item.label} /><button onClick={() => onExpand(item)}><Expand size={16} /></button></div>
+      <div><strong>{item.label}</strong><a href={item.url} download><Download size={14} /> PNG</a>{item.svg_url && <a href={item.svg_url} download>SVG</a>}</div>
+    </article>
+  )
+}
+
+export function ResultView({ job }: { job: Job }) {
+  const result = job.result
+  const [frameIndex, setFrameIndex] = useState(0)
+  const [expanded, setExpanded] = useState<Artifact | null>(null)
+  const [tableOpen, setTableOpen] = useState(false)
+  const summaryColumns = useMemo(() => {
+    const keys = new Set<string>()
+    const summaryTable = result?.summary_table || []
+    summaryTable.forEach((row) => Object.keys(row).forEach((key) => keys.add(key)))
+    return [...keys]
+  }, [result])
+  if (!result) return <div className="empty-state">结果尚未生成</div>
+
+  const frame = result.spatial_frames[frameIndex]
+  const models = (result.context.model_labels || result.context.models || result.context.model_ids || []) as unknown[]
+  const selectedLeads = Array.isArray(result.coverage.selected_leads)
+    ? result.coverage.selected_leads.length
+    : undefined
+  const kindTitle = {
+    single: '单一起报诊断结果', custom: '自定义多起报对比结果', all: '全部起报综合统计', benchmark: '多模型公共样本 Benchmark',
+  }[result.kind]
+
+  return (
+    <div className="result-page">
+      <header className="result-header">
+        <div>
+          <div className="eyebrow">SCIENTIFIC VERIFICATION RESULT</div>
+          <h1>{kindTitle}</h1>
+          <div className="result-context"><span><Layers3 size={14} /> {models.map(display).join(' vs ')}</span><span><CheckCircle2 size={14} /> 严格匹配完成</span><span>JOB {job.id.toUpperCase()}</span></div>
+        </div>
+        <div className="download-actions">
+          {result.downloads.map((item) => <a href={item.url} download key={item.name}><FileDown size={15} /> {item.label}</a>)}
+        </div>
+      </header>
+
+      <div className="workflow-line"><span className="done">Data Load</span><i /><span className="done">Compute</span><i /><span className="done">Render</span><i /><span className="done">Interpret</span></div>
+
+      <div className="result-layout">
+        <div className="result-main">
+          <section className="stat-strip panel">
+            <div><span>模型数量</span><strong>{models.length || 1}</strong></div>
+            <div><span>起报样本</span><strong>{display(result.coverage.selected_initialization_count || result.coverage.sample_count || 1)}</strong></div>
+            <div><span>严格匹配</span><strong>{display(result.coverage.selected_pairs || result.coverage.pair_count || selectedLeads)}</strong></div>
+            <div><span>结果类型</span><strong>{result.kind.toUpperCase()}</strong></div>
+          </section>
+
+          {frame && (
+            <section className="panel spatial-panel">
+              <div className="section-heading"><div><ImageIcon size={18} /><strong>空间分布时效浏览</strong></div><span>+{frame.lead_minutes} min</span></div>
+              <div className="spatial-image"><img src={frame.url} alt={frame.label} /><button onClick={() => setExpanded(frame)}><Expand size={18} /></button></div>
+              <div className="time-slider"><span>+{result.spatial_frames[0].lead_minutes}m</span><input type="range" min="0" max={result.spatial_frames.length - 1} value={frameIndex} onChange={(event) => setFrameIndex(Number(event.target.value))} /><span>+{result.spatial_frames.at(-1)?.lead_minutes}m</span></div>
+            </section>
+          )}
+
+          {result.curves.length > 0 && <section className="panel"><MetricChart curves={result.curves} /></section>}
+
+          <section className="gallery-section">
+            <div className="section-heading"><div><ImageIcon size={18} /><strong>科学图表</strong></div><span>{result.gallery.length} figures</span></div>
+            <div className="gallery-grid">{result.gallery.map((item) => <GalleryImage key={item.name} item={item} onExpand={setExpanded} />)}</div>
+          </section>
+
+          {result.summary_table.length > 0 && (
+            <section className="panel table-panel">
+              <div className="section-heading"><div><Table2 size={18} /><strong>全局指标汇总</strong></div><button onClick={() => setTableOpen((value) => !value)}>{tableOpen ? '收起' : '查看全部'}</button></div>
+              <div className={`scientific-table-wrap ${tableOpen ? 'open' : ''}`}>
+                <table><thead><tr>{summaryColumns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{result.summary_table.map((row, index) => <tr key={index}>{summaryColumns.map((column) => <td key={column}>{display(row[column])}</td>)}</tr>)}</tbody></table>
+              </div>
+            </section>
+          )}
+        </div>
+
+        <aside className="insight-panel panel">
+          <div className="insight-heading"><BrainCircuit size={20} /><div><strong>AI 科学解读</strong><span>{result.insight_source} · Evidence bounded</span></div></div>
+          <div className="insight-content"><ReactMarkdown>{result.insight}</ReactMarkdown></div>
+          <div className="insight-contract">解读仅使用本次结构化评分事实，不读取或生成检验代码。</div>
+        </aside>
+      </div>
+
+      {expanded && <div className="image-modal" onClick={() => setExpanded(null)}><div onClick={(event) => event.stopPropagation()}><button onClick={() => setExpanded(null)}><X size={20} /></button><img src={expanded.url} alt={expanded.label} /><span>{expanded.label}</span></div></div>}
+    </div>
+  )
+}

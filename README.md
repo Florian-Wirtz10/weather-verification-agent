@@ -5,6 +5,20 @@
 
 它不是实时天气问答、任意数据分析或自由代码/制图工具。
 
+## 新版专家工作台（test 分支）
+
+`test` 分支在不改动检验公式、数据读取和白名单 Agent 的前提下，将主界面迁移为
+React + FastAPI。页面采用深色科研工作台布局，任务配置、实时执行进度、交互式指标曲线、
+空间时效浏览、动态图、图表全屏查看、AI 解读和结果下载均使用真实后端数据；不再显示
+设计稿中的模拟置信度、虚构日志或未经计算的物理结论。
+
+- React 只负责交互与排版，不能计算或改写评分；
+- FastAPI 复用现有 `data_io / verification / visualization / agent` 确定性链路；
+- 长任务在服务端串行执行，页面通过 SSE 接收真实阶段进度；
+- 业务个例模型与 Zero-shot Benchmark 在同一模型区选择，但按资料契约分组且禁止混选；
+- 每个任务的 PNG、SVG、GIF、CSV、Markdown 和 ZIP 写入 `outputs/web_jobs/<job_id>/`；
+- 原 Streamlit 页面仍作为兼容入口保留，便于对照与回退。
+
 ## 阶段状态
 
 - Phase 1（tag `v1.0-phase1`）：合成降水场、基础指标、绘图和 Streamlit demo。
@@ -154,7 +168,40 @@ StormDiT 雷达组合反射率预报（dBZ） ┐
 
 ## 运行方式
 
-项目使用 VS Code Dev Container。进入容器后：
+项目使用 VS Code Dev Container。容器首次创建会自动安装 Python 与前端依赖。
+
+### 新版 React 专家工作台（推荐）
+
+构建前端并启动统一服务：
+
+```bash
+npm --prefix frontend run build
+weather-agent-web
+```
+
+浏览器打开 `http://localhost:8000`。FastAPI 文档位于
+`http://localhost:8000/api/docs`。
+
+前端开发时可分别启动热更新服务：
+
+```bash
+# 终端 1
+uvicorn webapi.main:app --host 0.0.0.0 --port 8000 --reload
+
+# 终端 2
+npm --prefix frontend run dev
+```
+
+浏览器打开 `http://localhost:5173`。Vite 会把 `/api` 请求代理到 8000 端口。
+
+若未使用 Dev Container，先执行：
+
+```bash
+python -m pip install -e ".[dev]"
+npm --prefix frontend ci
+```
+
+### Streamlit 兼容入口
 
 ```bash
 streamlit run app.py
@@ -181,6 +228,7 @@ RADAR_20260408_DIR=external/20260408观测资料
 ```bash
 python -m pytest -q
 ruff check .
+npm --prefix frontend run build
 npx --yes pyright agent data_io reports tests verification visualization app.py --level error
 ```
 
@@ -208,6 +256,8 @@ visualization/              # 单起报和全天确定性 Matplotlib 图表
 reports/                    # 报告输出
 tests/                      # Schema、拒绝状态、科学计算、端到端测试
 app.py                      # Streamlit UI
+webapi/                     # FastAPI目录、后台任务、产物服务与核心桥接层
+frontend/                   # React/Vite专家工作台
 ```
 
 ## 下一阶段候选
