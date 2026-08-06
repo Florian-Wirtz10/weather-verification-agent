@@ -9,6 +9,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from data_io.forecast_sources import index_fenglei_forecasts
+from data_io.grid import regrid_nearest
+from data_io.fenglei_mosaic import read_swan_mosaic
+
 
 BENCHMARK_MODEL_FRAMES = {
     "ConvLSTM": 12,
@@ -18,8 +22,19 @@ BENCHMARK_MODEL_FRAMES = {
     "SimVP": 12,
     "DiffCast": 20,
     "StormDiT": 60,
+    "Fenglei": 30,
     "Persistence": 60,
 }
+PACKAGE_MODELS = (
+    "ConvLSTM",
+    "PredRNN",
+    "Earthformer",
+    "NowCastNet",
+    "SimVP",
+    "DiffCast",
+    "StormDiT",
+)
+BENCHMARK_MODEL_LABELS = {**{model: model for model in BENCHMARK_MODEL_FRAMES}, "Fenglei": "风雷"}
 BENCHMARK_STEP_MINUTES = 6
 BENCHMARK_THRESHOLDS = (20.0, 35.0, 45.0)
 
@@ -41,13 +56,14 @@ class BenchmarkCatalog:
     lat_range: tuple[float, float]
     lon_range: tuple[float, float]
     resolution_degrees: float
+    fenglei_forecasts: dict
 
 
 def _parse_time(value) -> datetime:
     return datetime.fromisoformat(str(value))
 
 
-def build_benchmark_catalog(package_dir) -> BenchmarkCatalog:
+def build_benchmark_catalog(package_dir, *, fenglei_directory=None) -> BenchmarkCatalog:
     """Validate the 24-sample Wuhan package without retaining forecast arrays."""
     package_dir = Path(package_dir)
     index_path = package_dir / "index.csv"
@@ -164,20 +180,30 @@ def build_benchmark_catalog(package_dir) -> BenchmarkCatalog:
 
     if not samples:
         raise ValueError(f"benchmark package contains no samples: {package_dir}")
-    models = tuple(model for model in BENCHMARK_MODEL_FRAMES if model in (common_models or set()))
-    if models != tuple(BENCHMARK_MODEL_FRAMES)[:-1]:
+    models = tuple(model for model in PACKAGE_MODELS if model in (common_models or set()))
+    if models != PACKAGE_MODELS:
         raise ValueError(f"benchmark package does not contain all seven learning models: {models}")
+    fenglei_forecasts = (
+        index_fenglei_forecasts(fenglei_directory) if fenglei_directory is not None else {}
+    )
     return BenchmarkCatalog(
         package_dir=package_dir,
         samples=tuple(samples),
-        models=models + ("Persistence",),
+        models=models + (("Fenglei",) if fenglei_forecasts else ()) + ("Persistence",),
         lat_range=(float(reference_lat[-1]), float(reference_lat[0])),
         lon_range=(float(reference_lon[0]), float(reference_lon[-1])),
         resolution_degrees=0.03,
+        fenglei_forecasts=fenglei_forecasts,
     )
 
 
-def load_benchmark_arrays(sample: BenchmarkSample, models) -> dict:
+def load_benchmark_arrays(
+    sample: BenchmarkSample,
+    models,
+    *,
+    catalog: BenchmarkCatalog | None = None,
+    leads=None,
+) -> dict:
     """Load one sample and return only the requested, already aligned arrays."""
     requested = tuple(dict.fromkeys(str(model) for model in models))
     unknown = set(requested).difference(BENCHMARK_MODEL_FRAMES)
@@ -187,9 +213,41 @@ def load_benchmark_arrays(sample: BenchmarkSample, models) -> dict:
         condition = np.asarray(archive["radar_condition_dbz"], dtype=np.float32)
         truth = np.asarray(archive["radar_truth_dbz"], dtype=np.float32)
         forecasts = {}
+        requested_leads = tuple(leads or range(6, 361, 6))
         for model in requested:
             if model == "Persistence":
                 forecasts[model] = np.repeat(condition[-1:, :, :], 60, axis=0)
+            elif model == "Fenglei":
+                if catalog is None:
+                    raise ValueError("Fenglei benchmark loading requires a catalog")
+                frame_count = BENCHMARK_MODEL_FRAMES[model]
+                values = np.full((frame_count, 128, 128), np.nan, dtype=np.float32)
+                target_lat = np.asarray(archive["lat"], dtype=np.float64)
+                target_lon = np.asarray(archive["lon"], dtype=np.float64)
+                # Keep one source-grid cell around the target patch.  Cropping to
+                # the exact decimal endpoints can otherwise remove the nearest
+                # Fenglei cell because its float32 grid origin is a few ulps away.
+                source_buffer = 0.02
+                bbox = (
+                    float(target_lat.min() - source_buffer),
+                    float(target_lat.max() + source_buffer),
+                    float(target_lon.min() - source_buffer),
+                    float(target_lon.max() + source_buffer),
+                )
+                for lead in requested_leads:
+                    if lead > frame_count * 6:
+                        continue
+                    record = catalog.fenglei_forecasts.get((sample.analysis_time_utc, int(lead)))
+                    if record is None:
+                        raise ValueError(
+                            f"Fenglei is unavailable for {sample.analysis_time_utc} UTC +{lead} min"
+                        )
+                    field = read_swan_mosaic(record.path, bbox=bbox)
+                    # Benchmark rows are north-to-south. GriddedField rows and
+                    # regrid_nearest targets are ascending latitude, so flip back.
+                    aligned = regrid_nearest(field, target_lat[::-1], target_lon)[::-1, :]
+                    values[lead // 6 - 1] = np.maximum(aligned, 0.0)
+                forecasts[model] = values
             else:
                 forecasts[model] = np.asarray(archive[f"pred_{model}_dbz"], dtype=np.float32)
         return {

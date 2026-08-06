@@ -21,6 +21,7 @@ MODEL_COLORS = {
     "SimVP": "#76B7B2",
     "DiffCast": "#B07AA1",
     "StormDiT": "#E15759",
+    "Fenglei": "#EDC948",
     "Persistence": "#6B7280",
 }
 METRIC_LABELS = {

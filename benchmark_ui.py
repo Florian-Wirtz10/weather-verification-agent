@@ -16,9 +16,10 @@ from agent.benchmark_insight import (
     render_benchmark_deterministic_summary,
 )
 from agent.benchmark_request import default_benchmark_request, parse_benchmark_request
-from data_io.benchmark import BENCHMARK_MODEL_FRAMES, build_benchmark_catalog
+from data_io.benchmark import BENCHMARK_MODEL_LABELS, build_benchmark_catalog
 from reports import figure_to_png, figure_to_svg
 from verification.benchmark import (
+    benchmark_available_samples,
     benchmark_frame,
     common_horizon_minutes,
     run_benchmark,
@@ -34,6 +35,7 @@ from visualization.benchmark_plots import (
 
 
 BENCHMARK_PACKAGE = Path(os.getenv("BENCHMARK_PACKAGE_DIR", "external/delivery/apr11_wuhan_full"))
+BENCHMARK_FENGLEI_DIR = Path(os.getenv("FENGLEI_CASE_DIR", "external/20250411风雷预测资料"))
 _INTERNAL_COLUMNS = {
     "absolute_error_sum",
     "squared_error_sum",
@@ -46,7 +48,7 @@ _INTERNAL_COLUMNS = {
 }
 
 
-def _package_signature(path: Path):
+def _package_signature(path: Path, fenglei_directory: Path):
     index = path / "index.csv"
     files = sorted((path / "forecasts").glob("*.npz"))
     return (
@@ -54,18 +56,33 @@ def _package_signature(path: Path):
         index.stat().st_mtime_ns,
         index.stat().st_size,
         tuple((item.name, item.stat().st_size, item.stat().st_mtime_ns) for item in files),
+        (
+            str(fenglei_directory.resolve()),
+            fenglei_directory.stat().st_mtime_ns,
+            sum(1 for _ in fenglei_directory.glob("*REFMOSAIC*MIN.bz2")),
+        ),
     )
 
 
-@st.cache_resource(show_spinner="正在验证Benchmark数据契约…")
-def _benchmark_catalog(package, signature):
+@st.cache_resource(show_spinner="正在验证数据…")
+def _benchmark_catalog(package, fenglei_directory, signature):
     _ = signature
-    return build_benchmark_catalog(package)
+    return build_benchmark_catalog(package, fenglei_directory=fenglei_directory)
 
 
-@st.cache_data(show_spinner="正在计算Zero-shot Benchmark指标…", max_entries=16)
-def _benchmark_result(package, signature, models, sample_ids, thresholds, start, end, windows):
-    catalog = build_benchmark_catalog(package)
+@st.cache_data(show_spinner="正在计算检验指标…", max_entries=16)
+def _benchmark_result(
+    package,
+    fenglei_directory,
+    signature,
+    models,
+    sample_ids,
+    thresholds,
+    start,
+    end,
+    windows,
+):
+    catalog = build_benchmark_catalog(package, fenglei_directory=fenglei_directory)
     return run_benchmark(
         catalog,
         models,
@@ -209,7 +226,8 @@ def _render(attempt):
     with main:
         context, coverage = attempt["result"]["context"], attempt["result"]["coverage"]
         st.info(
-            f"{'、'.join(context['models'])}｜{coverage['sample_count']}个起报｜"
+            f"{'、'.join(BENCHMARK_MODEL_LABELS[model] for model in context['models'])}｜"
+            f"{coverage['sample_count']}个起报｜"
             f"严格公共时效 +{context['lead_range_minutes'][0]}—"
             f"+{context['lead_range_minutes'][1]}分钟｜128×128、0.03°统一网格"
         )
@@ -281,71 +299,42 @@ def _render(attempt):
             st.dataframe(attempt["rows"], width="stretch", hide_index=True)
 
 
-def render_benchmark_page():
-    signature = _package_signature(BENCHMARK_PACKAGE)
-    catalog = _benchmark_catalog(str(BENCHMARK_PACKAGE), signature)
-    with st.sidebar:
-        st.header("Benchmark检验域")
-        st.caption(
-            "2025-04-11武汉区域固定窗口\n\n"
-            f"范围：{catalog.lat_range[0]:.2f}—{catalog.lat_range[1]:.2f}°N、"
-            f"{catalog.lon_range[0]:.2f}—{catalog.lon_range[1]:.2f}°E\n\n"
-            "网格：128×128，0.03°，全部模型和CREF已经严格对齐。"
-        )
-        st.info("2026-04-08暂不具备Baseline严格匹配数据。")
-
-    st.subheader("中国雷达CREF Zero-shot Benchmark")
-    st.caption(
-        "SEVIR预训练Baseline向中国CREF的zero-shot迁移检验；"
-        "所有横向图只使用所选模型的严格公共原生时效。"
-    )
-    model_column, scope_column = st.columns([2.2, 1])
-    with model_column:
-        models = st.multiselect(
-            "比较模型",
-            list(BENCHMARK_MODEL_FRAMES),
-            default=list(BENCHMARK_MODEL_FRAMES),
-            on_change=lambda: st.session_state.pop("benchmark_attempt", None),
-        )
-    with scope_column:
-        scope = st.radio(
-            "检验范围",
-            ["全部起报", "自定义多起报", "单一起报"],
-            horizontal=True,
-            on_change=lambda: st.session_state.pop("benchmark_attempt", None),
-        )
-    if not models:
-        st.error("请至少选择一个Benchmark模型。")
-        return
+def render_benchmark_page(*, models, scope):
+    signature = _package_signature(BENCHMARK_PACKAGE, BENCHMARK_FENGLEI_DIR)
+    catalog = _benchmark_catalog(str(BENCHMARK_PACKAGE), str(BENCHMARK_FENGLEI_DIR), signature)
+    models = list(models)
     horizon = common_horizon_minutes(models)
-    st.caption(f"当前所选模型的严格共同预报时效：+6—+{horizon}分钟。")
-
-    selected_samples = list(catalog.samples)
+    available_samples = list(benchmark_available_samples(catalog, models, lead_range=(6, horizon)))
+    if not available_samples:
+        st.error("当前模型组合没有严格匹配的公共起报。")
+        return
+    selected_samples = list(available_samples)
     if scope == "单一起报":
         sample_id = st.selectbox(
             "起报时间",
-            [sample.sample_id for sample in catalog.samples],
+            [sample.sample_id for sample in available_samples],
             format_func=lambda value: _sample_label(
-                next(sample for sample in catalog.samples if sample.sample_id == value)
+                next(sample for sample in available_samples if sample.sample_id == value)
             ),
         )
-        selected_samples = [sample for sample in catalog.samples if sample.sample_id == sample_id]
+        selected_samples = [sample for sample in available_samples if sample.sample_id == sample_id]
     elif scope == "自定义多起报":
-        default = [sample.sample_id for sample in catalog.samples[9:12]]
+        middle = max(0, len(available_samples) // 2 - 1)
+        default = [sample.sample_id for sample in available_samples[middle : middle + 3]]
         selected_ids = st.multiselect(
             "选择起报（2—8个）",
-            [sample.sample_id for sample in catalog.samples],
+            [sample.sample_id for sample in available_samples],
             default=default,
             max_selections=8,
             format_func=lambda value: _sample_label(
-                next(sample for sample in catalog.samples if sample.sample_id == value)
+                next(sample for sample in available_samples if sample.sample_id == value)
             ),
         )
         if not 2 <= len(selected_ids) <= 8:
             st.warning("请选择2—8个起报。")
             return
         selected_samples = [
-            sample for sample in catalog.samples if sample.sample_id in selected_ids
+            sample for sample in available_samples if sample.sample_id in selected_ids
         ]
 
     single = scope == "单一起报"
@@ -367,17 +356,17 @@ def render_benchmark_page():
         st.session_state["benchmark_prompt"] = default_prompt
         st.session_state["benchmark_prompt_context"] = prompt_context
     prompt = st.text_area(
-        "告诉智能体你想怎样比较Benchmark",
+        "检验要求",
         key="benchmark_prompt",
         height=115,
     )
-    if st.button("生成Benchmark结果", type="primary", width="stretch"):
+    if st.button("生成检验结果", type="primary", width="stretch"):
         try:
-            with st.status("正在生成Benchmark结果…", expanded=True) as status:
+            with st.status("正在生成检验结果…", expanded=True) as status:
                 if prompt.strip() == default_prompt.strip():
-                    status.write("已载入确定性推荐计划。")
+                    status.write("已载入推荐方案。")
                 else:
-                    status.write("正在解析自然语言Benchmark要求…")
+                    status.write("正在解析自然语言要求…")
                     request = parse_benchmark_request(
                         prompt,
                         single=single,
@@ -387,6 +376,7 @@ def render_benchmark_page():
                 status.write("正在逐样本计算列联表、误差和多尺度FSS…")
                 result = _benchmark_result(
                     str(BENCHMARK_PACKAGE),
+                    str(BENCHMARK_FENGLEI_DIR),
                     signature,
                     tuple(models),
                     tuple(sample.sample_id for sample in selected_samples),
@@ -433,7 +423,7 @@ def render_benchmark_page():
                     "text": text,
                     "insight_error": insight_error,
                 }
-                status.update(label="Benchmark检验完成", state="complete", expanded=False)
+                status.update(label="检验完成", state="complete", expanded=False)
         except Exception as exc:
             st.error(str(exc))
     attempt = st.session_state.get("benchmark_attempt")

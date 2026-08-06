@@ -95,11 +95,22 @@ def test_streamlit_initial_screen_has_final_phase8_controls(monkeypatch):
 
     assert not app.exception
     assert [item.value for item in app.number_input] == [29.0, 33.5, 108.0, 116.5]
-    assert app.selectbox[1].options == ["StormDiT", "风雷", "StormDiT vs 风雷"]
+    assert app.multiselect[0].options == [
+        "StormDiT",
+        "风雷",
+        "ConvLSTM",
+        "PredRNN",
+        "Earthformer",
+        "NowCastNet",
+        "SimVP",
+        "DiffCast",
+        "Persistence",
+    ]
+    assert app.multiselect[0].value == ["StormDiT", "风雷"]
     assert app.radio[0].options == ["全部起报", "自定义多起报", "单一起报"]
     assert app.checkbox[0].value is True
     assert "刷新可用起报" not in {button.label for button in app.button}
-    assert any("支持范围：" in item.value for item in app.caption)
+    assert any(item.value == "默认：湖北区域" for item in app.caption)
 
 
 def test_default_prompt_tracks_selected_product(monkeypatch):
@@ -108,11 +119,11 @@ def test_default_prompt_tracks_selected_product(monkeypatch):
     app = AppTest.from_file("app.py", default_timeout=30).run()
     assert "StormDiT和风雷" in app.text_area[0].value
 
-    app = app.selectbox[1].set_value("StormDiT").run()
+    app = app.multiselect[0].set_value(["StormDiT"]).run()
     assert "StormDiT的CSI" in app.text_area[0].value
     assert "StormDiT和风雷" not in app.text_area[0].value
 
-    app = app.selectbox[1].set_value("风雷").run()
+    app = app.multiselect[0].set_value(["风雷"]).run()
     assert "风雷的CSI" in app.text_area[0].value
     assert "StormDiT" not in app.text_area[0].value
 
@@ -134,7 +145,7 @@ def test_single_stormdit_result_has_ai_and_downloads(monkeypatch):
     )
 
     app = AppTest.from_file("app.py", default_timeout=30).run()
-    app = app.selectbox[1].set_value("StormDiT").run()
+    app = app.multiselect[0].set_value(["StormDiT"]).run()
     app = app.radio[0].set_value("单一起报").run()
     app = _button(app, "使用推荐方案").click().run()
 
@@ -202,7 +213,7 @@ def test_two_model_batch_uses_final_product_name(monkeypatch):
     )
 
     app = AppTest.from_file("app.py", default_timeout=30).run()
-    app = app.selectbox[1].set_value("StormDiT vs 风雷").run()
+    app = app.multiselect[0].set_value(["StormDiT", "风雷"]).run()
     app = _button(app, "使用推荐方案").click().run()
 
     assert not app.exception

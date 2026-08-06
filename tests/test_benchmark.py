@@ -8,9 +8,10 @@ from agent.benchmark_request import (
     default_benchmark_request,
     validate_benchmark_request,
 )
-from data_io.benchmark import build_benchmark_catalog
+from data_io.benchmark import build_benchmark_catalog, load_benchmark_arrays
 from verification.benchmark import (
     _frame_row,
+    benchmark_available_samples,
     common_horizon_minutes,
     run_benchmark,
     summarize_benchmark_period,
@@ -25,6 +26,7 @@ def test_common_horizon_uses_shortest_native_model():
     assert common_horizon_minutes(["StormDiT", "Persistence"]) == 360
     assert common_horizon_minutes(["StormDiT", "DiffCast"]) == 120
     assert common_horizon_minutes(["StormDiT", "ConvLSTM"]) == 72
+    assert common_horizon_minutes(["StormDiT", "Fenglei"]) == 180
 
 
 def test_request_rejects_lead_beyond_strict_common_horizon():
@@ -123,3 +125,25 @@ def test_delivery_stormdit_scores_match_teacher_crosscheck_csv():
     np.testing.assert_allclose(threshold_20["csi"], threshold_20["csi_20"], atol=1e-12)
     np.testing.assert_allclose(threshold_20["fss_w5"], threshold_20["fss_20_w5"], atol=5e-9)
     np.testing.assert_allclose(threshold_20["mae_ours"], threshold_20["mae_provided"], atol=1e-12)
+
+
+@pytest.mark.skipif(
+    not Path("external/delivery/apr11_wuhan_full/index.csv").is_file()
+    or not Path("external/20250411风雷预测资料").is_dir(),
+    reason="private benchmark and Fenglei packages are not part of the repository",
+)
+def test_fenglei_joins_the_benchmark_on_23_strict_common_samples():
+    catalog = build_benchmark_catalog(
+        "external/delivery/apr11_wuhan_full",
+        fenglei_directory="external/20250411风雷预测资料",
+    )
+    samples = benchmark_available_samples(
+        catalog,
+        ["StormDiT", "Fenglei"],
+        lead_range=(6, 72),
+    )
+
+    assert len(samples) == 23
+    arrays = load_benchmark_arrays(samples[0], ["Fenglei"], catalog=catalog, leads=[6])
+    assert arrays["forecasts"]["Fenglei"].shape == (30, 128, 128)
+    assert np.isfinite(arrays["forecasts"]["Fenglei"][0]).all()

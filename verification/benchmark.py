@@ -24,6 +24,22 @@ def common_horizon_minutes(models) -> int:
     return min(BENCHMARK_MODEL_FRAMES[model] * 6 for model in selected)
 
 
+def benchmark_available_samples(catalog, models, *, lead_range=None):
+    """Return samples containing every selected model at every requested lead."""
+    models = tuple(dict.fromkeys(str(model) for model in models))
+    horizon = common_horizon_minutes(models)
+    start, end = lead_range or (6, horizon)
+    leads = tuple(range(int(start), int(end) + 1, 6))
+    available = []
+    for sample in catalog.samples:
+        if "Fenglei" in models and not all(
+            (sample.analysis_time_utc, lead) in catalog.fenglei_forecasts for lead in leads
+        ):
+            continue
+        available.append(sample)
+    return tuple(available)
+
+
 def _safe_divide(numerator, denominator):
     return float(numerator) / float(denominator) if denominator else float("nan")
 
@@ -123,9 +139,10 @@ def run_benchmark(
     if end > horizon:
         raise ValueError(f"selected models only share native forecasts through +{horizon} minutes")
     selected_ids = None if sample_ids is None else {int(value) for value in sample_ids}
+    eligible_samples = benchmark_available_samples(catalog, models, lead_range=(start, end))
     samples = [
         sample
-        for sample in catalog.samples
+        for sample in eligible_samples
         if selected_ids is None or sample.sample_id in selected_ids
     ]
     if not samples:
@@ -138,7 +155,7 @@ def run_benchmark(
     leads = list(range(start, end + 1, 6))
     total = len(samples)
     for sample_index, sample in enumerate(samples, start=1):
-        arrays = load_benchmark_arrays(sample, models)
+        arrays = load_benchmark_arrays(sample, models, catalog=catalog, leads=leads)
         truth = arrays["truth"]
         for model in models:
             forecast = arrays["forecasts"][model]
@@ -256,7 +273,12 @@ def benchmark_frame(catalog, sample_id, models, lead_minutes):
         raise ValueError("benchmark spatial lead must be a positive multiple of 6")
     if lead_minutes > common_horizon_minutes(models):
         raise ValueError("benchmark spatial lead exceeds a selected model's native horizon")
-    arrays = load_benchmark_arrays(sample, models)
+    arrays = load_benchmark_arrays(
+        sample,
+        models,
+        catalog=catalog,
+        leads=(lead_minutes,),
+    )
     index = lead_minutes // 6 - 1
     return {
         "sample": sample,
