@@ -30,6 +30,27 @@ Phase 8 的最终页面新增：
 - DeepSeek 只看到结构化数字事实与图表目录，不接触原始网格和绘图代码；页面始终保留确定性解读兜底；
 - PNG、GIF、逐样本 CSV、AI 解读 Markdown 和完整 ZIP 均可下载。
 
+## Zero-shot Benchmark
+
+页面顶部可切换到“中国雷达 CREF Zero-shot Benchmark”。该入口与原始资料业务检验隔离，
+读取老师交付的 `external/delivery/apr11_wuhan_full` 统一实验包：2025-04-11 武汉区域
+24 个逐小时起报、128×128、0.03°、6 分钟间隔。所有模型和 CREF 真值已经落在同一网格，
+检验阶段不再插值。
+
+- 可多选 ConvLSTM、PredRNN、Earthformer、NowCastNet、SimVP、DiffCast、StormDiT 和 Persistence；
+- 自动采用所选模型的严格共同原生时效：传统模型参与时最长 +72 分钟，DiffCast 与
+  StormDiT 最长 +120 分钟，仅 StormDiT/Persistence 可到 +360 分钟；
+- 支持全部起报、自定义 2—8 个起报和单一起报；
+- 支持 CSI、POD、FAR、Bias、MAE、RMSE，以及 1/3/5 像元邻域 FSS；
+- 支持多模型时效曲线、多尺度 FSS、公共时效汇总、模型—时效热力图和单起报空间对比；
+- 聚合时先合并列联表、误差和 FSS 分子/分母，再重新计算评分，不做逐样本分数平均；
+- 自然语言仍只生成白名单参数，DeepSeek 只读取结构化数字事实；
+- 逐样本 CSV、汇总 CSV、PNG、SVG、AI 解读和完整 ZIP 均可下载。
+
+Benchmark 是 SEVIR 预训练模型向中国 CREF 的 zero-shot 迁移实验，不是同训练数据、同上下文
+预算下的排行榜。随包两个 `apr08` 目录实际属于 2025-04-08，且没有 StormDiT，不能并入当前
+网页的 2026-04-08 多模型业务检验。可用环境变量 `BENCHMARK_PACKAGE_DIR` 覆盖主包路径。
+
 Phase 5 在不改变 Phase 4 单起报链路的前提下新增：
 
 - 直接解析天气雷达拼图系统 V3.0 的 256 字节 `MOC/CREF` 头和 BZ2 压缩 `int16` 网格；按头字段校验文件长度、产品、坐标、时间、网格、压缩方式与缩放因子；

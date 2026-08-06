@@ -607,6 +607,18 @@ def _render(attempt):
 
 
 st.title("强对流预报检验智能体")
+task_type = st.segmented_control(
+    "检验任务",
+    ["StormDiT / 风雷业务检验", "Zero-shot Benchmark"],
+    default="StormDiT / 风雷业务检验",
+    help="Benchmark使用老师交付的统一128×128实验包，与现有原始资料业务检验相互独立。",
+)
+if task_type == "Zero-shot Benchmark":
+    from benchmark_ui import render_benchmark_page
+
+    render_benchmark_page()
+    st.stop()
+
 with st.sidebar:
     st.header("检验区域")
     st.caption(
