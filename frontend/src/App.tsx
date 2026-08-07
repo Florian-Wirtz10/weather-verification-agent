@@ -4,16 +4,23 @@ import { ArchiveView } from './components/ArchiveView'
 import { ProgressView } from './components/ProgressView'
 import { Shell } from './components/Shell'
 import { TaskComposer } from './components/TaskComposer'
-import type { Job, TaskPayload, ViewName } from './types'
+import type { Job, TaskPayload, ThemeName, ViewName } from './types'
 
 const ResultView = lazy(() => import('./components/ResultView').then((module) => ({ default: module.ResultView })))
 
 export default function App() {
   const [view, setView] = useState<ViewName>('task')
-  const [systemReady, setSystemReady] = useState(false)
   const [job, setJob] = useState<Job | null>(null)
+  const [locatorBbox, setLocatorBbox] = useState<number[]>([29, 33.5, 108, 116.5])
+  const [theme, setTheme] = useState<ThemeName>(() => {
+    const saved = window.localStorage.getItem('verification-theme')
+    return saved === 'light' || saved === 'dark' ? saved : 'dark'
+  })
 
-  useEffect(() => { api.health().then(() => setSystemReady(true)).catch(() => setSystemReady(false)) }, [])
+  useEffect(() => {
+    window.localStorage.setItem('verification-theme', theme)
+    document.documentElement.style.colorScheme = theme
+  }, [theme])
 
   async function submit(payload: TaskPayload) {
     const created = await api.createJob(payload)
@@ -32,12 +39,12 @@ export default function App() {
   }, [])
 
   return (
-    <Shell view={view} systemReady={systemReady} hasJob={Boolean(job)} hasResult={Boolean(job?.result)} onNavigate={setView}>
-      {view === 'task' && <TaskComposer onSubmit={submit} />}
+    <Shell view={view} theme={theme} locatorBbox={locatorBbox} hasJob={Boolean(job)} hasResult={Boolean(job?.result)} onNavigate={setView} onThemeChange={setTheme}>
+      {view === 'task' && <TaskComposer onSubmit={submit} onBboxChange={setLocatorBbox} />}
       {view === 'progress' && job && <ProgressView job={job} onJob={setJob} onComplete={completeJob} />}
       {view === 'result' && job && (
         <Suspense fallback={<div className="empty-state">正在加载交互式结果视图…</div>}>
-          <ResultView job={job} />
+          <ResultView job={job} theme={theme} />
         </Suspense>
       )}
       {view === 'archive' && <ArchiveView onOpen={openJob} />}

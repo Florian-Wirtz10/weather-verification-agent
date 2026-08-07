@@ -2,23 +2,25 @@ import {
   Activity,
   Archive,
   BarChart3,
-  BrainCircuit,
-  FileChartColumn,
-  Gauge,
-  Layers3,
+  CloudSun,
+  Moon,
   Play,
   Radar,
-  Settings,
+  Sun,
 } from 'lucide-react'
-import type { PropsWithChildren } from 'react'
-import type { ViewName } from '../types'
+import { lazy, Suspense, type PropsWithChildren } from 'react'
+import type { ThemeName, ViewName } from '../types'
+
+const ChinaLocatorMap = lazy(() => import('./ChinaLocatorMap').then((module) => ({ default: module.ChinaLocatorMap })))
 
 interface ShellProps extends PropsWithChildren {
   view: ViewName
-  systemReady: boolean
+  theme: ThemeName
+  locatorBbox: number[]
   hasJob: boolean
   hasResult: boolean
   onNavigate: (view: ViewName) => void
+  onThemeChange: (theme: ThemeName) => void
 }
 
 const nav = [
@@ -31,41 +33,41 @@ const nav = [
 export function Shell({
   children,
   view,
-  systemReady,
+  theme,
+  locatorBbox,
   hasJob,
   hasResult,
   onNavigate,
+  onThemeChange,
 }: ShellProps) {
   return (
-    <div className="app-shell">
+    <div className={`app-shell theme-${theme}`}>
       <header className="topbar">
         <div className="brand">
-          <BrainCircuit size={22} />
-          <span>强对流预报智能检验平台</span>
+          <div className="brand-mark" aria-hidden="true"><CloudSun size={20} /></div>
+          <strong>强对流预报智能检验平台</strong>
         </div>
         <nav className="topnav" aria-label="主导航">
           <button className={view === 'task' ? 'active' : ''} onClick={() => onNavigate('task')}>
-            Verification
+            检验工作台
           </button>
           <button className={view === 'result' ? 'active' : ''} onClick={() => hasResult && onNavigate('result')}>
-            Reports
+            分析报告
           </button>
         </nav>
-        <div className="system-state">
-          <span className={`status-dot ${systemReady ? 'ready' : ''}`} />
-          <span>{systemReady ? 'System Ready' : 'Connecting'}</span>
-          <Settings size={18} />
-        </div>
+        <button
+          className="theme-toggle"
+          type="button"
+          aria-label={theme === 'dark' ? '切换到明亮界面' : '切换到深色界面'}
+          title={theme === 'dark' ? '切换到明亮界面' : '切换到深色界面'}
+          aria-pressed={theme === 'dark'}
+          onClick={() => onThemeChange(theme === 'dark' ? 'light' : 'dark')}
+        >
+          <span className="theme-toggle-icon" key={theme}>{theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}</span>
+        </button>
       </header>
 
       <aside className="sidebar">
-        <div className="agent-identity">
-          <div className="agent-mark"><Gauge size={22} /></div>
-          <div>
-            <strong>Convection Agent</strong>
-            <span>EXPERT WORKSPACE</span>
-          </div>
-        </div>
         <button className="execute-button" onClick={() => onNavigate('task')}>
           <Play size={16} fill="currentColor" /> 新建检验任务
         </button>
@@ -85,9 +87,13 @@ export function Shell({
             )
           })}
         </div>
+        <Suspense fallback={<div className="locator-map locator-map-loading" aria-hidden="true" />}>
+          <ChinaLocatorMap bbox={locatorBbox} theme={theme} />
+        </Suspense>
         <div className="sidebar-meta">
-          <div><Layers3 size={15} /> StormDiT · 风雷 · Baselines</div>
-          <div><FileChartColumn size={15} /> CREF evidence contract</div>
+          <strong>当前资料</strong>
+          <span>StormDiT、风雷及基线模型</span>
+          <span>CREF 雷达组合反射率</span>
         </div>
       </aside>
 

@@ -1,4 +1,4 @@
-import { Check, Circle, Clipboard, Database, LoaderCircle, TerminalSquare, XCircle } from 'lucide-react'
+import { Check, Circle, Clipboard, LoaderCircle, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { Job, JobEvent } from '../types'
@@ -16,6 +16,14 @@ const stages = [
   { id: 'render', label: '生成科学图表与交互资产' },
   { id: 'interpret', label: '生成证据约束型AI解读' },
 ]
+
+const stageNames: Record<string, string> = {
+  parse: '要求解析',
+  align: '资料匹配',
+  compute: '指标计算',
+  render: '图表生成',
+  interpret: '结果解读',
+}
 
 export function ProgressView({ job, onJob, onComplete }: ProgressProps) {
   const [events, setEvents] = useState<JobEvent[]>([])
@@ -53,22 +61,21 @@ export function ProgressView({ job, onJob, onComplete }: ProgressProps) {
     terminalRef.current?.scrollTo({ top: terminalRef.current.scrollHeight, behavior: 'smooth' })
   }, [events])
 
-  const logText = useMemo(() => events.map((event) => `[${event.timestamp.slice(11, 19)}] ${event.stage.toUpperCase()}  ${event.message}`).join('\n'), [events])
+  const logText = useMemo(() => events.map((event) => `[${event.timestamp.slice(11, 19)}] ${stageNames[event.stage] || event.stage}  ${event.message}`).join('\n'), [events])
 
   return (
     <div className="progress-page">
       <section className="pipeline-header panel">
         <div>
-          <div className="eyebrow">PIPELINE EXECUTION</div>
           <h1>检验任务执行状态</h1>
           <p>{job.message}</p>
         </div>
-        <div className="job-state"><span>JOB {job.id.toUpperCase()}</span><b className={job.status}>{job.status}</b></div>
+        <div className="job-state"><span>任务 {job.id.toUpperCase()}</span><b className={job.status}>{job.status === 'running' ? '执行中' : job.status === 'complete' ? '已完成' : job.status === 'failed' ? '失败' : '等待中'}</b></div>
       </section>
 
       <div className="progress-layout">
         <section className="panel stages-panel">
-          <div className="panel-title"><Database size={18} /><span>Execution Stages</span></div>
+          <div className="panel-title"><span>执行阶段</span></div>
           <div className="stage-list">
             {stages.map((stage, index) => {
               const complete = index < activeIndex || job.status === 'complete'
@@ -79,7 +86,7 @@ export function ProgressView({ job, onJob, onComplete }: ProgressProps) {
                   <div className="stage-node">
                     {complete ? <Check size={14} /> : failed ? <XCircle size={16} /> : active ? <LoaderCircle className="spin" size={15} /> : <Circle size={11} />}
                   </div>
-                  <div><strong>{stage.label}</strong><span>{complete ? 'Completed' : active || failed ? job.message : 'Pending'}</span></div>
+                  <div><strong>{stage.label}</strong><span>{complete ? '已完成' : active || failed ? job.message : '等待执行'}</span></div>
                 </div>
               )
             })}
@@ -89,16 +96,15 @@ export function ProgressView({ job, onJob, onComplete }: ProgressProps) {
 
         <section className="console-column">
           <div className="console panel">
-            <div className="console-header"><div><TerminalSquare size={16} /> 实时执行日志</div><button onClick={async () => { await navigator.clipboard.writeText(logText); setCopied(true); window.setTimeout(() => setCopied(false), 1200) }}><Clipboard size={15} /> {copied ? '已复制' : '复制'}</button></div>
+            <div className="console-header"><div>实时执行日志</div><button onClick={async () => { await navigator.clipboard.writeText(logText); setCopied(true); window.setTimeout(() => setCopied(false), 1200) }}><Clipboard size={15} /> {copied ? '已复制' : '复制'}</button></div>
             <div className="console-body" ref={terminalRef}>
-              {events.map((event) => <div key={event.index}><span>{event.timestamp.slice(11, 19)}</span><b>{event.stage.toUpperCase()}</b><em>{event.message}</em></div>)}
+              {events.map((event) => <div key={event.index}><span>{event.timestamp.slice(11, 19)}</span><b>{stageNames[event.stage] || event.stage}</b><em>{event.message}</em></div>)}
               {job.status === 'running' && <div className="console-cursor">▌</div>}
-              {job.error && <div className="console-error">ERROR · {job.error}</div>}
+              {job.error && <div className="console-error">错误 · {job.error}</div>}
             </div>
           </div>
           <div className={`integrity-card panel ${job.status}`}>
-            <div className="integrity-icon"><Database size={24} /></div>
-            <div><strong>{job.status === 'failed' ? 'Execution halted' : 'Data contract active'}</strong><span>{job.status === 'failed' ? job.error : '严格时间匹配、公共有效掩膜与确定性指标计算已启用。'}</span></div>
+            <div><strong>{job.status === 'failed' ? '任务已停止' : '资料完整性检查'}</strong><span>{job.status === 'failed' ? job.error : '严格时间匹配和公共有效区域已启用。'}</span></div>
           </div>
         </section>
       </div>

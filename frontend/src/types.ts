@@ -1,5 +1,6 @@
 export type Scope = 'all' | 'custom' | 'single'
 export type ViewName = 'task' | 'progress' | 'result' | 'archive'
+export type ThemeName = 'light' | 'dark'
 
 export interface CaseOption {
   id: string

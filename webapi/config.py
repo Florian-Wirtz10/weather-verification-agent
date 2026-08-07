@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 import os
 from pathlib import Path
+from threading import Lock
 
 from data_io.benchmark import BENCHMARK_MODEL_LABELS, build_benchmark_catalog
 from data_io.forecast_sources import (
@@ -45,6 +46,11 @@ BENCHMARK_ONLY_LABELS = set(CASES["2025-04-11"]["models"][2:])
 REGULAR_MODEL_LABELS = {"StormDiT", "风雷"}
 BENCHMARK_LABEL_TO_MODEL = {label: model for model, label in BENCHMARK_MODEL_LABELS.items()}
 
+# ``lru_cache`` protects its own dictionary, but it does not coalesce concurrent
+# misses.  Keep the cache lookup and a possible heavyweight catalog build inside
+# one critical section so a cold start can never build multiple catalogs at once.
+_catalog_build_lock = Lock()
+
 
 def stormdit_directories() -> tuple[str, ...]:
     raw = os.getenv(
@@ -77,7 +83,7 @@ def benchmark_model_ids(labels) -> tuple[str, ...]:
 
 
 @lru_cache(maxsize=4)
-def regular_catalog(case_id: str):
+def _regular_catalog_cached(case_id: str):
     case = CASES[case_id]
     return build_multimodel_catalog(
         stormdit_directories=stormdit_directories(),
@@ -86,11 +92,21 @@ def regular_catalog(case_id: str):
     )
 
 
+def regular_catalog(case_id: str):
+    with _catalog_build_lock:
+        return _regular_catalog_cached(case_id)
+
+
 @lru_cache(maxsize=1)
-def benchmark_catalog():
+def _benchmark_catalog_cached():
     package = Path(os.getenv("BENCHMARK_PACKAGE_DIR", "external/delivery/apr11_wuhan_full"))
     fenglei = Path(os.getenv("FENGLEI_CASE_DIR", "external/20250411风雷预测资料"))
     return build_benchmark_catalog(package, fenglei_directory=fenglei)
+
+
+def benchmark_catalog():
+    with _catalog_build_lock:
+        return _benchmark_catalog_cached()
 
 
 def public_case_options() -> list[dict]:

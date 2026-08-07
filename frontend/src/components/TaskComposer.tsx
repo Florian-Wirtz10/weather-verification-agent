@@ -1,17 +1,8 @@
 import {
-  Bot,
-  CalendarDays,
   Check,
-  ChevronRight,
-  Crosshair,
-  Database,
-  Layers3,
   LoaderCircle,
-  Map,
   Play,
   RotateCcw,
-  Send,
-  Sparkles,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
@@ -19,6 +10,7 @@ import type { CaseOption, Initialization, Scope, TaskPayload } from '../types'
 
 interface TaskComposerProps {
   onSubmit: (payload: TaskPayload) => Promise<void>
+  onBboxChange: (bbox: number[]) => void
 }
 
 const scopeOptions: { id: Scope; label: string; hint: string }[] = [
@@ -28,7 +20,7 @@ const scopeOptions: { id: Scope; label: string; hint: string }[] = [
 ]
 const DEFAULT_CASE_ID = '2025-04-11'
 
-export function TaskComposer({ onSubmit }: TaskComposerProps) {
+export function TaskComposer({ onSubmit, onBboxChange }: TaskComposerProps) {
   const [cases, setCases] = useState<CaseOption[]>([])
   const [caseId, setCaseId] = useState(DEFAULT_CASE_ID)
   const [models, setModels] = useState<string[]>(['StormDiT', '风雷'])
@@ -47,6 +39,10 @@ export function TaskComposer({ onSubmit }: TaskComposerProps) {
 
   const selectedCase = cases.find((item) => item.id === caseId)
   const benchmarkMode = models.some((model) => !['StormDiT', '风雷'].includes(model))
+
+  useEffect(() => {
+    onBboxChange(benchmarkMode ? [28.7, 32.51, 112.38, 116.19] : bbox)
+  }, [bbox, benchmarkMode, onBboxChange])
 
   useEffect(() => {
     api.options()
@@ -109,7 +105,7 @@ export function TaskComposer({ onSubmit }: TaskComposerProps) {
       { label: '目标模型', value: models.join(' · ') || '未选择' },
       { label: '观测基准', value: 'CREF 雷达组合反射率' },
       { label: '样本组织', value: scopeOptions.find((item) => item.id === scope)?.label || scope },
-      { label: '可用时效', value: `+${minLead}—+${maxLead} min` },
+      { label: '可用时效', value: `+${minLead}—+${maxLead} 分钟` },
     ]
   }, [initializations, selectedIds, models, scope])
 
@@ -171,27 +167,25 @@ export function TaskComposer({ onSubmit }: TaskComposerProps) {
     <div className="task-page">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">VERIFICATION WORKSPACE</div>
           <h1>创建强对流检验任务</h1>
-          <p>配置数据范围，描述分析目标；所有评分由确定性 Python 流程完成。</p>
+          <p>选择个例、模型和起报时次，配置本次检验范围。</p>
         </div>
-        <div className="data-contract"><Database size={16} /> Exact time · Common grid · CREF evidence</div>
       </div>
 
       <div className="task-grid">
         <section className="panel configuration-panel">
-          <div className="panel-title"><Crosshair size={18} /><span>检验配置</span><em>01</em></div>
-          <label className="field-label"><CalendarDays size={14} /> 检验个例</label>
+          <div className="panel-title"><span>检验配置</span><em>01</em></div>
+          <label className="field-label">检验个例</label>
           <select value={caseId} onChange={(event) => changeCase(event.target.value)}>
             {cases.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}
           </select>
 
-          <label className="field-label"><Layers3 size={14} /> 预报模型</label>
+          <label className="field-label">预报模型</label>
           {(['case', 'benchmark'] as const).map((family) => {
             const values = selectedCase?.model_groups[family] || []
             if (!values.length) return null
             return <div className="model-family" key={family}>
-              <span>{family === 'case' ? '业务个例检验' : 'Zero-shot Benchmark'}</span>
+              <span>{family === 'case' ? '业务模型' : '基线模型'}</span>
               <div className="model-grid">
                 {values.map((model) => (
                   <button
@@ -206,7 +200,7 @@ export function TaskComposer({ onSubmit }: TaskComposerProps) {
             </div>
           })}
 
-          <label className="field-label"><Map size={14} /> 检验范围</label>
+          <label className="field-label">检验范围</label>
           <div className="scope-grid">
             {scopeOptions.map((item) => (
               <button key={item.id} className={scope === item.id ? 'selected' : ''} onClick={() => setScope(item.id)}>
@@ -227,16 +221,16 @@ export function TaskComposer({ onSubmit }: TaskComposerProps) {
         </section>
 
         <section className="panel sample-panel">
-          <div className="panel-title"><Database size={18} /><span>起报样本</span><em>02</em></div>
+          <div className="panel-title"><span>起报样本</span><em>02</em></div>
           {loadingCatalog ? (
             <div className="loading-block"><LoaderCircle className="spin" /> 正在建立资料索引…</div>
           ) : (
             <div className="initialization-list">
-              {scope === 'all' && <div className="all-samples"><Sparkles size={18} /><strong>全部 {initializations.length} 个可用起报</strong><span>系统将流式汇总严格匹配样本</span></div>}
+              {scope === 'all' && <div className="all-samples"><strong>全部 {initializations.length} 个可用起报</strong><span>将汇总所有严格匹配样本</span></div>}
               {scope !== 'all' && initializations.map((item) => (
                 <button key={item.id} className={selectedIds.includes(item.id) ? 'selected' : ''} onClick={() => toggleInitialization(item.id)}>
                   <span className="select-indicator">{selectedIds.includes(item.id) ? <Check size={13} /> : null}</span>
-                  <span><strong>{item.label}</strong><small>+{item.available_leads[0]}—+{item.available_leads.at(-1)} min · {item.complete ? '完整' : '部分'}</small></span>
+                  <span><strong>{item.label}</strong><small>+{item.available_leads[0]}—+{item.available_leads.at(-1)} 分钟 · {item.complete ? '完整' : '部分'}</small></span>
                 </button>
               ))}
               {!initializations.length && <div className="empty-state">当前组合没有可检验起报</div>}
@@ -254,9 +248,9 @@ export function TaskComposer({ onSubmit }: TaskComposerProps) {
       </div>
 
       <section className="panel agent-panel">
-        <div className="agent-input-header"><div><Bot size={19} /><span>AGENT INPUT</span></div><button onClick={() => setPrompt(defaultText)}><RotateCcw size={14} /> 恢复推荐要求</button></div>
+        <div className="agent-input-header"><div><span>检验要求</span></div><button onClick={() => setPrompt(defaultText)}><RotateCcw size={14} /> 恢复推荐要求</button></div>
         <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="请输入检验分析需求…" />
-        <div className="agent-action"><span>{prompt.length} characters</span><Send size={17} /></div>
+        <div className="agent-action"><span>已输入 {prompt.length} 个字符</span></div>
         <div className="parsed-plan">
           <div className="plan-entities">
             <h3>规范化任务参数</h3>
@@ -265,7 +259,7 @@ export function TaskComposer({ onSubmit }: TaskComposerProps) {
           <div className="plan-stages">
             <h3>确定性执行流程</h3>
             {['严格时空匹配', '阈值事件提取', '列联表与连续量计算', '科学图表与证据解读'].map((item, index) => (
-              <div key={item}><b>{index + 1}</b><span>{item}</span>{index < 3 && <ChevronRight size={14} />}</div>
+              <div key={item}><b>{index + 1}</b><span>{item}</span></div>
             ))}
           </div>
         </div>
