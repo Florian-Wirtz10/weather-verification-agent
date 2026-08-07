@@ -5,7 +5,7 @@ import time
 from fastapi.testclient import TestClient
 import pytest
 
-from webapi import execution
+from webapi import execution, main as web_main
 from webapi.jobs import JobManager
 from webapi.main import app
 from webapi.schemas import TaskRequest
@@ -108,3 +108,13 @@ def test_artifact_path_rejects_unknown_job_ids_and_nested_names(tmp_path, monkey
         execution.artifact_path("../../outside", "metrics.csv")
     with pytest.raises(FileNotFoundError):
         execution.artifact_path("abcdef123456", "../secret.txt")
+
+
+def test_built_frontend_backdrop_is_served_as_a_real_static_file(tmp_path, monkeypatch):
+    backdrop = tmp_path / "weather-backdrop.jpg"
+    backdrop.write_bytes(b"jpeg-placeholder")
+    monkeypatch.setattr(web_main, "FRONTEND_DIST", tmp_path)
+
+    response = web_main.frontend_weather_backdrop()
+
+    assert response.path == backdrop

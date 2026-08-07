@@ -2,7 +2,6 @@ import {
   Activity,
   Archive,
   BarChart3,
-  CloudSun,
   Moon,
   Play,
   Radar,
@@ -10,12 +9,14 @@ import {
 } from 'lucide-react'
 import { lazy, Suspense, type PropsWithChildren } from 'react'
 import type { ThemeName, ViewName } from '../types'
+import { PlatformMark } from './PlatformMark'
 
 const ChinaLocatorMap = lazy(() => import('./ChinaLocatorMap').then((module) => ({ default: module.ChinaLocatorMap })))
 
 interface ShellProps extends PropsWithChildren {
   view: ViewName
   theme: ThemeName
+  introStage: 'active' | 'settling' | 'complete'
   locatorBbox: number[]
   hasJob: boolean
   hasResult: boolean
@@ -34,6 +35,7 @@ export function Shell({
   children,
   view,
   theme,
+  introStage,
   locatorBbox,
   hasJob,
   hasResult,
@@ -41,10 +43,14 @@ export function Shell({
   onThemeChange,
 }: ShellProps) {
   return (
-    <div className={`app-shell theme-${theme}`}>
+    <div
+      className={`app-shell theme-${theme} intro-${introStage}`}
+      inert={introStage !== 'complete' ? true : undefined}
+      aria-hidden={introStage !== 'complete' ? true : undefined}
+    >
       <header className="topbar">
         <div className="brand">
-          <div className="brand-mark" aria-hidden="true"><CloudSun size={20} /></div>
+          <div className="brand-mark" data-brand-mark aria-hidden="true"><PlatformMark /></div>
           <strong>强对流预报智能检验平台</strong>
         </div>
         <nav className="topnav" aria-label="主导航">

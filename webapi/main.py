@@ -138,6 +138,14 @@ if (FRONTEND_DIST / "assets").is_dir():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
 
+@app.get("/weather-backdrop.jpg", include_in_schema=False)
+def frontend_weather_backdrop():
+    backdrop = FRONTEND_DIST / "weather-backdrop.jpg"
+    if not backdrop.is_file():
+        raise HTTPException(status_code=404, detail="frontend backdrop not built")
+    return FileResponse(backdrop)
+
+
 @app.get("/{path:path}", include_in_schema=False)
 def frontend(path: str):
     index = FRONTEND_DIST / "index.html"
