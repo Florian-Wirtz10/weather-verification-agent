@@ -52,10 +52,12 @@ def plot_benchmark_score_curves(summary: pd.DataFrame, metric: str, thresholds):
         raise ValueError("benchmark summary is empty")
     if metric in {"mae", "rmse"}:
         thresholds = [float(summary["threshold_dbz"].min())]
+    column_count = min(2, len(thresholds))
+    row_count = math.ceil(len(thresholds) / column_count)
     fig, axes = plt.subplots(
-        1,
-        len(thresholds),
-        figsize=(6.2 * len(thresholds), 5.2),
+        row_count,
+        column_count,
+        figsize=(6.4 * column_count, 4.7 * row_count),
         sharey=metric not in {"mae", "rmse"},
         squeeze=False,
         layout="constrained",
@@ -78,8 +80,10 @@ def plot_benchmark_score_curves(summary: pd.DataFrame, metric: str, thresholds):
         axis.set_ylabel(METRIC_LABELS[metric])
         _score_limits(axis, metric)
         style_axes(axis)
+    for axis in axes.flat[len(thresholds) :]:
+        axis.set_visible(False)
     handles, labels = axes.flat[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="outside upper center", ncol=min(4, len(labels)), frameon=False)
+    fig.legend(handles, labels, loc="outside lower center", ncol=min(4, len(labels)), frameon=False)
     fig.suptitle(f"Zero-shot benchmark | {METRIC_LABELS[metric]} by forecast lead")
     return fig
 

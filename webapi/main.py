@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from webapi.config import public_case_options
+from webapi.config import public_case_options, public_data_metadata
 from webapi.execution import (
     artifact_path,
     default_prompt,
@@ -48,6 +48,11 @@ def health():
 @app.get("/api/catalog/options")
 def catalog_options():
     return {"cases": public_case_options()}
+
+
+@app.get("/api/catalog/metadata")
+def catalog_metadata():
+    return public_data_metadata()
 
 
 @app.post("/api/catalog/initializations")

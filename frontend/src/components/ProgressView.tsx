@@ -25,13 +25,31 @@ const stageNames: Record<string, string> = {
   interpret: '结果解读',
 }
 
+function elapsedLabel(seconds: number) {
+  const safe = Math.max(0, Number.isFinite(seconds) ? seconds : 0)
+  const minutes = Math.floor(safe / 60)
+  const remainder = safe - minutes * 60
+  return `T+${String(minutes).padStart(2, '0')}:${remainder.toFixed(1).padStart(4, '0')}`
+}
+
+function localTimeLabel(timestamp: string) {
+  return new Date(timestamp).toLocaleString()
+}
+
 export function ProgressView({ job, onJob, onComplete }: ProgressProps) {
   const [events, setEvents] = useState<JobEvent[]>([])
   const [copied, setCopied] = useState(false)
   const terminalRef = useRef<HTMLDivElement>(null)
+  const autoOpenResultRef = useRef(!['complete', 'failed'].includes(job.status))
+  const activeJobIdRef = useRef(job.id)
+  if (activeJobIdRef.current !== job.id) {
+    activeJobIdRef.current = job.id
+    autoOpenResultRef.current = !['complete', 'failed'].includes(job.status)
+  }
   const activeIndex = Math.max(0, stages.findIndex((item) => item.id === job.stage))
 
   useEffect(() => {
+    setEvents([])
     const source = new EventSource(`/api/jobs/${job.id}/events`)
     source.onmessage = (message) => {
       const event = JSON.parse(message.data) as JobEvent
@@ -45,7 +63,10 @@ export function ProgressView({ job, onJob, onComplete }: ProgressProps) {
         if (latest.status === 'complete' || latest.status === 'failed') {
           window.clearInterval(timer)
           source.close()
-          if (latest.status === 'complete') onComplete(latest)
+          if (latest.status === 'complete' && autoOpenResultRef.current) {
+            autoOpenResultRef.current = false
+            onComplete(latest)
+          }
         }
       } catch {
         // A transient poll failure must not terminate the SSE progress stream.
@@ -61,7 +82,7 @@ export function ProgressView({ job, onJob, onComplete }: ProgressProps) {
     terminalRef.current?.scrollTo({ top: terminalRef.current.scrollHeight, behavior: 'smooth' })
   }, [events])
 
-  const logText = useMemo(() => events.map((event) => `[${event.timestamp.slice(11, 19)}] ${stageNames[event.stage] || event.stage}  ${event.message}`).join('\n'), [events])
+  const logText = useMemo(() => events.map((event) => `[${elapsedLabel(event.elapsed_seconds)}] ${stageNames[event.stage] || event.stage}  ${event.message}`).join('\n'), [events])
 
   return (
     <div className="progress-page">
@@ -91,14 +112,14 @@ export function ProgressView({ job, onJob, onComplete }: ProgressProps) {
               )
             })}
           </div>
-          <div className="overall-progress"><div><span>总体进度</span><b>{Math.round(job.progress * 100)}%</b></div><div className="progress-track"><i style={{ width: `${job.progress * 100}%` }} /></div></div>
+          <div className="overall-progress"><div><span>总体进度</span><b>{job.status === 'complete' ? '已完成' : `${Math.round(job.progress * 100)}%`}</b></div><div className={`progress-track ${job.status}`}><i style={{ width: `${job.progress * 100}%` }} /></div></div>
         </section>
 
         <section className="console-column">
           <div className="console panel">
             <div className="console-header"><div>实时执行日志</div><button onClick={async () => { await navigator.clipboard.writeText(logText); setCopied(true); window.setTimeout(() => setCopied(false), 1200) }}><Clipboard size={15} /> {copied ? '已复制' : '复制'}</button></div>
             <div className="console-body" ref={terminalRef}>
-              {events.map((event) => <div key={event.index}><span>{event.timestamp.slice(11, 19)}</span><b>{stageNames[event.stage] || event.stage}</b><em>{event.message}</em></div>)}
+              {events.map((event) => <div key={event.index}><span title={`本机时间：${localTimeLabel(event.timestamp)}`}>{elapsedLabel(event.elapsed_seconds)}</span><b>{stageNames[event.stage] || event.stage}</b><em>{event.message}</em></div>)}
               {job.status === 'running' && <div className="console-cursor">▌</div>}
               {job.error && <div className="console-error">错误 · {job.error}</div>}
             </div>

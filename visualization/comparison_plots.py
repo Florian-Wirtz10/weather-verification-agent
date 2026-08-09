@@ -32,6 +32,18 @@ def _ordered_model_ids(values):
     ] + [model_id for model_id in present if model_id not in PLOT_LABELS]
 
 
+_FENGLEI_WEAK_ECHO_CUTOFF_DBZ = 15.0
+
+
+def _spatial_display_floor(model_ids):
+    """Use a common visual-only weak-echo cutoff whenever Fenglei is compared."""
+    return (
+        _FENGLEI_WEAK_ECHO_CUTOFF_DBZ
+        if any(str(model_id).lower() in {"fenglei", "风雷"} for model_id in model_ids)
+        else None
+    )
+
+
 def _style_score_axis(ax, metric, leads):
     ax.set(
         xlabel="Lead time (min)",
@@ -188,7 +200,8 @@ def plot_multimodel_reflectivity_frame(frame, *, title=None):
         float(observation.lat.min()),
         float(observation.lat.max()),
     )
-    cmap, norm = _reflectivity_cmap_norm()
+    minimum_display_dbz = _spatial_display_floor(model_ids)
+    cmap, norm = _reflectivity_cmap_norm(minimum_display_dbz)
     panels = [
         (field, PLOT_LABELS[model_id])
         for model_id, field in zip(model_ids, fields)
@@ -208,7 +221,7 @@ def plot_multimodel_reflectivity_frame(frame, *, title=None):
     image = None
     for axis, (field, label) in zip(axes, panels):
         image = axis.imshow(
-            _reflectivity_display_data(field.data),
+            _reflectivity_display_data(field.data, minimum_display_dbz),
             cmap=cmap,
             norm=norm,
             origin="lower",
@@ -223,7 +236,11 @@ def plot_multimodel_reflectivity_frame(frame, *, title=None):
         fig.colorbar(
             image,
             ax=list(axes),
-            label="Reflectivity (dBZ; display floor 0)",
+            label=(
+                f"Reflectivity (dBZ; display ≥{minimum_display_dbz:g})"
+                if minimum_display_dbz is not None
+                else "Reflectivity (dBZ; display floor 0)"
+            ),
             shrink=0.88,
         )
     fig.suptitle(
@@ -294,11 +311,12 @@ def plot_multimodel_same_valid_time_comparison(comparison, model_id: str):
         layout="constrained",
     )
     axes_flat = list(axes.flat)
-    cmap, norm = _reflectivity_cmap_norm()
+    minimum_display_dbz = _spatial_display_floor(comparison["model_ids"])
+    cmap, norm = _reflectivity_cmap_norm(minimum_display_dbz)
     image = None
     for axis, (field, title) in zip(axes_flat, panels):
         image = axis.imshow(
-            _reflectivity_display_data(field.data),
+            _reflectivity_display_data(field.data, minimum_display_dbz),
             cmap=cmap,
             norm=norm,
             origin="lower",
@@ -315,7 +333,11 @@ def plot_multimodel_same_valid_time_comparison(comparison, model_id: str):
         fig.colorbar(
             image,
             ax=[axis for axis in axes_flat if axis.get_visible()],
-            label="Reflectivity (dBZ; display floor 0)",
+            label=(
+                f"Reflectivity (dBZ; display ≥{minimum_display_dbz:g})"
+                if minimum_display_dbz is not None
+                else "Reflectivity (dBZ; display floor 0)"
+            ),
             shrink=0.86,
         )
     fig.suptitle(

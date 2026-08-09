@@ -10,12 +10,65 @@ from data_io.grid import GriddedField
 from visualization.comparison_plots import (
     plot_multimodel_forecast_observed_rate_scatter,
     plot_multimodel_multi_metric_curves,
+    plot_multimodel_reflectivity_frame,
     plot_multimodel_same_valid_time_comparison,
     plot_multimodel_score_distribution,
     plot_multimodel_variable_correlation_heatmap,
     plot_triplet_score_curves,
     render_multimodel_reflectivity_animation,
 )
+
+
+def _reflectivity_frame(model_ids):
+    init_time = datetime(2025, 4, 11)
+    valid_time = init_time + timedelta(minutes=6)
+    lat = np.array([30.0, 31.0])
+    lon = np.array([112.0, 113.0])
+
+    def field(product, values):
+        return GriddedField(
+            data=np.asarray(values, dtype=float),
+            lat=lat,
+            lon=lon,
+            valid_time=valid_time,
+            product=product,
+            units="dBZ",
+            init_time=init_time,
+            lead_minutes=6,
+        )
+
+    all_forecasts = {
+        "stormdit": field("StormDiT", [[5, 15], [20, 30]]),
+        "fenglei": field("Fenglei", [[-18, 15], [20, 30]]),
+    }
+    return {
+        "lead_minutes": 6,
+        "forecasts": {model_id: all_forecasts[model_id] for model_id in model_ids},
+        "observation": field("CREF", [[5, 15], [20, 30]]),
+    }
+
+
+def test_spatial_comparison_hides_weak_echoes_for_every_panel_with_fenglei():
+    figure = plot_multimodel_reflectivity_frame(_reflectivity_frame(["stormdit", "fenglei"]))
+    try:
+        for axis in figure.axes[:3]:
+            mask = np.ma.getmaskarray(axis.images[0].get_array())
+            assert mask[0, 0]
+            assert not mask[0, 1]
+        assert "display ≥15" in figure.axes[-1].get_ylabel()
+    finally:
+        plt.close(figure)
+
+
+def test_stormdit_only_spatial_comparison_retains_weak_echoes():
+    figure = plot_multimodel_reflectivity_frame(_reflectivity_frame(["stormdit"]))
+    try:
+        for axis in figure.axes[:2]:
+            mask = np.ma.getmaskarray(axis.images[0].get_array())
+            assert not mask[0, 0]
+        assert "display floor 0" in figure.axes[-1].get_ylabel()
+    finally:
+        plt.close(figure)
 
 
 def test_triplet_score_plot_uses_product_line_styles_without_grid():

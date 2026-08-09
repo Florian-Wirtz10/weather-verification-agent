@@ -1,16 +1,20 @@
 import {
+  BookOpen,
   Check,
   LoaderCircle,
   Play,
   RotateCcw,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { CaseOption, Initialization, Scope, TaskPayload } from '../types'
 
 interface TaskComposerProps {
   onSubmit: (payload: TaskPayload) => Promise<void>
   onBboxChange: (bbox: number[]) => void
+  initialDraft?: Partial<TaskPayload>
+  onOpenModels: () => void
+  onOpenData: () => void
 }
 
 const scopeOptions: { id: Scope; label: string; hint: string }[] = [
@@ -20,22 +24,27 @@ const scopeOptions: { id: Scope; label: string; hint: string }[] = [
 ]
 const DEFAULT_CASE_ID = '2025-04-11'
 
-export function TaskComposer({ onSubmit, onBboxChange }: TaskComposerProps) {
+export function TaskComposer({ onSubmit, onBboxChange, initialDraft, onOpenModels, onOpenData }: TaskComposerProps) {
   const [cases, setCases] = useState<CaseOption[]>([])
-  const [caseId, setCaseId] = useState(DEFAULT_CASE_ID)
-  const [models, setModels] = useState<string[]>(['StormDiT', '风雷'])
-  const [scope, setScope] = useState<Scope>('single')
-  const [bbox, setBbox] = useState<number[]>([29, 33.5, 108, 116.5])
-  const [completeOnly, setCompleteOnly] = useState(true)
+  const [caseId, setCaseId] = useState(initialDraft?.case_id || DEFAULT_CASE_ID)
+  const [models, setModels] = useState<string[]>(initialDraft?.models || ['StormDiT', '风雷'])
+  const [scope, setScope] = useState<Scope>(initialDraft?.scope || 'single')
+  const [bbox, setBbox] = useState<number[]>(initialDraft?.bbox || [29, 33.5, 108, 116.5])
+  const [completeOnly, setCompleteOnly] = useState(initialDraft?.complete_only ?? true)
   const [initializations, setInitializations] = useState<Initialization[]>([])
-  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [selectedIds, setSelectedIds] = useState<string[]>(initialDraft?.initialization_ids || [])
   const [validTimes, setValidTimes] = useState<{ value: string; label: string }[]>([])
-  const [validTime, setValidTime] = useState<string | null>(null)
-  const [prompt, setPrompt] = useState('')
+  const [validTime, setValidTime] = useState<string | null>(initialDraft?.comparison_valid_time || null)
+  const [prompt, setPrompt] = useState(initialDraft?.prompt || '')
   const [defaultText, setDefaultText] = useState('')
   const [loadingCatalog, setLoadingCatalog] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const seededSelectionRef = useRef(initialDraft?.initialization_ids || [])
+  const seededPromptRef = useRef(initialDraft?.prompt || '')
+  const seededValidTimeRef = useRef(initialDraft?.comparison_valid_time || null)
+  const initialCaseIdRef = useRef(caseId)
+  const hasSeededBboxRef = useRef(Boolean(initialDraft?.bbox))
 
   const selectedCase = cases.find((item) => item.id === caseId)
   const benchmarkMode = models.some((model) => !['StormDiT', '风雷'].includes(model))
@@ -48,8 +57,10 @@ export function TaskComposer({ onSubmit, onBboxChange }: TaskComposerProps) {
     api.options()
       .then(({ cases: values }) => {
         setCases(values)
-        const first = values.find((item) => item.id === DEFAULT_CASE_ID) || values[0]
-        if (first) setBbox(first.default_bbox)
+        const selected = values.find((item) => item.id === initialCaseIdRef.current)
+        const fallback = values.find((item) => item.id === DEFAULT_CASE_ID) || values[0]
+        if (!selected && fallback) setCaseId(fallback.id)
+        if (!hasSeededBboxRef.current && (selected || fallback)) setBbox((selected || fallback).default_bbox)
       })
       .catch((reason) => setError(reason.message))
   }, [])
@@ -61,7 +72,11 @@ export function TaskComposer({ onSubmit, onBboxChange }: TaskComposerProps) {
     api.initializations(caseId, models, completeOnly)
       .then(({ initializations: values }) => {
         setInitializations(values)
-        if (scope === 'single') setSelectedIds(values.slice(0, 1).map((item) => item.id))
+        const availableIds = new Set(values.map((item) => item.id))
+        const seeded = seededSelectionRef.current.filter((id) => availableIds.has(id))
+        seededSelectionRef.current = []
+        if (seeded.length) setSelectedIds(scope === 'single' ? seeded.slice(0, 1) : seeded.slice(0, 8))
+        else if (scope === 'single') setSelectedIds(values.slice(0, 1).map((item) => item.id))
         else if (scope === 'custom') setSelectedIds(values.slice(0, 3).map((item) => item.id))
         else setSelectedIds([])
       })
@@ -76,8 +91,13 @@ export function TaskComposer({ onSubmit, onBboxChange }: TaskComposerProps) {
     if (!models.length) return
     api.defaultPrompt(caseId, models, scope, completeOnly)
       .then(({ prompt: value }) => {
-        setPrompt(value)
         setDefaultText(value)
+        if (seededPromptRef.current) {
+          setPrompt(seededPromptRef.current)
+          seededPromptRef.current = ''
+        } else {
+          setPrompt(value)
+        }
       })
       .catch((reason) => setError(reason.message))
   }, [caseId, models, scope, completeOnly])
@@ -91,7 +111,13 @@ export function TaskComposer({ onSubmit, onBboxChange }: TaskComposerProps) {
     api.commonTimes(caseId, models, selectedIds, completeOnly)
       .then(({ valid_times }) => {
         setValidTimes(valid_times)
-        setValidTime(valid_times[Math.floor(valid_times.length / 2)]?.value || null)
+        const seeded = seededValidTimeRef.current
+        setValidTime(
+          (seeded && valid_times.some((item) => item.value === seeded) ? seeded : null)
+          || valid_times[Math.floor(valid_times.length / 2)]?.value
+          || null,
+        )
+        seededValidTimeRef.current = null
       })
       .catch((reason) => setError(reason.message))
   }, [caseId, models, scope, selectedIds, completeOnly, benchmarkMode])
@@ -174,7 +200,7 @@ export function TaskComposer({ onSubmit, onBboxChange }: TaskComposerProps) {
 
       <div className="task-grid">
         <section className="panel configuration-panel">
-          <div className="panel-title"><span>检验配置</span><em>01</em></div>
+          <div className="panel-title"><span>检验配置</span><button className="panel-link" onClick={onOpenData}><BookOpen size={13} /> 了解资料</button><em>01</em></div>
           <label className="field-label">检验个例</label>
           <select value={caseId} onChange={(event) => changeCase(event.target.value)}>
             {cases.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}
@@ -248,7 +274,7 @@ export function TaskComposer({ onSubmit, onBboxChange }: TaskComposerProps) {
       </div>
 
       <section className="panel agent-panel">
-        <div className="agent-input-header"><div><span>检验要求</span></div><button onClick={() => setPrompt(defaultText)}><RotateCcw size={14} /> 恢复推荐要求</button></div>
+        <div className="agent-input-header"><div><span>检验要求</span><button className="inline-reference" onClick={onOpenModels}><BookOpen size={13} /> 查看模型与提示词</button></div><button onClick={() => setPrompt(defaultText)}><RotateCcw size={14} /> 恢复推荐要求</button></div>
         <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="请输入检验分析需求…" />
         <div className="agent-action"><span>已输入 {prompt.length} 个字符</span></div>
         <div className="parsed-plan">

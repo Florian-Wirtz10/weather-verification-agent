@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
@@ -100,6 +101,29 @@ def test_benchmark_plots_render_selected_models_and_thresholds():
 
     assert len(score.axes) == 2
     assert len(fss.axes) == 3
+
+
+def test_benchmark_four_threshold_titles_use_a_two_by_two_layout():
+    rows = []
+    for threshold in (10.0, 20.0, 30.0, 40.0):
+        for lead in (6, 12):
+            rows.append(
+                {
+                    "model": "StormDiT",
+                    "lead_minutes": lead,
+                    "threshold_dbz": threshold,
+                    "csi": 0.5,
+                }
+            )
+    figure = plot_benchmark_score_curves(pd.DataFrame(rows), "csi", [10, 20, 30, 40])
+    try:
+        assert len(figure.axes) == 4
+        assert [axis.get_title() for axis in figure.axes] == [
+            "10 dBZ", "20 dBZ", "30 dBZ", "40 dBZ"
+        ]
+        assert len({tuple(axis.get_position().bounds[:2]) for axis in figure.axes}) == 4
+    finally:
+        plt.close(figure)
 
 
 @pytest.mark.skipif(

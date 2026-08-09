@@ -1,4 +1,4 @@
-import type { CaseOption, Initialization, Job, Scope, TaskPayload } from './types'
+import type { CaseOption, DataMetadata, Initialization, Job, Scope, TaskPayload } from './types'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -15,6 +15,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => request<{ status: string }>('/api/health'),
   options: () => request<{ cases: CaseOption[] }>('/api/catalog/options'),
+  metadata: () => request<DataMetadata>('/api/catalog/metadata'),
   initializations: (caseId: string, models: string[], completeOnly: boolean) =>
     request<{ initializations: Initialization[] }>('/api/catalog/initializations', {
       method: 'POST',

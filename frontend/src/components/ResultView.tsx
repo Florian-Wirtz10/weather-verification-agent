@@ -64,7 +64,7 @@ export function ResultView({ job, theme }: { job: Job; theme: ThemeName }) {
       <header className="result-header">
         <div>
           <h1>{kindTitle}</h1>
-          <div className="result-context"><span>{models.map(display).join(' 与 ')}</span><span>严格匹配完成</span><span>任务 {job.id.toUpperCase()}</span></div>
+          <div className="result-context"><span>{models.map(display).join(' 与 ')}</span><span>任务 {job.id.toUpperCase()}</span></div>
         </div>
         <div className="download-actions">
           {result.downloads.map((item) => <a href={item.url} download key={item.name}><FileDown size={15} /> {item.label}</a>)}
@@ -116,7 +116,7 @@ export function ResultView({ job, theme }: { job: Job; theme: ThemeName }) {
         </aside>
       </div>
 
-      {expanded && <div className="image-modal" onClick={() => setExpanded(null)}><div onClick={(event) => event.stopPropagation()}><button onClick={() => setExpanded(null)}><X size={20} /></button><img src={expanded.url} alt={expanded.label} /><span>{expanded.label}</span></div></div>}
+      {expanded && <div className="image-modal" onClick={() => setExpanded(null)}><div className="image-modal-dialog" onClick={(event) => event.stopPropagation()}><header><strong>{expanded.label}</strong><button onClick={() => setExpanded(null)} aria-label="关闭全屏图片" title="退出全屏"><X size={20} /></button></header><div className="image-modal-canvas"><img src={expanded.url} alt={expanded.label} /></div></div></div>}
     </div>
   )
 }

@@ -1,5 +1,5 @@
 import ReactECharts from 'echarts-for-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { CurveSeries, ThemeName } from '../types'
 
 const modelColors: Record<string, string> = {
@@ -17,12 +17,23 @@ function modelColor(model: string) {
 }
 
 export function MetricChart({ curves, theme }: { curves: CurveSeries[]; theme: ThemeName }) {
-  const metrics = [...new Set(curves.map((item) => item.metric))]
-  const thresholds = [...new Set(curves.map((item) => item.threshold_dbz))].sort((a, b) => a - b)
+  const metrics = useMemo(() => [...new Set(curves.map((item) => item.metric))], [curves])
+  const thresholds = useMemo(
+    () => [...new Set(curves.map((item) => item.threshold_dbz))].sort((a, b) => a - b),
+    [curves],
+  )
   const [metric, setMetric] = useState(metrics[0] || 'csi')
   const [threshold, setThreshold] = useState(thresholds[0] || 20)
   const selected = curves.filter((item) => item.metric === metric && item.threshold_dbz === threshold)
   const dark = theme === 'dark'
+
+  useEffect(() => {
+    if (!metrics.includes(metric)) setMetric(metrics[0] || 'csi')
+  }, [metric, metrics])
+
+  useEffect(() => {
+    if (!thresholds.includes(threshold)) setThreshold(thresholds[0] || 20)
+  }, [threshold, thresholds])
   const option = useMemo(() => ({
     backgroundColor: 'transparent',
     animationDuration: 720,
@@ -84,7 +95,7 @@ export function MetricChart({ curves, theme }: { curves: CurveSeries[]; theme: T
       <div className="chart-toolbar">
         <div><strong>指标随预报时效变化</strong><span>{threshold} dBZ 阈值</span></div>
         <div>
-          <select value={metric} onChange={(event) => setMetric(event.target.value)}>{metrics.map((item) => <option key={item}>{item.toUpperCase()}</option>)}</select>
+          <select value={metric} onChange={(event) => setMetric(event.target.value)}>{metrics.map((item) => <option key={item} value={item}>{item.toUpperCase()}</option>)}</select>
           <select value={threshold} onChange={(event) => setThreshold(Number(event.target.value))}>{thresholds.map((item) => <option key={item} value={item}>{item} dBZ</option>)}</select>
         </div>
       </div>

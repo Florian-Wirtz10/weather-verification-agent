@@ -70,18 +70,24 @@ _REFLECTIVITY_COLORS = [
 _REFLECTIVITY_DISPLAY_FLOOR_DBZ = 0.0
 
 
-def _reflectivity_cmap_norm():
+def _reflectivity_cmap_norm(minimum_display_dbz=None):
+    start = 0
+    if minimum_display_dbz is not None:
+        start = int(np.searchsorted(_REFLECTIVITY_BOUNDS, float(minimum_display_dbz)))
+        start = min(max(start, 0), len(_REFLECTIVITY_COLORS) - 1)
+    bounds = _REFLECTIVITY_BOUNDS[start:]
+    colors = _REFLECTIVITY_COLORS[start:]
     cmap = ListedColormap(
-        _REFLECTIVITY_COLORS,
+        colors,
         under="#ffffff",
-        over=_REFLECTIVITY_COLORS[-1],
+        over=colors[-1],
         bad="#ffffff",
     )
-    norm = BoundaryNorm(_REFLECTIVITY_BOUNDS, len(_REFLECTIVITY_COLORS), clip=False)
+    norm = BoundaryNorm(bounds, len(colors), clip=False)
     return cmap, norm
 
 
-def _reflectivity_display_data(data):
+def _reflectivity_display_data(data, minimum_display_dbz=None):
     """Return a visual-only reflectivity representation on a common no-echo scale.
 
     The 风雷 REFMOSAIC product encodes its no-echo background as a negative
@@ -91,7 +97,11 @@ def _reflectivity_display_data(data):
     are deliberately left unchanged.
     """
     values = np.asarray(np.ma.filled(data, np.nan), dtype=float)
-    return np.maximum(values, _REFLECTIVITY_DISPLAY_FLOOR_DBZ)
+    values = np.maximum(values, _REFLECTIVITY_DISPLAY_FLOOR_DBZ)
+    if minimum_display_dbz is not None:
+        values = values.copy()
+        values[values < float(minimum_display_dbz)] = np.nan
+    return values
 
 
 def _diverging_cmap():

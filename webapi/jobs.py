@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import threading
+import time
 import uuid
 
 
@@ -23,6 +24,7 @@ class Job:
     result: dict | None = None
     error: str | None = None
     events: list[dict] = field(default_factory=list)
+    created_monotonic: float = field(default_factory=time.perf_counter, repr=False)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def update(self, stage: str, message: str, progress: float) -> None:
@@ -36,7 +38,8 @@ class Job:
                     "stage": stage,
                     "message": message,
                     "progress": self.progress,
-                    "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                    "elapsed_seconds": round(time.perf_counter() - self.created_monotonic, 3),
                 }
             )
 
@@ -49,6 +52,7 @@ class Job:
                 "progress": self.progress,
                 "message": self.message,
                 "created_at": self.created_at,
+                "request": self.request,
                 "error": self.error,
                 "result": self.result if self.status == "complete" else None,
             }

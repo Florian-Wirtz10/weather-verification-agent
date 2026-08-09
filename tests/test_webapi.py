@@ -22,6 +22,11 @@ def test_health_and_public_options_do_not_touch_large_data_catalogs():
     assert case_2025["model_groups"]["case"] == ["StormDiT", "风雷"]
     assert "ConvLSTM" in case_2025["model_groups"]["benchmark"]
 
+    metadata = client.get("/api/catalog/metadata").json()
+    assert metadata["llm"]["model"] == "deepseek-chat"
+    assert {item["name"] for item in metadata["products"]} >= {"StormDiT", "风雷", "CREF"}
+    assert any("严格相同" in rule for rule in metadata["rules"])
+
 
 def test_default_prompt_changes_with_scope_and_model_family():
     regular = client.post(
@@ -93,7 +98,9 @@ def test_job_manager_exposes_progress_and_result():
     assert public["status"] == "complete"
     assert public["progress"] == 1.0
     assert public["result"]["answer"] == 42
+    assert public["request"] == {"value": 21}
     assert any(event["stage"] == "compute" for event in job.events)
+    assert all(event["elapsed_seconds"] >= 0 for event in job.events)
 
 
 def test_artifact_path_rejects_unknown_job_ids_and_nested_names(tmp_path, monkeypatch):

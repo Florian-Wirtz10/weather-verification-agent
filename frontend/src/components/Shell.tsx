@@ -21,6 +21,7 @@ interface ShellProps extends PropsWithChildren {
   hasJob: boolean
   hasResult: boolean
   onNavigate: (view: ViewName) => void
+  onNewTask: () => void
   onThemeChange: (theme: ThemeName) => void
 }
 
@@ -40,6 +41,7 @@ export function Shell({
   hasJob,
   hasResult,
   onNavigate,
+  onNewTask,
   onThemeChange,
 }: ShellProps) {
   return (
@@ -54,11 +56,14 @@ export function Shell({
           <strong>强对流预报智能检验平台</strong>
         </div>
         <nav className="topnav" aria-label="主导航">
-          <button className={view === 'task' ? 'active' : ''} onClick={() => onNavigate('task')}>
-            检验工作台
+          <button className={view === 'models' ? 'active' : ''} onClick={() => onNavigate('models')}>
+            模型与提示词
           </button>
-          <button className={view === 'result' ? 'active' : ''} onClick={() => hasResult && onNavigate('result')}>
-            分析报告
+          <button className={view === 'data' ? 'active' : ''} onClick={() => onNavigate('data')}>
+            数据资料
+          </button>
+          <button className={['task', 'progress', 'result', 'archive'].includes(view) ? 'active' : ''} onClick={() => onNavigate('task')}>
+            检验工作台
           </button>
         </nav>
         <button
@@ -74,7 +79,7 @@ export function Shell({
       </header>
 
       <aside className="sidebar">
-        <button className="execute-button" onClick={() => onNavigate('task')}>
+        <button className="execute-button" onClick={onNewTask}>
           <Play size={16} fill="currentColor" /> 新建检验任务
         </button>
         <div className="side-nav">

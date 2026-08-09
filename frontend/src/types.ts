@@ -1,5 +1,5 @@
 export type Scope = 'all' | 'custom' | 'single'
-export type ViewName = 'task' | 'progress' | 'result' | 'archive'
+export type ViewName = 'models' | 'data' | 'task' | 'progress' | 'result' | 'archive'
 export type ThemeName = 'light' | 'dark'
 
 export interface CaseOption {
@@ -9,6 +9,23 @@ export interface CaseOption {
   model_groups: { case: string[]; benchmark: string[] }
   default_bbox: number[]
   scopes: Scope[]
+}
+
+export interface ProductMetadata {
+  name: string
+  kind: string
+  format: string
+  grid: string
+  clock: string
+  cadence: string
+  domain: string
+}
+
+export interface DataMetadata {
+  llm: { provider: string; model: string; role: string }
+  products: ProductMetadata[]
+  cases: { id: string; label: string; availability: string }[]
+  rules: string[]
 }
 
 export interface Initialization {
@@ -38,6 +55,7 @@ export interface JobEvent {
   message: string
   progress: number
   timestamp: string
+  elapsed_seconds: number
 }
 
 export interface Artifact {
@@ -80,6 +98,7 @@ export interface Job {
   progress: number
   message: string
   created_at: string
+  request?: TaskPayload
   error: string | null
   result: VerificationResult | null
 }

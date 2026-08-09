@@ -32,6 +32,20 @@ def test_reflectivity_display_uses_a_common_zero_no_echo_floor():
     assert np.isnan(displayed[0, 4])
 
 
+def test_reflectivity_display_can_apply_a_visual_only_weak_echo_cutoff():
+    displayed = _reflectivity_display_data(
+        np.array([[-18.0, 0.0, 10.0, 15.0, 30.0, np.nan]]),
+        minimum_display_dbz=15,
+    )
+
+    assert np.isnan(displayed[0, :3]).all()
+    np.testing.assert_allclose(displayed[0, 3:5], [15.0, 30.0])
+    assert np.isnan(displayed[0, 5])
+    cmap, norm = _reflectivity_cmap_norm(15)
+    np.testing.assert_allclose(norm.boundaries[0], 15.0)
+    np.testing.assert_allclose(cmap(norm(17.0)), (1.0, 1.0, 84 / 255, 1.0))
+
+
 def test_reflectivity_colour_table_matches_the_course_threshold_reference():
     cmap, norm = _reflectivity_cmap_norm()
 
