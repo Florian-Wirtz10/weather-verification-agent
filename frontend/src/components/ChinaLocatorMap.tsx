@@ -16,9 +16,16 @@ echarts.registerMap(MAP_NAME, chinaGeoJson)
 interface ChinaLocatorMapProps {
   bbox: number[]
   theme: ThemeName
+  isDockTarget?: boolean
+  showRegion?: boolean
 }
 
-export function ChinaLocatorMap({ bbox, theme }: ChinaLocatorMapProps) {
+export function ChinaLocatorMap({
+  bbox,
+  theme,
+  isDockTarget = false,
+  showRegion = false,
+}: ChinaLocatorMapProps) {
   const [south, north, west, east] = bbox
   const dark = theme === 'dark'
 
@@ -50,7 +57,7 @@ export function ChinaLocatorMap({ bbox, theme }: ChinaLocatorMapProps) {
         polyline: true,
         silent: true,
         zlevel: 2,
-        data: [{
+        data: showRegion ? [{
           coords: [
             [west, south],
             [west, north],
@@ -58,7 +65,10 @@ export function ChinaLocatorMap({ bbox, theme }: ChinaLocatorMapProps) {
             [east, south],
             [west, south],
           ],
-        }],
+        }] : [],
+        animationDuration: 680,
+        animationDelay: showRegion ? 180 : 0,
+        animationEasing: 'cubicOut',
         lineStyle: {
           color: dark ? '#ffd06b' : '#c95e26',
           width: 2.4,
@@ -68,10 +78,14 @@ export function ChinaLocatorMap({ bbox, theme }: ChinaLocatorMapProps) {
         },
       },
     ],
-  }), [dark, east, north, south, west])
+  }), [dark, east, north, showRegion, south, west])
 
   return (
-    <section className="locator-map" aria-label="当前检验区域">
+    <section
+      className="locator-map"
+      aria-label="当前检验区域"
+      data-locator-map={isDockTarget ? true : undefined}
+    >
       <div className="locator-map-title">
         <strong>检验区域</strong>
         <span>中国</span>

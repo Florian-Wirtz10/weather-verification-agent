@@ -93,8 +93,13 @@ export function Shell({
             )
           })}
         </div>
-        <Suspense fallback={<div className="locator-map locator-map-loading" aria-hidden="true" />}>
-          <ChinaLocatorMap bbox={locatorBbox} theme={theme} />
+        <Suspense fallback={<div className="locator-map locator-map-loading" data-locator-map aria-hidden="true" />}>
+          <ChinaLocatorMap
+            bbox={locatorBbox}
+            theme={theme}
+            isDockTarget
+            showRegion={introStage === 'complete'}
+          />
         </Suspense>
         <div className="sidebar-meta">
           <strong>当前资料</strong>

@@ -58,7 +58,7 @@ export default function App() {
         {view === 'archive' && <ArchiveView onOpen={openJob} />}
       </Shell>
       {introStage !== 'complete' && (
-        <IntroTransition theme={theme} onSettling={settleIntro} onComplete={completeIntro} />
+        <IntroTransition theme={theme} bbox={locatorBbox} onSettling={settleIntro} onComplete={completeIntro} />
       )}
     </>
   )

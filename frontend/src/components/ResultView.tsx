@@ -1,11 +1,10 @@
 import {
-  ArrowDownRight,
   Download,
   Expand,
   FileDown,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Artifact, Job, ThemeName } from '../types'
 import { MetricChart } from './MetricChart'
@@ -20,36 +19,18 @@ function display(value: unknown): string {
 function GalleryImage({
   item,
   number,
-  active,
-  onActivate,
   onExpand,
 }: {
   item: Artifact
   number: number
-  active: boolean
-  onActivate: (number: number) => void
   onExpand: (item: Artifact) => void
 }) {
   return (
-    <article
-      id={`figure-${number}`}
-      className={`gallery-card figure-target ${active ? 'figure-active' : ''}`}
-      data-figure-number={number}
-      onPointerEnter={() => onActivate(number)}
-    >
+    <article className="gallery-card">
       <div className="gallery-image"><img src={item.url} alt={item.label} /><button onClick={() => onExpand(item)}><Expand size={16} /></button></div>
       <div><span className="figure-number">图 {number}</span><strong>{item.label}</strong><a href={item.url} download><Download size={14} /> {item.mime === 'image/gif' ? 'GIF' : 'PNG'}</a>{item.svg_url && <a href={item.svg_url} download>SVG</a>}</div>
     </article>
   )
-}
-
-function linkFigureReferences(markdown: string, figureCount: number) {
-  const separated = markdown.replace(/([。；])\s*(?=(?:如)?图\s*\d+)/g, '$1\n\n')
-  return separated.replace(/图\s*(\d+)/g, (match, value, offset, source) => {
-    const number = Number(value)
-    if (number < 1 || number > figureCount || source[offset - 1] === '[') return match
-    return `[${match}](#figure-${number})`
-  })
 }
 
 export function ResultView({ job, theme }: { job: Job; theme: ThemeName }) {
@@ -57,9 +38,6 @@ export function ResultView({ job, theme }: { job: Job; theme: ThemeName }) {
   const [frameIndex, setFrameIndex] = useState(0)
   const [expanded, setExpanded] = useState<Artifact | null>(null)
   const [tableOpen, setTableOpen] = useState(false)
-  const [activeFigure, setActiveFigure] = useState<number | null>(null)
-  const insightRef = useRef<HTMLElement | null>(null)
-  const activeFigureLock = useRef({ number: 0, until: 0 })
   const summaryColumns = useMemo(() => {
     const keys = new Set<string>()
     const summaryTable = result?.summary_table || []
@@ -67,87 +45,6 @@ export function ResultView({ job, theme }: { job: Job; theme: ThemeName }) {
     return [...keys]
   }, [result])
 
-  const linkedInsight = useMemo(
-    () => linkFigureReferences(result?.insight || '', result?.gallery.length || 0),
-    [result],
-  )
-
-  const activateFigure = useCallback((number: number, lockMilliseconds = 650) => {
-    activeFigureLock.current = { number, until: performance.now() + lockMilliseconds }
-    setActiveFigure(number)
-  }, [])
-
-  const openFigure = useCallback((number: number) => {
-    activateFigure(number, 1500)
-    document.getElementById(`figure-${number}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }, [activateFigure])
-
-  useEffect(() => {
-    const targets = [...document.querySelectorAll<HTMLElement>('.figure-target[data-figure-number]')]
-    if (!targets.length) return
-    let frame = 0
-    let lockRelease = 0
-    const syncNearestFigure = () => {
-      const remainingLock = activeFigureLock.current.until - performance.now()
-      if (remainingLock > 0) {
-        window.clearTimeout(lockRelease)
-        lockRelease = window.setTimeout(syncNearestFigure, remainingLock + 20)
-        return
-      }
-      const viewportCenter = window.innerHeight / 2
-      const preferredNumber = activeFigureLock.current.number
-      const nearest = targets
-        .map((target) => {
-          const rect = target.getBoundingClientRect()
-          return {
-            number: Number(target.dataset.figureNumber),
-            visible: rect.bottom > 60 && rect.top < window.innerHeight,
-            distance: Math.abs(rect.top + rect.height / 2 - viewportCenter),
-          }
-        })
-        .filter((item) => item.visible)
-        .sort((left, right) => {
-          const distanceDifference = left.distance - right.distance
-          if (Math.abs(distanceDifference) > 1) return distanceDifference
-          if (left.number === preferredNumber) return -1
-          if (right.number === preferredNumber) return 1
-          return left.number - right.number
-        })[0]
-      if (nearest) setActiveFigure(nearest.number)
-    }
-    const handleScroll = () => {
-      window.cancelAnimationFrame(frame)
-      frame = window.requestAnimationFrame(syncNearestFigure)
-    }
-    window.addEventListener('scroll', handleScroll, { passive: true })
-    syncNearestFigure()
-    return () => {
-      window.cancelAnimationFrame(frame)
-      window.clearTimeout(lockRelease)
-      window.removeEventListener('scroll', handleScroll)
-    }
-  }, [result])
-
-  useEffect(() => {
-    const panel = insightRef.current
-    if (!panel) return
-    panel.querySelectorAll('.figure-reference-context').forEach((element) => {
-      element.classList.remove('figure-reference-context')
-    })
-    if (activeFigure === null) return
-    const references = panel.querySelectorAll<HTMLElement>(`[data-figure-reference="${activeFigure}"]`)
-    references.forEach((reference) => {
-      reference.closest('p, li')?.classList.add('figure-reference-context')
-    })
-    if (references[0]) {
-      const panelTop = panel.getBoundingClientRect().top
-      const referenceTop = references[0].getBoundingClientRect().top
-      panel.scrollTo({
-        top: panel.scrollTop + referenceTop - panelTop - 72,
-        behavior: 'smooth',
-      })
-    }
-  }, [activeFigure])
   if (!result) return <div className="empty-state">结果尚未生成</div>
 
   const frame = result.spatial_frames[frameIndex]
@@ -197,7 +94,7 @@ export function ResultView({ job, theme }: { job: Job; theme: ThemeName }) {
 
           <section className="gallery-section">
             <div className="section-heading"><div><strong>科学图表</strong></div><span>{result.gallery.length} 幅</span></div>
-            <div className="gallery-grid">{result.gallery.map((item, index) => <GalleryImage key={item.name} item={item} number={index + 1} active={activeFigure === index + 1} onActivate={activateFigure} onExpand={setExpanded} />)}</div>
+            <div className="gallery-grid">{result.gallery.map((item, index) => <GalleryImage key={item.name} item={item} number={index + 1} onExpand={setExpanded} />)}</div>
           </section>
 
           {result.summary_table.length > 0 && (
@@ -210,28 +107,10 @@ export function ResultView({ job, theme }: { job: Job; theme: ThemeName }) {
           )}
         </div>
 
-        <aside className="insight-panel panel" ref={insightRef}>
+        <aside className="insight-panel panel">
           <div className="insight-heading"><div><strong>AI解读</strong></div></div>
           <div className="insight-content">
-            <ReactMarkdown components={{
-              a: ({ href, children }) => {
-                const match = href?.match(/^#figure-(\d+)$/)
-                if (!match) return <a href={href}>{children}</a>
-                const number = Number(match[1])
-                return (
-                  <button
-                    type="button"
-                    className={`figure-reference ${activeFigure === number ? 'active' : ''}`}
-                    data-figure-reference={number}
-                    onPointerEnter={() => activateFigure(number)}
-                    onFocus={() => activateFigure(number)}
-                    onClick={() => openFigure(number)}
-                  >
-                    {children}<ArrowDownRight size={12} />
-                  </button>
-                )
-              },
-            }}>{linkedInsight}</ReactMarkdown>
+            <ReactMarkdown>{result.insight}</ReactMarkdown>
           </div>
           <div className="insight-contract">解读仅使用本次结构化评分事实，不读取或生成检验代码。</div>
         </aside>
