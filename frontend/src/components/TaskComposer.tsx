@@ -13,6 +13,7 @@ interface TaskComposerProps {
   onSubmit: (payload: TaskPayload) => Promise<void>
   onBboxChange: (bbox: number[]) => void
   initialDraft?: Partial<TaskPayload>
+  jobStatus?: 'queued' | 'running' | 'complete' | 'failed'
   onOpenModels: () => void
   onOpenData: () => void
 }
@@ -24,7 +25,7 @@ const scopeOptions: { id: Scope; label: string; hint: string }[] = [
 ]
 const DEFAULT_CASE_ID = '2025-04-11'
 
-export function TaskComposer({ onSubmit, onBboxChange, initialDraft, onOpenModels, onOpenData }: TaskComposerProps) {
+export function TaskComposer({ onSubmit, onBboxChange, initialDraft, jobStatus, onOpenModels, onOpenData }: TaskComposerProps) {
   const [cases, setCases] = useState<CaseOption[]>([])
   const [caseId, setCaseId] = useState(initialDraft?.case_id || DEFAULT_CASE_ID)
   const [models, setModels] = useState<string[]>(initialDraft?.models || ['StormDiT', '风雷'])
@@ -48,6 +49,12 @@ export function TaskComposer({ onSubmit, onBboxChange, initialDraft, onOpenModel
 
   const selectedCase = cases.find((item) => item.id === caseId)
   const benchmarkMode = models.some((model) => !['StormDiT', '风雷'].includes(model))
+  const taskComplete = jobStatus === 'complete'
+  const taskExecuting = submitting || jobStatus === 'queued' || jobStatus === 'running'
+
+  useEffect(() => {
+    if (jobStatus === 'complete' || jobStatus === 'failed') setSubmitting(false)
+  }, [jobStatus])
 
   useEffect(() => {
     onBboxChange(benchmarkMode ? [28.7, 32.51, 112.38, 116.19] : bbox)
@@ -291,10 +298,9 @@ export function TaskComposer({ onSubmit, onBboxChange, initialDraft, onOpenModel
         </div>
         {error && <div className="error-banner">{error}</div>}
         <div className="execute-row">
-          <span>{benchmarkMode ? '统一128×128公共样本网格' : '原始资料严格匹配口径'}</span>
-          <button className="primary-action" disabled={submitting || loadingCatalog} onClick={submit}>
-            {submitting ? <LoaderCircle className="spin" size={17} /> : <Play size={17} fill="currentColor" />}
-            执行检验任务
+          <button className={`primary-action ${taskComplete ? 'task-complete' : ''}`} disabled={taskExecuting || taskComplete || loadingCatalog} onClick={submit}>
+            {taskComplete ? <Check size={17} /> : taskExecuting ? <LoaderCircle className="spin" size={17} /> : <Play size={17} fill="currentColor" />}
+            {taskComplete ? '任务已完成' : taskExecuting ? '正在执行检验' : '执行检验任务'}
           </button>
         </div>
       </section>

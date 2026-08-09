@@ -67,7 +67,7 @@ export default function App() {
         {view === 'models' && <ModelPromptView onUseTemplate={newTask} />}
         {view === 'data' && <DataCatalogView onCreateTask={() => setView('task')} />}
         <div hidden={view !== 'task'}>
-          <TaskComposer key={taskSession} initialDraft={taskDraft} onSubmit={submit} onBboxChange={setLocatorBbox} onOpenModels={() => setView('models')} onOpenData={() => setView('data')} />
+          <TaskComposer key={taskSession} initialDraft={taskDraft} jobStatus={job?.status} onSubmit={submit} onBboxChange={setLocatorBbox} onOpenModels={() => setView('models')} onOpenData={() => setView('data')} />
         </div>
         {view === 'progress' && job && <ProgressView job={job} onJob={setJob} onComplete={completeJob} />}
         {view === 'result' && job && (

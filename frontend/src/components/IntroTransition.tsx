@@ -65,11 +65,18 @@ export function IntroTransition({ theme, bbox, onSettling, onComplete }: IntroTr
   }, [])
 
   useLayoutEffect(() => {
+    const previousPaddingRight = document.body.style.paddingRight
+    const computedPaddingRight = Number.parseFloat(window.getComputedStyle(document.body).paddingRight) || 0
+    const scrollbarWidth = Math.max(0, window.innerWidth - document.documentElement.clientWidth)
+    if (scrollbarWidth > 0) {
+      document.body.style.paddingRight = `${computedPaddingRight + scrollbarWidth}px`
+    }
     document.body.classList.add('intro-locked')
     measureTarget()
     window.addEventListener('resize', measureTarget)
     return () => {
       document.body.classList.remove('intro-locked')
+      document.body.style.paddingRight = previousPaddingRight
       window.removeEventListener('resize', measureTarget)
     }
   }, [measureTarget])
