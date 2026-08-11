@@ -13,6 +13,7 @@ from visualization.comparison_plots import (
     plot_multimodel_reflectivity_frame,
     plot_multimodel_same_valid_time_comparison,
     plot_multimodel_score_distribution,
+    plot_multimodel_score_heatmaps,
     plot_multimodel_variable_correlation_heatmap,
     plot_triplet_score_curves,
     render_multimodel_reflectivity_animation,
@@ -294,3 +295,14 @@ def test_batch_publication_views_support_multiple_thresholds_and_correlations():
     finally:
         for figure in figures:
             plt.close(figure)
+
+
+def test_initialization_lead_score_matrix_uses_fixed_blue_to_red_scale():
+    figure = plot_multimodel_score_heatmaps(_batch_frame(), "csi", 20)
+    try:
+        score_axes = figure.axes[:2]
+        assert all(axis.images[0].get_cmap().name == "RdBu_r" for axis in score_axes)
+        assert all(axis.images[0].norm.vmin == 0.0 for axis in score_axes)
+        assert all(axis.images[0].norm.vmax == 1.0 for axis in score_axes)
+    finally:
+        plt.close(figure)

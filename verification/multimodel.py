@@ -12,6 +12,7 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 
+from data_io.benchmark import read_benchmark_stormdit_forecasts
 from data_io.fenglei_mosaic import read_swan_mosaic
 from data_io.forecast_sources import (
     MODEL_FENGLEI,
@@ -25,7 +26,7 @@ from data_io.radar_obs import read_radar_observation
 from data_io.upstream_model import read_upstream_model_forecasts
 from verification.metrics import CATEGORICAL_SCORES, contingency_table
 
-MULTIMODEL_CACHE_VERSION = 3
+MULTIMODEL_CACHE_VERSION = 4
 _COUNT_COLUMNS = (
     "hits",
     "misses",
@@ -124,6 +125,28 @@ def _field_on_observation_grid(field, observation) -> GriddedField:
     )
 
 
+def _common_spatial_bbox(bbox, records) -> tuple[float, float, float, float]:
+    """Intersect the requested area with every finite forecast-source domain."""
+    lat_min, lat_max, lon_min, lon_max = map(float, bbox)
+    for record in records:
+        if record.domain is None:
+            continue
+        source_lat_min, source_lat_max, source_lon_min, source_lon_max = record.domain
+        lat_min = max(lat_min, source_lat_min)
+        lat_max = min(lat_max, source_lat_max)
+        lon_min = max(lon_min, source_lon_min)
+        lon_max = min(lon_max, source_lon_max)
+    if lat_min >= lat_max or lon_min >= lon_max:
+        raise ValueError("所选检验区域与预报资料的公共空间范围不相交")
+    return lat_min, lat_max, lon_min, lon_max
+
+
+def _read_stormdit_fields(record, leads):
+    if record.source_kind == "benchmark_stormdit":
+        return read_benchmark_stormdit_forecasts(record.path, leads)
+    return read_upstream_model_forecasts(record.path, leads)
+
+
 def run_multimodel_case(
     catalog: MultiModelCatalog,
     model_ids,
@@ -150,12 +173,20 @@ def run_multimodel_case(
     if not leads:
         raise ValueError("selected initialization has no exact forecast/observation matches")
 
+    requested_bbox = tuple(map(float, bbox))
+    representative_records = [
+        catalog.forecasts[model_id][(init_time_utc, leads[0])]
+        for model_id in model_ids
+    ]
+    lat_min, lat_max, lon_min, lon_max = _common_spatial_bbox(
+        requested_bbox, representative_records
+    )
+
     stormdit_fields = {}
     if MODEL_STORMDIT in model_ids:
         record = catalog.forecasts[MODEL_STORMDIT][(init_time_utc, leads[0])]
-        stormdit_fields = read_upstream_model_forecasts(record.path, leads)
+        stormdit_fields = _read_stormdit_fields(record, leads)
 
-    lat_min, lat_max, lon_min, lon_max = map(float, bbox)
     requested_frames = set(frame_leads)
     per_lead = []
     frames = {}
@@ -227,6 +258,7 @@ def run_multimodel_case(
             "init_time_utc": init_time_utc,
             "init_time_bjt": init_time_utc + timedelta(hours=8),
             "bbox": [lat_min, lat_max, lon_min, lon_max],
+            "requested_bbox": list(requested_bbox),
             "thresholds_dbz": [float(value) for value in thresholds],
             "sample_policy": "common intersection" if common_only else "model-specific matches",
             "temporal_matching": "exact initialization and exact valid time",
@@ -276,8 +308,7 @@ def run_multimodel_same_valid_time(
     initializations = sorted(dict.fromkeys(initializations))
     if not 2 <= len(initializations) <= 8:
         raise ValueError("same-valid-time comparison requires 2—8 initializations")
-    items = []
-    rows = []
+    init_leads = []
     for init_time in initializations:
         lead_seconds = (valid_time_utc - init_time).total_seconds()
         lead = int(round(lead_seconds / 60))
@@ -292,11 +323,23 @@ def run_multimodel_same_valid_time(
                 f"6—180 minute valid time for initialization "
                 f"{init_time:%Y-%m-%d %H:%M} UTC"
             )
+        init_leads.append((init_time, lead))
+    effective_bbox = _common_spatial_bbox(
+        bbox,
+        [
+            catalog.forecasts[model_id][(init_time, lead)]
+            for init_time, lead in init_leads
+            for model_id in model_ids
+        ],
+    )
+    items = []
+    rows = []
+    for init_time, lead in init_leads:
         result = run_multimodel_case(
             catalog,
             model_ids,
             init_time,
-            bbox,
+            effective_bbox,
             thresholds=thresholds,
             lead_range=(lead, lead),
             frame_leads=(lead,),
@@ -333,6 +376,7 @@ def run_multimodel_same_valid_time(
         "valid_time_utc": valid_time_utc,
         "valid_time_bjt": valid_time_utc + timedelta(hours=8),
         "model_ids": list(dict.fromkeys(model_ids)),
+        "bbox": list(effective_bbox),
         "items": items,
         "per_case": pd.DataFrame(rows),
     }
@@ -465,6 +509,16 @@ def run_multimodel_batch(
     if not cases:
         raise ValueError("no initializations satisfy the selected coverage policy")
 
+    requested_bbox = tuple(map(float, bbox))
+    effective_bbox = _common_spatial_bbox(
+        requested_bbox,
+        [
+            catalog.forecasts[model_id][(case["init_time"], case["available_leads"][0])]
+            for case in cases
+            for model_id in model_ids
+        ],
+    )
+
     selected_paths = []
     expected_rows = 0
     for case in cases:
@@ -478,7 +532,8 @@ def run_multimodel_batch(
         "version": MULTIMODEL_CACHE_VERSION,
         "models": list(model_ids),
         "contract": catalog.stormdit_contract,
-        "bbox": [float(value) for value in bbox],
+        "bbox": list(effective_bbox),
+        "requested_bbox": list(requested_bbox),
         "thresholds": [float(value) for value in thresholds],
         "lead_range": [int(value) for value in lead_range],
         "complete_only": bool(complete_only),
@@ -525,7 +580,7 @@ def run_multimodel_batch(
                 catalog,
                 model_ids,
                 init_time,
-                bbox,
+                effective_bbox,
                 thresholds=thresholds,
                 lead_range=lead_range,
             )
@@ -593,7 +648,8 @@ def run_multimodel_batch(
             "model_ids": list(model_ids),
             "model_labels": [MODEL_LABELS[value] for value in model_ids],
             "model_contract": catalog.stormdit_contract,
-            "bbox": list(map(float, bbox)),
+            "bbox": list(effective_bbox),
+            "requested_bbox": list(requested_bbox),
             "thresholds_dbz": list(map(float, thresholds)),
             "lead_range_minutes": list(map(int, lead_range)),
             "sample_policy": "common intersection" if common_only else "model-specific matches",

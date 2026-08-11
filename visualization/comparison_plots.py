@@ -471,7 +471,7 @@ def plot_multimodel_score_heatmaps(
             pivot.to_numpy(),
             origin="lower",
             aspect="auto",
-            cmap="viridis",
+            cmap="RdBu_r",
             vmin=score_min,
             vmax=score_max,
         )

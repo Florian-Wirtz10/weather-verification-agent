@@ -47,9 +47,7 @@ export function ChartPreview({ kind }: { kind: ChartPreviewKind }) {
   if (kind === 'animation' || kind === 'spatial') {
     content = <SpatialPanels animated={kind === 'animation'} />
   } else if (kind === 'heatmap' || kind === 'correlation') {
-    const colors = kind === 'correlation'
-      ? ['#315b83', '#7fa8c9', '#e7edf1', '#e5aa93', '#bd5f4d']
-      : ['#e8f1f5', '#bad9e5', '#78b4cd', '#397b9f', '#174e73']
+    const colors = ['#315b83', '#7fa8c9', '#e7edf1', '#e5aa93', '#bd5f4d']
     content = <>
       <g transform="translate(66 20)">
         {Array.from({ length: 6 }).map((_, row) => Array.from({ length: 8 }).map((__, column) => (

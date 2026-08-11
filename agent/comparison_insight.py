@@ -10,6 +10,7 @@ from typing import Any
 
 from openai import OpenAI
 
+from agent.insight_text import remove_meta_question_phrasing
 from data_io.forecast_sources import MODEL_LABELS
 from verification.metrics import CATEGORICAL_SCORES
 
@@ -17,8 +18,8 @@ _SYSTEM_PROMPT = """你是强对流预报检验平台的AI解读助手。用户�
 不得补造数字，不得声称查看过原始像素，不得把个例或有限起报外推成模型总体结论。
 只讨论 requested_metrics 中的指标，并且只输出以下三个章节，Markdown标题必须逐字使用
 “### 图表导读”“### 结论摘要”“### 数据证据与诊断分析”：
-1. 图表导读：逐图使用“如图1所示”，说明图形编码、比较对象和它能回答的问题；
-   不在这里提前罗列评分结论。
+1. 图表导读：逐图使用“如图1所示”，只说明图形编码、比较对象和展示内容；
+   不在这里提前罗列评分结论，也不得出现“可回答……”“用于回答……”等元话语。
 2. 结论摘要：用2—5条简洁结论直接回答“表现怎样、谁更优、最明显的变化或异常是什么”；
    只保留最有判断价值的关键数字，不逐项抄写全部均值、首末值和胜出次数。
 3. 数据证据与诊断分析：逐条为结论摘要提供可核对的数字证据，包括产品、阈值、时效、
@@ -495,4 +496,4 @@ def generate_comparison_insight(
     )
     if not response.choices or not response.choices[0].message.content:
         raise ValueError("DeepSeek returned an empty comparison insight response")
-    return response.choices[0].message.content.strip()
+    return remove_meta_question_phrasing(response.choices[0].message.content)

@@ -84,6 +84,36 @@ def test_dual_model_catalog_uses_strict_common_leads(tmp_path):
     assert cases[0]["complete"] is False
 
 
+def test_catalog_exposes_supplemental_forecast_domain(tmp_path):
+    catalog, init = _catalog(tmp_path)
+    domain = (28.7, 32.51, 112.38, 116.19)
+    for record in catalog.forecasts[MODEL_STORMDIT].values():
+        object.__setattr__(record, "domain", domain)
+
+    cases = discover_multimodel_initializations(
+        catalog,
+        (MODEL_STORMDIT, MODEL_FENGLEI),
+        lead_range=(6, 6),
+        common_only=True,
+    )
+
+    assert cases[0]["init_time"] == init
+    assert cases[0]["domain"] == list(domain)
+
+
+def test_common_spatial_bbox_restricts_every_model_to_supplemental_patch(tmp_path):
+    catalog, init = _catalog(tmp_path)
+    stormdit = catalog.forecasts[MODEL_STORMDIT][(init, 6)]
+    object.__setattr__(stormdit, "domain", (28.7, 32.51, 112.38, 116.19))
+
+    result = multimodel._common_spatial_bbox(
+        (29.0, 33.5, 108.0, 116.5),
+        (stormdit, catalog.forecasts[MODEL_FENGLEI][(init, 6)]),
+    )
+
+    assert result == (29.0, 32.51, 112.38, 116.19)
+
+
 def test_catalog_source_signature_changes_when_new_delivery_arrives(tmp_path):
     stormdit = tmp_path / "stormdit"
     fenglei = tmp_path / "fenglei"
@@ -123,11 +153,31 @@ def test_common_valid_times_align_different_initializations():
     ]
 
 
-def test_same_valid_time_comparison_uses_native_lead_for_each_init(monkeypatch):
+def test_same_valid_time_comparison_uses_native_lead_for_each_init(monkeypatch, tmp_path):
     first = datetime(2026, 4, 8, 0)
     second = first + timedelta(hours=1)
     valid_time = first + timedelta(hours=2)
     calls = []
+    path = tmp_path / "forecast"
+    path.write_bytes(b"x")
+    catalog = MultiModelCatalog(
+        observations={},
+        forecasts={
+            model_id: {
+                (init_time, lead): ForecastRecord(
+                    model_id,
+                    path,
+                    init_time,
+                    init_time + timedelta(hours=8),
+                    lead,
+                    valid_time,
+                )
+                for init_time, lead in ((first, 120), (second, 60))
+            }
+            for model_id in (MODEL_STORMDIT, MODEL_FENGLEI)
+        },
+        stormdit_contract="test",
+    )
 
     def fake_case(
         _catalog,
@@ -168,7 +218,7 @@ def test_same_valid_time_comparison_uses_native_lead_for_each_init(monkeypatch):
 
     monkeypatch.setattr(multimodel, "run_multimodel_case", fake_case)
     result = multimodel.run_multimodel_same_valid_time(
-        object(),
+        catalog,
         (MODEL_STORMDIT, MODEL_FENGLEI),
         (first, second),
         valid_time,

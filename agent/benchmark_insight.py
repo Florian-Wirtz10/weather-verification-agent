@@ -8,12 +8,28 @@ import os
 
 from openai import OpenAI
 
+from agent.insight_text import remove_meta_question_phrasing
 
-_SYSTEM_PROMPT = """你是中国雷达CREF Zero-shot Benchmark的结果解读助手。
+
+_BUSINESS_MODELS = {"StormDiT", "Fenglei"}
+_ZERO_SHOT_BASELINES = {
+    "ConvLSTM",
+    "PredRNN",
+    "Earthformer",
+    "NowCastNet",
+    "SimVP",
+    "DiffCast",
+}
+_REFERENCE_BASELINES = {"Persistence"}
+
+_SYSTEM_PROMPT = """你是中国雷达CREF多模型基准检验的结果解读助手。
 用户消息只有服务端计算好的数字事实JSON，不得补造数字或声称看过原始像素。
 只输出三个章节，标题必须是“### 图表导读”“### 结论摘要”“### 数据证据与诊断分析”。
-图表导读逐图使用“如图1所示”；结论摘要说明不同模型在什么指标、阈值和时效下更优；
-数据证据与诊断分析提供可核对数字，并明确说明这些模型是SEVIR预训练权重到中国CREF的zero-shot迁移。
+图表导读逐图使用“如图1所示”，只说明图形编码、比较对象和展示内容；不得出现
+“可回答……”“用于回答……”等元话语。结论摘要说明不同模型在什么指标、阈值和时效下更优；
+数据证据与诊断分析提供可核对数字，并严格区分模型身份：StormDiT和Fenglei是业务模型，
+ConvLSTM、PredRNN、Earthformer、NowCastNet、SimVP和DiffCast是SEVIR预训练权重到中国CREF的
+zero-shot基线，Persistence是持续性参考。不得把业务模型或Persistence称为zero-shot模型。
 CSI/POD/FSS越高越好，FAR/MAE/RMSE越低越好，Bias越接近1越好。
 不得把有限个例外推为模型总体能力，不得编造因果，不得增加“口径与边界”章节。"""
 
@@ -65,19 +81,33 @@ def build_benchmark_insight_facts(result, request, period, figure_catalog):
                 "lead_trends": trends,
             }
         )
+    selected_models = [str(model) for model in result["context"]["models"]]
     return {
         "experiment": {
-            "name": "China CREF zero-shot benchmark",
+            "name": (
+                "China CREF multi-model benchmark"
+                if any(model in _BUSINESS_MODELS for model in selected_models)
+                else "China CREF zero-shot benchmark"
+            ),
             "case": "2025-04-11 Wuhan convective event",
-            "models": result["context"]["models"],
+            "models": selected_models,
+            "business_models": [
+                model for model in selected_models if model in _BUSINESS_MODELS
+            ],
+            "zero_shot_baselines": [
+                model for model in selected_models if model in _ZERO_SHOT_BASELINES
+            ],
+            "reference_baselines": [
+                model for model in selected_models if model in _REFERENCE_BASELINES
+            ],
             "sample_count": result["coverage"]["sample_count"],
             "lead_range_minutes": result["context"]["lead_range_minutes"],
             "diagnostic_threshold_dbz": threshold,
             "fss_window_pixels": fss_window,
             "grid": "128x128 common patch; 0.03 degree; no verification-stage interpolation",
             "fairness": (
-                "SEVIR-pretrained baselines transferred zero-shot to China CREF; "
-                "all selected models are compared only on their strict common native leads"
+                "Business products, SEVIR-pretrained zero-shot baselines, and persistence "
+                "references are compared only on their strict common samples and native leads"
             ),
         },
         "metrics": metrics,
@@ -114,9 +144,22 @@ def render_benchmark_deterministic_summary(facts):
             for model, value in item["pooled_values"].items()
         )
         lines.append(f"{item['metric'].upper()}汇总值：{evidence}。")
+    identities = []
+    if experiment["business_models"]:
+        identities.append(
+            f"{', '.join(experiment['business_models'])}为业务模型"
+        )
+    if experiment["zero_shot_baselines"]:
+        identities.append(
+            f"{', '.join(experiment['zero_shot_baselines'])}为SEVIR预训练后迁移到中国CREF的zero-shot基线"
+        )
+    if experiment["reference_baselines"]:
+        identities.append(
+            f"{', '.join(experiment['reference_baselines'])}为持续性参考"
+        )
     lines.append(
-        "这些数字反映SEVIR预训练Baseline向中国CREF的zero-shot迁移表现；"
-        "模型的条件长度、推理分辨率和上下文范围不同，不能外推为同训练条件下的总体排名。"
+        "；".join(identities)
+        + "。所有结果只代表严格公共样本和公共时效下的比较，不能外推为同训练条件下的总体排名。"
     )
     return "\n".join(lines)
 
@@ -139,4 +182,4 @@ def generate_benchmark_insight(
     )
     if not response.choices or not response.choices[0].message.content:
         raise ValueError("DeepSeek returned an empty benchmark insight")
-    return response.choices[0].message.content.strip()
+    return remove_meta_question_phrasing(response.choices[0].message.content)

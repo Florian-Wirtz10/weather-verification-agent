@@ -54,7 +54,7 @@ _SYSTEM_PROMPT = f"""你是强对流预报检验平台的受限请求规划器�
    same_valid_time_comparison；全部起报选 score_curve、multi_metric_curve、score_heatmap、
    variable_correlation_heatmap、score_distribution、forecast_observed_rate_scatter。
 3. 未指定指标用 [csi,pod,far]；不支持ETS。自定义多起报未指定阈值时用 [20]，
-   其余范围未指定阈值时用 [10,20,30,40]；
+   其余范围未指定阈值时用 [20,30,40]；
    诊断阈值默认20并必须包含于阈值数组；评分矩阵和分布图的diagnostic_metric
    默认csi并必须包含于metrics。
 4. 未指定时效用 6—180 分钟，起止必须为6的倍数。
@@ -68,7 +68,7 @@ _SYSTEM_PROMPT = f"""你是强对流预报检验平台的受限请求规划器�
 JSON结构：
 {{
   "metrics": ["csi", "pod", "far"],
-  "thresholds_dbz": [10,20,30,40],
+  "thresholds_dbz": [20,30,40],
   "diagnostic_threshold_dbz": 20,
   "diagnostic_metric": "csi",
   "lead_range_minutes": {{"start": 6, "end": 180}},
@@ -102,7 +102,7 @@ def default_multimodel_request(
         "thresholds_dbz": (
             [20.0]
             if scope == "custom"
-            else [10.0, 20.0, 30.0, 40.0]
+            else [20.0, 30.0, 40.0]
         ),
         "diagnostic_threshold_dbz": 20.0,
         "diagnostic_metric": "csi",

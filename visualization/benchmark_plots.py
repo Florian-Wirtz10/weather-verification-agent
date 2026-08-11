@@ -175,13 +175,15 @@ def plot_benchmark_score_heatmap(summary, metric: str, threshold: float, *, fss_
         figsize=(11.5, max(4.2, 0.55 * len(order) + 1.8)), layout="constrained"
     )
     values = matrix.to_numpy(dtype=float)
-    if metric in {"mae", "rmse", "far"}:
-        cmap = "magma_r"
-    elif metric == "bias_score":
-        cmap = "RdBu_r"
-    else:
-        cmap = "viridis"
-    image = axis.imshow(values, aspect="auto", cmap=cmap)
+    limits = {"csi": (0.0, 1.0), "pod": (0.0, 1.0), "far": (0.0, 1.0), "fss": (0.0, 1.0)}
+    vmin, vmax = limits.get(metric, (None, None))
+    image = axis.imshow(
+        values,
+        aspect="auto",
+        cmap="RdBu_r",
+        vmin=vmin,
+        vmax=vmax,
+    )
     axis.set_xticks(np.arange(matrix.shape[1]), [str(value) for value in matrix.columns])
     axis.set_yticks(np.arange(matrix.shape[0]), matrix.index)
     axis.set_xlabel("Lead time (min)")

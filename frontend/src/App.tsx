@@ -44,6 +44,10 @@ export default function App() {
 
   function openJob(value: Job) {
     setJob(value)
+    if (value.request) {
+      setTaskDraft(value.request)
+      setTaskSession((current) => current + 1)
+    }
     setView(value.status === 'complete' ? 'result' : 'progress')
   }
 

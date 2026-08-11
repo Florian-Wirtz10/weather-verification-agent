@@ -49,6 +49,19 @@ export function TaskComposer({ onSubmit, onBboxChange, initialDraft, jobStatus, 
 
   const selectedCase = cases.find((item) => item.id === caseId)
   const benchmarkMode = models.some((model) => !['StormDiT', '风雷'].includes(model))
+  const supplementalDomain = useMemo(() => {
+    const constrainedInitializations = scope === 'all'
+      ? initializations
+      : initializations.filter((item) => selectedIds.includes(item.id))
+    return constrainedInitializations.find((item) => item.domain)?.domain || null
+  }, [initializations, scope, selectedIds])
+  const effectiveBbox = useMemo(
+    () => benchmarkMode
+      ? [28.7, 32.51, 112.38, 116.19]
+      : supplementalDomain || bbox,
+    [benchmarkMode, bbox, supplementalDomain],
+  )
+  const bboxLocked = benchmarkMode || Boolean(supplementalDomain)
   const taskComplete = jobStatus === 'complete'
   const taskExecuting = submitting || jobStatus === 'queued' || jobStatus === 'running'
 
@@ -57,8 +70,8 @@ export function TaskComposer({ onSubmit, onBboxChange, initialDraft, jobStatus, 
   }, [jobStatus])
 
   useEffect(() => {
-    onBboxChange(benchmarkMode ? [28.7, 32.51, 112.38, 116.19] : bbox)
-  }, [bbox, benchmarkMode, onBboxChange])
+    onBboxChange(effectiveBbox)
+  }, [effectiveBbox, onBboxChange])
 
   useEffect(() => {
     api.options()
@@ -150,13 +163,10 @@ export function TaskComposer({ onSubmit, onBboxChange, initialDraft, jobStatus, 
   }
 
   function toggleModel(model: string) {
-    const family = selectedCase?.model_groups.benchmark.includes(model) ? 'benchmark' : 'case'
-    const familyModels = selectedCase?.model_groups[family] || []
     setModels((current) => {
-      const withinFamily = current.filter((item) => familyModels.includes(item))
-      return withinFamily.includes(model)
-        ? withinFamily.filter((item) => item !== model)
-        : [...withinFamily, model]
+      return current.includes(model)
+        ? current.filter((item) => item !== model)
+        : [...current, model]
     })
   }
 
@@ -183,7 +193,7 @@ export function TaskComposer({ onSubmit, onBboxChange, initialDraft, jobStatus, 
         case_id: caseId,
         models,
         scope,
-        bbox: benchmarkMode ? [28.7, 32.51, 112.38, 116.19] : bbox,
+        bbox: effectiveBbox,
         complete_only: completeOnly,
         initialization_ids: selectedIds,
         comparison_valid_time: validTime,
@@ -209,7 +219,7 @@ export function TaskComposer({ onSubmit, onBboxChange, initialDraft, jobStatus, 
         <section className="panel configuration-panel">
           <div className="panel-title"><span>检验配置</span><button className="panel-link" onClick={onOpenData}><BookOpen size={13} /> 了解资料</button><em>01</em></div>
           <label className="field-label">检验个例</label>
-          <select value={caseId} onChange={(event) => changeCase(event.target.value)}>
+          <select value={caseId} disabled={taskComplete} onChange={(event) => changeCase(event.target.value)}>
             {cases.map((item) => <option value={item.id} key={item.id}>{item.label}</option>)}
           </select>
 
@@ -224,6 +234,7 @@ export function TaskComposer({ onSubmit, onBboxChange, initialDraft, jobStatus, 
                   <button
                     key={model}
                     className={`model-chip ${models.includes(model) ? 'selected' : ''}`}
+                    disabled={taskComplete}
                     onClick={() => toggleModel(model)}
                   >
                     {models.includes(model) && <Check size={13} />} {model}
@@ -236,7 +247,7 @@ export function TaskComposer({ onSubmit, onBboxChange, initialDraft, jobStatus, 
           <label className="field-label">检验范围</label>
           <div className="scope-grid">
             {scopeOptions.map((item) => (
-              <button key={item.id} className={scope === item.id ? 'selected' : ''} onClick={() => setScope(item.id)}>
+              <button key={item.id} disabled={taskComplete} className={scope === item.id ? 'selected' : ''} onClick={() => setScope(item.id)}>
                 <strong>{item.label}</strong><span>{item.hint}</span>
               </button>
             ))}
@@ -244,11 +255,11 @@ export function TaskComposer({ onSubmit, onBboxChange, initialDraft, jobStatus, 
 
           <div className="field-row bbox-row">
             {['南界 °N', '北界 °N', '西界 °E', '东界 °E'].map((label, index) => (
-              <label key={label}>{label}<input type="number" step="0.1" disabled={benchmarkMode} value={benchmarkMode ? [28.7, 32.51, 112.38, 116.19][index] : bbox[index]} onChange={(event) => setBbox((current) => current.map((value, i) => i === index ? Number(event.target.value) : value))} /></label>
+              <label key={label}>{label}<input type="number" step="0.1" disabled={taskComplete || bboxLocked} value={effectiveBbox[index]} onChange={(event) => setBbox((current) => current.map((value, i) => i === index ? Number(event.target.value) : value))} /></label>
             ))}
           </div>
           <label className="check-row">
-            <input type="checkbox" checked={completeOnly} onChange={(event) => setCompleteOnly(event.target.checked)} />
+            <input type="checkbox" disabled={taskComplete} checked={completeOnly} onChange={(event) => setCompleteOnly(event.target.checked)} />
             仅使用资料完整的起报
           </label>
         </section>
@@ -261,7 +272,7 @@ export function TaskComposer({ onSubmit, onBboxChange, initialDraft, jobStatus, 
             <div className="initialization-list">
               {scope === 'all' && <div className="all-samples"><strong>全部 {initializations.length} 个可用起报</strong><span>将汇总所有严格匹配样本</span></div>}
               {scope !== 'all' && initializations.map((item) => (
-                <button key={item.id} className={selectedIds.includes(item.id) ? 'selected' : ''} onClick={() => toggleInitialization(item.id)}>
+                <button key={item.id} disabled={taskComplete} className={selectedIds.includes(item.id) ? 'selected' : ''} onClick={() => toggleInitialization(item.id)}>
                   <span className="select-indicator">{selectedIds.includes(item.id) ? <Check size={13} /> : null}</span>
                   <span><strong>{item.label}</strong><small>+{item.available_leads[0]}—+{item.available_leads.at(-1)} 分钟 · {item.complete ? '完整' : '部分'}</small></span>
                 </button>
@@ -272,7 +283,7 @@ export function TaskComposer({ onSubmit, onBboxChange, initialDraft, jobStatus, 
           {scope === 'custom' && validTimes.length > 0 && (
             <div className="valid-time-select">
               <label>共同有效时间</label>
-              <select value={validTime || ''} onChange={(event) => setValidTime(event.target.value)}>
+              <select value={validTime || ''} disabled={taskComplete} onChange={(event) => setValidTime(event.target.value)}>
                 {validTimes.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
               </select>
             </div>
@@ -281,8 +292,8 @@ export function TaskComposer({ onSubmit, onBboxChange, initialDraft, jobStatus, 
       </div>
 
       <section className="panel agent-panel">
-        <div className="agent-input-header"><div><span>检验要求</span><button className="inline-reference" onClick={onOpenModels}><BookOpen size={13} /> 查看模型与提示词</button></div><button onClick={() => setPrompt(defaultText)}><RotateCcw size={14} /> 恢复推荐要求</button></div>
-        <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="请输入检验分析需求…" />
+        <div className="agent-input-header"><div><span>检验要求</span><button className="inline-reference" onClick={onOpenModels}><BookOpen size={13} /> 查看模型与提示词</button></div><button disabled={taskComplete} onClick={() => setPrompt(defaultText)}><RotateCcw size={14} /> 恢复推荐要求</button></div>
+        <textarea value={prompt} disabled={taskComplete} onChange={(event) => setPrompt(event.target.value)} placeholder="请输入检验分析需求…" />
         <div className="agent-action"><span>已输入 {prompt.length} 个字符</span></div>
         <div className="parsed-plan">
           <div className="plan-entities">

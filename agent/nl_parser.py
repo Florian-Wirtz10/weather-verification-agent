@@ -127,7 +127,7 @@ linked_score_animation 只用于“空间回波演变与某一评分变化之间
   "schema_version": "{SCHEMA_VERSION}",
   "intent": "verify_case",
   "filters": {{
-    "thresholds_dbz": [10, 20, 35],
+    "thresholds_dbz": [20, 35],
     "lead_range_minutes": {{"start": 0, "end": 180}},
     "requested_date": null
   }},

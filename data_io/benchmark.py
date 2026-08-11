@@ -9,8 +9,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from data_io.forecast_sources import index_fenglei_forecasts
-from data_io.grid import regrid_nearest
+from data_io.forecast_sources import ForecastRecord, MODEL_STORMDIT, index_fenglei_forecasts
+from data_io.grid import GriddedField, regrid_nearest
 from data_io.fenglei_mosaic import read_swan_mosaic
 
 
@@ -195,6 +195,75 @@ def build_benchmark_catalog(package_dir, *, fenglei_directory=None) -> Benchmark
         resolution_degrees=0.03,
         fenglei_forecasts=fenglei_forecasts,
     )
+
+
+def index_benchmark_stormdit_forecasts(
+    catalog: BenchmarkCatalog,
+) -> dict[tuple[datetime, int], ForecastRecord]:
+    """Expose benchmark-window StormDiT runs to the regular business catalog.
+
+    These runs use the same StormDiT forecast target, but are available only on
+    the delivered 128×128 Wuhan patch.  Keeping the domain on every record lets
+    downstream verification enforce one common spatial support.
+    """
+    domain = (
+        float(catalog.lat_range[0]),
+        float(catalog.lat_range[1]),
+        float(catalog.lon_range[0]),
+        float(catalog.lon_range[1]),
+    )
+    records = {}
+    for sample in catalog.samples:
+        for lead in range(6, BENCHMARK_MODEL_FRAMES["StormDiT"] * 6 + 1, 6):
+            key = (sample.analysis_time_utc, lead)
+            records[key] = ForecastRecord(
+                model_id=MODEL_STORMDIT,
+                path=sample.path,
+                init_time_utc=sample.analysis_time_utc,
+                init_time_bjt=sample.analysis_time_bjt,
+                lead_minutes=lead,
+                valid_time_utc=sample.analysis_time_utc + timedelta(minutes=lead),
+                source_kind="benchmark_stormdit",
+                domain=domain,
+            )
+    return records
+
+
+def read_benchmark_stormdit_forecasts(path, leads) -> dict[int, GriddedField]:
+    """Read selected StormDiT future frames from one validated benchmark sample."""
+    path = Path(path)
+    normalized_leads = tuple(dict.fromkeys(int(value) for value in leads))
+    valid_leads = set(range(6, BENCHMARK_MODEL_FRAMES["StormDiT"] * 6 + 1, 6))
+    if not normalized_leads or any(lead not in valid_leads for lead in normalized_leads):
+        raise ValueError("benchmark StormDiT leads must use +6..+360 minute steps")
+    with np.load(path, allow_pickle=False) as archive:
+        analysis = _parse_time(archive["analysis_time"])
+        stored_leads = np.asarray(archive["pred_StormDiT_lead_minutes"], dtype=int)
+        values = np.asarray(archive["pred_StormDiT_dbz"], dtype=np.float32)
+        lat = np.asarray(archive["lat"], dtype=np.float64)
+        lon = np.asarray(archive["lon"], dtype=np.float64)
+    lead_to_index = {int(lead): index for index, lead in enumerate(stored_leads)}
+    if any(lead not in lead_to_index for lead in normalized_leads):
+        raise ValueError(f"{path}: requested StormDiT lead is absent from benchmark sample")
+    if lat[0] > lat[-1]:
+        lat = lat[::-1].copy()
+        values = values[:, ::-1, :].copy()
+    if lon[0] > lon[-1]:
+        lon = lon[::-1].copy()
+        values = values[:, :, ::-1].copy()
+    return {
+        lead: GriddedField(
+            data=values[lead_to_index[lead]].copy(),
+            lat=lat,
+            lon=lon,
+            valid_time=analysis + timedelta(minutes=lead),
+            product="StormDiT reflectivity",
+            units="dBZ",
+            init_time=analysis,
+            lead_minutes=lead,
+        )
+        for lead in normalized_leads
+    }
 
 
 def load_benchmark_arrays(

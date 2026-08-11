@@ -1055,7 +1055,7 @@ request_scope = {
 product_subject = "StormDiT和风雷" if len(selected_model_labels) > 1 else selected_model_labels[0]
 if request_scope == "single":
     default_prompt = (
-        f"使用10、20、30、40 dBZ阈值，查看6—180分钟{product_subject}预报"
+        f"使用20、30、40 dBZ阈值，查看6—180分钟{product_subject}预报"
         "与CREF观测的同步动画和"
         "CSI、POD、FAR曲线，并在20 dBZ下将三个指标放在一张图比较和解读。"
     )
@@ -1075,7 +1075,7 @@ elif request_scope == "custom":
 else:
     analysis_verb = "比较" if len(model_ids) > 1 else "分析"
     default_prompt = (
-        f"使用10、20、30、40 dBZ阈值，查看6—180分钟{product_subject}的"
+        f"使用20、30、40 dBZ阈值，查看6—180分钟{product_subject}的"
         f"CSI、POD、FAR曲线，在20 dBZ下把三个指标放在一张图{analysis_verb}，并生成"
         "起报—时效评分矩阵、Spearman变量相关性热力图、多阈值评分分布和"
         "预报率—观测率散点图，全面解读。"

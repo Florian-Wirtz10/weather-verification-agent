@@ -203,6 +203,13 @@ select:focus, input:focus, textarea:focus { border-color: #4385ae; box-shadow: 0
 .execute-row .primary-action { margin-left: auto; }
 .primary-action:disabled { opacity: .52; cursor: wait; }
 .primary-action.task-complete:disabled { border-color: #9ba8b3; background: #a8b2bb; color: #f6f8f9; box-shadow: none; cursor: default; }
+.task-page select:disabled,
+.task-page textarea:disabled,
+.task-page input:disabled { color: inherit; cursor: default; }
+.task-page button:disabled:not(.primary-action) { cursor: default; }
+.task-page .model-chip:disabled,
+.task-page .scope-grid button:disabled,
+.task-page .initialization-list button:disabled { opacity: 1; }
 .primary-action.task-complete::after { display: none; }
 .primary-action.task-complete:hover { border-color: #9ba8b3; background: #a8b2bb; box-shadow: none; transform: none; }
 .error-banner { margin: 12px 20px 0; padding: 11px 13px; border-left: 3px solid var(--error); background: #fbecef; color: #8f2b39; font-size: 13px; }
@@ -321,11 +328,11 @@ tbody tr:hover { background: #edf4f7; }
 .insight-content li { margin: 5px 0; }
 .insight-content strong { color: #21384e; }
 .insight-contract { margin-top: 18px; padding: 10px; border: 1px solid #d3dbe2; background: #f5f7f9; color: #68788a; font-size: 11px; line-height: 1.6; }
-.image-modal { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 18px; background: rgba(12,20,29,.94); animation: modalIn .18s ease-out; }
-.image-modal-dialog { width: min(96vw, 1800px); height: calc(100vh - 36px); display: grid; grid-template-rows: 52px minmax(0, 1fr); overflow: hidden; border: 1px solid rgba(166,183,197,.42); border-radius: 7px; background: #111b25; box-shadow: 0 24px 80px rgba(0,0,0,.46); }
-.image-modal-dialog > header { position: relative; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 18px; min-width: 0; padding: 0 10px 0 18px; border-bottom: 1px solid rgba(166,183,197,.28); background: #1d2a37; color: #eef4f7; }
+.image-modal { position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center; box-sizing: border-box; padding: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left)); background: rgba(12,20,29,.94); animation: modalIn .18s ease-out; }
+.image-modal-dialog { width: min(96vw, 1800px); height: calc(100dvh - 24px); display: grid; grid-template-rows: 60px minmax(0, 1fr); overflow: hidden; border: 1px solid rgba(166,183,197,.42); border-radius: 7px; background: #111b25; box-shadow: 0 24px 80px rgba(0,0,0,.46); }
+.image-modal-dialog > header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 18px; min-width: 0; padding: 0 8px 0 18px; border-bottom: 1px solid rgba(166,183,197,.28); background: #1d2a37; color: #eef4f7; }
 .image-modal-dialog > header strong { overflow: hidden; font-size: 13px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
-.image-modal-dialog > header button { position: static; display: grid; place-items: center; flex: 0 0 36px; width: 36px; height: 36px; border: 1px solid #66798a; border-radius: 5px; background: #273746; color: #eef4f7; }
+.image-modal-dialog > header button { position: static; display: grid; place-items: center; flex: 0 0 48px; width: 48px; height: 48px; border: 1px solid #7f93a4; border-radius: 6px; background: #273746; color: #eef4f7; cursor: pointer; }
 .image-modal-dialog > header button:hover { border-color: #a9bdcb; background: #33485a; }
 .image-modal-canvas { min-height: 0; display: grid; place-items: center; overflow: auto; padding: 12px; }
 .image-modal-canvas img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }

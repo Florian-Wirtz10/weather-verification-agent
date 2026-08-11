@@ -4,7 +4,8 @@ import {
   FileDown,
   X,
 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import type { Artifact, Job, ThemeName } from '../types'
 import { MetricChart } from './MetricChart'
@@ -38,6 +39,19 @@ export function ResultView({ job, theme }: { job: Job; theme: ThemeName }) {
   const [frameIndex, setFrameIndex] = useState(0)
   const [expanded, setExpanded] = useState<Artifact | null>(null)
   const [tableOpen, setTableOpen] = useState(false)
+  useEffect(() => {
+    if (!expanded) return undefined
+    const previousOverflow = document.body.style.overflow
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setExpanded(null)
+    }
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', closeOnEscape)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [expanded])
   const summaryColumns = useMemo(() => {
     const keys = new Set<string>()
     const summaryTable = result?.summary_table || []
@@ -116,7 +130,15 @@ export function ResultView({ job, theme }: { job: Job; theme: ThemeName }) {
         </aside>
       </div>
 
-      {expanded && <div className="image-modal" onClick={() => setExpanded(null)}><div className="image-modal-dialog" onClick={(event) => event.stopPropagation()}><header><strong>{expanded.label}</strong><button onClick={() => setExpanded(null)} aria-label="关闭全屏图片" title="退出全屏"><X size={20} /></button></header><div className="image-modal-canvas"><img src={expanded.url} alt={expanded.label} /></div></div></div>}
+      {expanded && createPortal(
+        <div className="image-modal" role="dialog" aria-modal="true" aria-label={expanded.label} onClick={() => setExpanded(null)}>
+          <div className="image-modal-dialog" onClick={(event) => event.stopPropagation()}>
+            <header><strong>{expanded.label}</strong><button onClick={() => setExpanded(null)} aria-label="关闭全屏图片" title="退出全屏"><X size={24} /></button></header>
+            <div className="image-modal-canvas"><img src={expanded.url} alt={expanded.label} /></div>
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   )
 }

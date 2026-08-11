@@ -23,7 +23,7 @@ def test_regular_catalog_coalesces_concurrent_cold_start(monkeypatch):
     config._regular_catalog_cached.cache_clear()
     try:
         with ThreadPoolExecutor(max_workers=8) as pool:
-            results = list(pool.map(config.regular_catalog, ["2025-04-11"] * 8))
+            results = list(pool.map(config.regular_catalog, ["2026-04-08"] * 8))
 
         assert calls == 1
         assert all(result is catalog for result in results)

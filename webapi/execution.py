@@ -82,12 +82,13 @@ def default_prompt(case_id: str, models: list[str], scope: str) -> str:
         subject = "、".join(models)
         return (
             f"比较{subject}，使用20、35、45 dBZ阈值，查看+6—+{horizon}分钟的"
-            "CSI、POD、FAR和多尺度FSS，生成公共样本汇总、时效曲线和热力图并解读。"
+            "CSI、POD、FAR和多尺度FSS，生成时效曲线、热力图，并在20 dBZ阈值下"
+            "生成公共样本汇总和解读。"
         )
     subject = "和".join(models)
     if scope == "single":
         return (
-            f"使用10、20、30、40 dBZ阈值，查看6—180分钟{subject}预报与CREF观测的"
+            f"使用20、30、40 dBZ阈值，查看6—180分钟{subject}预报与CREF观测的"
             "空间演变、CSI、POD、FAR曲线，并在20 dBZ下综合解读。"
         )
     if scope == "custom":
@@ -96,7 +97,7 @@ def default_prompt(case_id: str, models: list[str], scope: str) -> str:
             "CREF观测，并分析起报更新后回波位置、强度和评分的变化。"
         )
     return (
-        f"使用10、20、30、40 dBZ阈值，汇总{subject}的CSI、POD、FAR曲线，生成"
+        f"使用20、30、40 dBZ阈值，汇总{subject}的CSI、POD、FAR曲线，生成"
         "起报—时效热力图、多阈值分布、变量相关性和预报率—观测率图并全面解读。"
     )
 
@@ -141,6 +142,7 @@ def list_initializations(case_id: str, models: list[str], complete_only: bool) -
             ),
             "available_leads": case["available_leads"],
             "complete": case["complete"],
+            "domain": case.get("domain"),
         }
         for case in cases
     ]

@@ -16,7 +16,7 @@ def test_single_default_includes_synchronized_animation():
     ]
     assert request["spatial_lead_minutes"] is None
     assert request["metrics"] == ["csi", "pod", "far"]
-    assert request["thresholds_dbz"] == [10.0, 20.0, 30.0, 40.0]
+    assert request["thresholds_dbz"] == [20.0, 30.0, 40.0]
     assert request["diagnostic_threshold_dbz"] == 20.0
     assert request["diagnostic_metric"] == "csi"
     assert request["correlation_method"] == "spearman"

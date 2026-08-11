@@ -6,6 +6,7 @@ import json
 import math
 from numbers import Real
 import os
+import re
 
 from openai import OpenAI
 
@@ -29,16 +30,16 @@ _SYSTEM_PROMPT = f"""你是中国雷达CREF Zero-shot Benchmark的受限请求�
 - score_heatmap：模型×预报时效热力图；
 - spatial_comparison：单一起报、单个时效的多模型预报与CREF空间对比。
 规则：
-1. 全部或自定义多起报不支持空间图；单一起报可支持所有图。
+1. 全部或自定义多起报不支持空间图；单一起报仅在用户明确要求时支持空间图。
 2. 默认阈值20、35、45 dBZ，默认指标CSI、POD、FAR、FSS。
 3. 时效必须为6分钟倍数，且不得超过服务端给出的共同最大时效。
 4. FSS邻域只能是1、3、5像元。
 5. 不支持的要求必须放入unmatched_requests，不能偷偷替换。
-6. 用户要求全面展示时，多起报使用全部四类统计图，单起报额外加入空间图。
+6. “全面、汇总”只选择四类统计图；不得据此擅自增加空间图。动画尚未实现，用户要求动画时写入unmatched_requests，不得用静态空间图替代。
 JSON结构：
 {{"metrics":["csi","pod","far","fss"],"thresholds_dbz":[20,35,45],
 "lead_range_minutes":{{"start":6,"end":72}},"views":["score_curve","fss_curve","period_summary","score_heatmap"],
-"diagnostic_threshold_dbz":35,"spatial_lead_minutes":null,"fss_windows":[1,3,5],
+"diagnostic_threshold_dbz":20,"spatial_lead_minutes":null,"fss_windows":[1,3,5],
 "unmatched_requests":[],"notes":""}}"""
 
 
@@ -48,14 +49,13 @@ def default_benchmark_request(*, single: bool, common_horizon: int) -> dict:
         "thresholds_dbz": [20.0, 35.0, 45.0],
         "lead_range_minutes": {"start": 6, "end": int(common_horizon)},
         "views": [
-            *(["spatial_comparison"] if single else []),
             "score_curve",
             "fss_curve",
             "period_summary",
             "score_heatmap",
         ],
-        "diagnostic_threshold_dbz": 35.0,
-        "spatial_lead_minutes": min(60, int(common_horizon)) if single else None,
+        "diagnostic_threshold_dbz": 20.0,
+        "spatial_lead_minutes": None,
         "fss_windows": [1, 3, 5],
         "unmatched_requests": [],
         "notes": "",
@@ -143,6 +143,65 @@ def validate_benchmark_request(parsed, *, single: bool, common_horizon: int) -> 
     }
 
 
+def apply_explicit_benchmark_contract(parsed: dict, user_text: str) -> dict:
+    """Make explicit chart and diagnostic-threshold wording authoritative.
+
+    The LLM may classify a request, but it may not add a chart that the user did
+    not ask for or silently analyze a different threshold.  Only unambiguous
+    wording is handled here; vague requests are left to the closed planner.
+    """
+    normalized = str(user_text).lower().replace("＋", "+")
+    result = dict(parsed)
+    requested_views: set[str] = set()
+    comprehensive = any(token in normalized for token in ("全面", "全套", "完整展示"))
+    curve_requested = any(token in normalized for token in ("曲线", "随时效", "时效变化"))
+    if comprehensive:
+        requested_views.update(
+            {"score_curve", "fss_curve", "period_summary", "score_heatmap"}
+        )
+    else:
+        if curve_requested and any(
+            token in normalized
+            for token in ("csi", "pod", "far", "bias", "mae", "rmse", "评分", "指标")
+        ):
+            requested_views.add("score_curve")
+        if curve_requested and "fss" in normalized:
+            requested_views.add("fss_curve")
+        if any(token in normalized for token in ("汇总", "综合比较", "时段比较")):
+            requested_views.add("period_summary")
+        if "热力图" in normalized:
+            requested_views.add("score_heatmap")
+    explicit_spatial = any(
+        token in normalized
+        for token in ("空间对比", "空间分布", "静态回波图", "预报—cref", "预报-cref")
+    )
+    if explicit_spatial:
+        requested_views.add("spatial_comparison")
+    if requested_views:
+        result["views"] = [view for view in BENCHMARK_VIEWS if view in requested_views]
+
+    unmatched = list(result.get("unmatched_requests", []))
+    if any(token in normalized for token in ("动画", "动图", "gif")):
+        unmatched.append("多模型公共样本基准暂不支持动画")
+    result["unmatched_requests"] = unmatched
+
+    diagnostic_match = re.search(
+        r"(?:在\s*)?(\d+(?:\.\d+)?)\s*dbz\s*(?:阈值)?\s*(?:下|的)?"
+        r".{0,18}?(?:汇总|解读|热力图)",
+        normalized,
+    )
+    if diagnostic_match:
+        diagnostic = float(diagnostic_match.group(1))
+        thresholds = list(result.get("thresholds_dbz", []))
+        if diagnostic not in thresholds:
+            thresholds.append(diagnostic)
+        result["thresholds_dbz"] = thresholds
+        result["diagnostic_threshold_dbz"] = diagnostic
+    if "spatial_comparison" not in result.get("views", []):
+        result["spatial_lead_minutes"] = None
+    return result
+
+
 def parse_benchmark_request(
     user_text,
     *,
@@ -170,8 +229,12 @@ def parse_benchmark_request(
     )
     if not response.choices or not response.choices[0].message.content:
         raise ValueError("DeepSeek returned an empty benchmark request")
-    return validate_benchmark_request(
+    parsed = apply_explicit_benchmark_contract(
         json.loads(response.choices[0].message.content),
+        str(user_text),
+    )
+    return validate_benchmark_request(
+        parsed,
         single=single,
         common_horizon=common_horizon,
     )

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+from types import SimpleNamespace
 import time
 
 from fastapi.testclient import TestClient
@@ -26,6 +28,10 @@ def test_health_and_public_options_do_not_touch_large_data_catalogs():
     assert metadata["llm"]["model"] == "deepseek-chat"
     assert {item["name"] for item in metadata["products"]} >= {"StormDiT", "风雷", "CREF"}
     assert any("严格相同" in rule for rule in metadata["rules"])
+    stormdit = next(item for item in metadata["products"] if item["name"] == "StormDiT")
+    assert "起报频率为1小时" in stormdit["cadence"]
+    assert "预报输出间隔为6分钟" in stormdit["cadence"]
+    assert any("只有风雷是每6分钟起报" in rule for rule in metadata["rules"])
 
 
 def test_default_prompt_changes_with_scope_and_model_family():
@@ -40,6 +46,8 @@ def test_default_prompt_changes_with_scope_and_model_family():
     )
     assert regular.status_code == 200
     assert "空间演变" in regular.json()["prompt"]
+    assert "10 dBZ" not in regular.json()["prompt"]
+    assert "使用20、30、40 dBZ" in regular.json()["prompt"]
 
     benchmark = client.post(
         "/api/tasks/default-prompt",
@@ -52,20 +60,46 @@ def test_default_prompt_changes_with_scope_and_model_family():
     )
     assert benchmark.status_code == 200
     assert "FSS" in benchmark.json()["prompt"]
+    assert "在20 dBZ阈值下" in benchmark.json()["prompt"]
 
 
-def test_mixed_data_contract_models_are_rejected():
+def test_business_models_can_join_zero_shot_benchmark_selection():
     response = client.post(
         "/api/tasks/default-prompt",
         json={
             "case_id": "2025-04-11",
-            "models": ["风雷", "ConvLSTM"],
+            "models": ["StormDiT", "风雷", "ConvLSTM"],
             "scope": "all",
             "complete_only": True,
         },
     )
-    assert response.status_code == 422
-    assert "不能混合选择" in response.text
+    assert response.status_code == 200
+    assert "StormDiT、风雷、ConvLSTM" in response.json()["prompt"]
+    assert "+6—+72分钟" in response.json()["prompt"]
+    assert "FSS" in response.json()["prompt"]
+
+
+def test_benchmark_catalog_keeps_original_concise_time_label(monkeypatch):
+    sample = SimpleNamespace(
+        sample_id=119,
+        start_time_utc=datetime(2025, 4, 11, 0, 0),
+        analysis_time_utc=datetime(2025, 4, 11, 1, 36),
+        analysis_time_bjt=datetime(2025, 4, 11, 9, 36),
+    )
+    monkeypatch.setattr(execution, "is_benchmark", lambda _models: True)
+    monkeypatch.setattr(execution, "benchmark_catalog", lambda: object())
+    monkeypatch.setattr(execution, "benchmark_model_ids", lambda _models: ("ConvLSTM",))
+    monkeypatch.setattr(execution, "common_horizon_minutes", lambda _models: 72)
+    monkeypatch.setattr(
+        execution,
+        "benchmark_available_samples",
+        lambda _catalog, _models, lead_range: (sample,),
+    )
+
+    items = execution.list_initializations("2025-04-11", ["ConvLSTM"], True)
+
+    assert items[0]["label"] == "2025-04-11 09:36 BJT（04-11 01:36 UTC）"
+    assert items[0]["available_leads"] == list(range(6, 73, 6))
 
 
 @pytest.mark.parametrize(

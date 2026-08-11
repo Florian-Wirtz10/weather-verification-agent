@@ -28,7 +28,7 @@ export function DataCatalogView({ onCreateTask }: { onCreateTask: () => void }) 
                 <dl>
                   <div><dt><Grid3X3 size={14} /> 原生网格</dt><dd>{product.grid}</dd></div>
                   <div><dt><Clock3 size={14} /> 时间口径</dt><dd>{product.clock}</dd></div>
-                  <div><dt><Clock3 size={14} /> 时间分辨率</dt><dd>{product.cadence}</dd></div>
+                  <div><dt><Clock3 size={14} /> 起报与时效</dt><dd>{product.cadence}</dd></div>
                   <div><dt><MapPinned size={14} /> 空间范围</dt><dd>{product.domain}</dd></div>
                 </dl>
               </article>

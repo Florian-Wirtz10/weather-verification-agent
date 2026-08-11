@@ -51,7 +51,7 @@ const guides: ResultGuide[] = [
         note: '动画与指标曲线配合，适合现场演示',
         draft: {
           case_id: '2025-04-11', models: ['StormDiT', '风雷'], scope: 'single',
-          prompt: '使用10、20、30、40 dBZ阈值，查看6—180分钟StormDiT和风雷的预报—CREF同步回波动画以及CSI、POD、FAR曲线；再用20 dBZ把CSI、POD、FAR放在同一张图中比较，并结合各图说明回波位置、强度、命中和空报随时效的变化。',
+          prompt: '使用20、30、40 dBZ阈值，查看6—180分钟StormDiT和风雷的预报—CREF同步回波动画以及CSI、POD、FAR曲线；再用20 dBZ把CSI、POD、FAR放在同一张图中比较，并结合各图说明回波位置、强度、命中和空报随时效的变化。',
         },
       },
       {
@@ -67,7 +67,7 @@ const guides: ResultGuide[] = [
         note: '保留弱回波，观察模型自身演变',
         draft: {
           case_id: '2026-04-08', models: ['StormDiT'], scope: 'single',
-          prompt: '仅检验StormDiT，生成6—120分钟预报—CREF同步回波动画，绘制10、20、30、40 dBZ下的CSI和Bias时效曲线，并用20 dBZ联合展示CSI、POD、FAR。',
+          prompt: '仅检验StormDiT，生成6—120分钟预报—CREF同步回波动画，绘制20、30、40 dBZ下的CSI和Bias时效曲线，并用20 dBZ联合展示CSI、POD、FAR。',
         },
       },
     ],
@@ -102,7 +102,7 @@ const guides: ResultGuide[] = [
         note: '兼顾曲线、矩阵与离散样本分布',
         draft: {
           case_id: '2025-04-11', models: ['StormDiT', '风雷'], scope: 'custom',
-          prompt: '对所选起报使用10、20、30、40 dBZ阈值，生成CSI、POD、FAR汇总时效曲线、20 dBZ CSI起报—时效矩阵和多阈值评分分布图，比较两个模型在这个起报子集中的稳定性。',
+          prompt: '对所选起报使用20、30、40 dBZ阈值，生成CSI、POD、FAR汇总时效曲线、20 dBZ CSI起报—时效矩阵和多阈值评分分布图，比较两个模型在这个起报子集中的稳定性。',
         },
       },
       {
@@ -137,7 +137,7 @@ const guides: ResultGuide[] = [
         note: '覆盖当前全部起报统计图',
         draft: {
           case_id: '2025-04-11', models: ['StormDiT', '风雷'], scope: 'all',
-          prompt: '使用10、20、30、40 dBZ阈值汇总全部完整起报，生成StormDiT与风雷的CSI、POD、FAR随时效曲线、20 dBZ多指标联合曲线、多阈值评分分布、CSI起报—时效评分矩阵、Spearman变量相关性热力图和预报率—观测率散点图。',
+          prompt: '使用20、30、40 dBZ阈值汇总全部完整起报，生成StormDiT与风雷的CSI、POD、FAR随时效曲线、20 dBZ多指标联合曲线、多阈值评分分布、CSI起报—时效评分矩阵、Spearman变量相关性热力图和预报率—观测率散点图。',
         },
       },
       {

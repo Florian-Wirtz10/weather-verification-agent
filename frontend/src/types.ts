@@ -35,6 +35,7 @@ export interface Initialization {
   label: string
   available_leads: number[]
   complete: boolean
+  domain?: number[] | null
 }
 
 export interface TaskPayload {

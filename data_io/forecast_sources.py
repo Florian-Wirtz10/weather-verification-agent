@@ -85,6 +85,8 @@ class ForecastRecord:
     init_time_bjt: datetime
     lead_minutes: int
     valid_time_utc: datetime
+    source_kind: str = "native"
+    domain: tuple[float, float, float, float] | None = None
 
 
 @dataclass(frozen=True)
@@ -205,6 +207,19 @@ def discover_multimodel_initializations(
         )
         if not leads:
             continue
+        domains = {
+            record.domain
+            for model_id in model_ids
+            for lead in leads
+            if (
+                record := catalog.forecasts.get(model_id, {}).get((init_time, lead))
+            ) is not None
+            if record.domain is not None
+        }
+        if len(domains) > 1:
+            raise ValueError(
+                f"initialization {init_time} has inconsistent forecast domains: {domains}"
+            )
         cases.append(
             {
                 "case_id": f"multimodel-{init_time:%Y%m%d%H%M}",
@@ -213,6 +228,7 @@ def discover_multimodel_initializations(
                 "available_leads": list(leads),
                 "complete": leads == expected,
                 "missing_leads": [lead for lead in expected if lead not in leads],
+                "domain": list(next(iter(domains))) if domains else None,
             }
         )
     return cases

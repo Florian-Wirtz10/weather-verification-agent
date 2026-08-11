@@ -6,7 +6,11 @@ from functools import lru_cache
 import os
 from threading import Lock
 
-from data_io.benchmark import BENCHMARK_MODEL_LABELS, build_benchmark_catalog
+from data_io.benchmark import (
+    BENCHMARK_MODEL_LABELS,
+    build_benchmark_catalog,
+    index_benchmark_stormdit_forecasts,
+)
 from data_io.forecast_sources import (
     MODEL_FENGLEI,
     MODEL_STORMDIT,
@@ -73,13 +77,20 @@ def is_benchmark(models) -> bool:
 
 
 def model_family(models) -> str:
-    """Return the one admissible data contract represented by model labels."""
+    """Choose regular-case or common-grid benchmark execution.
+
+    Selecting any benchmark-only model moves the complete selection onto the
+    benchmark package, where StormDiT and Fenglei remain available as business
+    comparators on the same samples and native common lead window.
+    """
     labels = set(models)
     if labels <= REGULAR_MODEL_LABELS:
         return "case"
-    if labels <= BENCHMARK_ONLY_LABELS:
+    if labels & BENCHMARK_ONLY_LABELS and labels <= (
+        REGULAR_MODEL_LABELS | BENCHMARK_ONLY_LABELS
+    ):
         return "benchmark"
-    raise ValueError("业务个例模型与 Zero-shot Benchmark 模型使用不同资料，不能混合选择")
+    raise ValueError("所选模型不在当前个例的可用模型目录中")
 
 
 def regular_model_ids(labels) -> tuple[str, ...]:
@@ -93,10 +104,29 @@ def benchmark_model_ids(labels) -> tuple[str, ...]:
 @lru_cache(maxsize=4)
 def _regular_catalog_cached(case_id: str):
     case = CASES[case_id]
-    return build_multimodel_catalog(
+    catalog = build_multimodel_catalog(
         stormdit_directories=stormdit_directories(),
         fenglei_directory=case["forecast_dir"],
         observation_directory=case["observation_dir"],
+    )
+    if case_id != "2025-04-11":
+        return catalog
+
+    supplemental = index_benchmark_stormdit_forecasts(_benchmark_catalog_cached())
+    stormdit = dict(catalog.forecasts[MODEL_STORMDIT])
+    duplicates = set(stormdit).intersection(supplemental)
+    if duplicates:
+        raise ValueError(
+            "StormDiT业务交付与公共基准样本存在重复起报/时效："
+            f"{sorted(duplicates)[:3]}"
+        )
+    stormdit.update(supplemental)
+    forecasts = dict(catalog.forecasts)
+    forecasts[MODEL_STORMDIT] = stormdit
+    return type(catalog)(
+        observations=catalog.observations,
+        forecasts=forecasts,
+        stormdit_contract=f"{catalog.stormdit_contract}+benchmark-wuhan-v1",
     )
 
 
@@ -153,9 +183,18 @@ def public_data_metadata() -> dict:
                 "kind": "预报",
                 "format": "NPZ",
                 "grid": "640 × 720，0.03°",
-                "clock": "交付起报时间为 BJT，进入检验前统一转换为 UTC",
-                "cadence": "6 分钟；当前业务检验使用 +6—+180 分钟",
-                "domain": "101.4—122.97°E，21.83—41.00°N（网格中心）",
+                "clock": (
+                    "业务交付为BJT整点起报；公共基准样本为每小时一次、固定在:36起报；"
+                    "进入检验前统一转换为UTC"
+                ),
+                "cadence": (
+                    "起报频率为1小时；预报输出间隔为6分钟。StormDiT自身提供"
+                    "+6—+360分钟，当前业务联合检验使用+6—+180分钟"
+                ),
+                "domain": (
+                    "业务交付为101.4—122.97°E、21.83—41.00°N；公共基准样本"
+                    "仅覆盖112.38—116.19°E、28.70—32.51°N，混合统计自动使用公共区域"
+                ),
             },
             {
                 "name": "风雷",
@@ -163,7 +202,7 @@ def public_data_metadata() -> dict:
                 "format": "SWAN / BZ2",
                 "grid": "约 0.01°，以文件头 nx、ny、起点和步长为准",
                 "clock": "SWAN 文件头为 UTC；2026 V11 文件名为 BJT",
-                "cadence": "6 分钟；当前业务检验使用 +6—+180 分钟",
+                "cadence": "起报频率和预报输出间隔均为6分钟；提供+6—+180分钟",
                 "domain": "读取文件原生网格后按检验区域裁剪",
             },
             {
@@ -172,7 +211,7 @@ def public_data_metadata() -> dict:
                 "format": "NetCDF / MOC BIN",
                 "grid": "约 0.01°，以坐标变量或二进制文件头为准",
                 "clock": "2025-04-11 与 2026-04-08 交付时间均按 UTC 读取",
-                "cadence": "6 分钟",
+                "cadence": "观测间隔为6分钟；观测资料没有起报时刻",
                 "domain": "作为统一雷达组合反射率观测基准",
             },
             {
@@ -181,7 +220,11 @@ def public_data_metadata() -> dict:
                 "format": "NPZ / CSV",
                 "grid": "128 × 128，0.03°",
                 "clock": "内部按 UTC 严格匹配，界面同时标注 BJT",
-                "cadence": "6 分钟；各模型按其真实可用时效参与比较",
+                "cadence": (
+                    "公共样本每小时一次、固定在:36起报；预报输出间隔为6分钟。"
+                    "ConvLSTM等为+6—+72分钟，DiffCast为+6—+120分钟，"
+                    "StormDiT为+6—+360分钟；联合比较取最短公共时效"
+                ),
                 "domain": "武汉区域公共样本网格",
             },
         ],
@@ -202,5 +245,6 @@ def public_data_metadata() -> dict:
             "预报有效时间必须与 CREF 观测时刻严格相同，不进行时间插值。",
             "空间检验在公共地理区域和双方有限值掩膜上进行；需要时仅将预报确定性重采样到观测网格。",
             "双模型比较只使用 StormDiT、风雷与 CREF 三者共同存在的样本。",
+            "6分钟描述的是观测或预报帧间隔；只有风雷是每6分钟起报，StormDiT和公共基准样本均为每小时一次起报。",
         ],
     }
