@@ -10,7 +10,6 @@ import zipfile
 import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
 
 from agent import (
     build_comparison_insight_facts,
@@ -49,26 +48,30 @@ from visualization.comparison_plots import (
     plot_multimodel_variable_correlation_heatmap,
     render_multimodel_reflectivity_animation,
 )
+from webapi.settings import DATA_ROOT, environment_path, project_path
 
-load_dotenv()
 st.set_page_config(page_title="强对流预报检验智能体", layout="wide")
 
 DEFAULT_HUBEI_BBOX = (29.0, 33.5, 108.0, 116.5)
 CASES = {
     "2025-04-11": {
         "label": "2025-04-11 强对流个例",
-        "forecast_dir": os.getenv("FENGLEI_CASE_DIR", "external/20250411风雷预测资料"),
-        "observation_dir": os.getenv("RADAR_OBS_DIR", "external/20250411观测资料"),
+        "forecast_dir": environment_path(
+            "FENGLEI_CASE_DIR", DATA_ROOT / "cases/2025-04-11/forecasts/fenglei"
+        ),
+        "observation_dir": environment_path(
+            "RADAR_OBS_DIR", DATA_ROOT / "cases/2025-04-11/observations/cref"
+        ),
     },
     "2026-04-08": {
         "label": "2026-04-08 强对流个例",
-        "forecast_dir": os.getenv(
+        "forecast_dir": environment_path(
             "FENGLEI_20260408_DIR",
-            "external/20260408风雷预测资料",
+            DATA_ROOT / "cases/2026-04-08/forecasts/fenglei",
         ),
-        "observation_dir": os.getenv(
+        "observation_dir": environment_path(
             "RADAR_20260408_DIR",
-            "external/20260408观测资料",
+            DATA_ROOT / "cases/2026-04-08/observations/cref",
         ),
     },
 }
@@ -295,9 +298,9 @@ def _step_header(number: int, title: str, help_text: str) -> None:
 def _stormdit_directories() -> tuple[str, ...]:
     raw = os.getenv(
         "UPSTREAM_MODEL_DIRS",
-        "external/湖北两个个例;external/湖北个例补充",
+        os.fspath(DATA_ROOT / "models/stormdit"),
     )
-    return tuple(item.strip() for item in raw.split(";") if item.strip())
+    return tuple(os.fspath(project_path(item.strip())) for item in raw.split(";") if item.strip())
 
 
 @st.cache_data(show_spinner="正在建立 StormDiT、风雷与CREF时空索引…")

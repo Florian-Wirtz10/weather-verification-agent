@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 import os
-from pathlib import Path
 from threading import Lock
 
 from data_io.benchmark import BENCHMARK_MODEL_LABELS, build_benchmark_catalog
@@ -13,6 +12,7 @@ from data_io.forecast_sources import (
     MODEL_STORMDIT,
     build_multimodel_catalog,
 )
+from webapi.settings import DATA_ROOT, environment_path, project_path
 
 
 DEFAULT_HUBEI_BBOX = (29.0, 33.5, 108.0, 116.5)
@@ -20,8 +20,12 @@ CASES = {
     "2025-04-11": {
         "id": "2025-04-11",
         "label": "2025-04-11 强对流个例",
-        "forecast_dir": os.getenv("FENGLEI_CASE_DIR", "external/20250411风雷预测资料"),
-        "observation_dir": os.getenv("RADAR_OBS_DIR", "external/20250411观测资料"),
+        "forecast_dir": environment_path(
+            "FENGLEI_CASE_DIR", DATA_ROOT / "cases/2025-04-11/forecasts/fenglei"
+        ),
+        "observation_dir": environment_path(
+            "RADAR_OBS_DIR", DATA_ROOT / "cases/2025-04-11/observations/cref"
+        ),
         "models": [
             "StormDiT",
             "风雷",
@@ -37,8 +41,12 @@ CASES = {
     "2026-04-08": {
         "id": "2026-04-08",
         "label": "2026-04-08 强对流个例",
-        "forecast_dir": os.getenv("FENGLEI_20260408_DIR", "external/20260408风雷预测资料"),
-        "observation_dir": os.getenv("RADAR_20260408_DIR", "external/20260408观测资料"),
+        "forecast_dir": environment_path(
+            "FENGLEI_20260408_DIR", DATA_ROOT / "cases/2026-04-08/forecasts/fenglei"
+        ),
+        "observation_dir": environment_path(
+            "RADAR_20260408_DIR", DATA_ROOT / "cases/2026-04-08/observations/cref"
+        ),
         "models": ["StormDiT", "风雷"],
     },
 }
@@ -55,9 +63,9 @@ _catalog_build_lock = Lock()
 def stormdit_directories() -> tuple[str, ...]:
     raw = os.getenv(
         "UPSTREAM_MODEL_DIRS",
-        "external/湖北两个个例;external/湖北个例补充",
+        os.fspath(DATA_ROOT / "models/stormdit"),
     )
-    return tuple(item.strip() for item in raw.split(";") if item.strip())
+    return tuple(os.fspath(project_path(item.strip())) for item in raw.split(";") if item.strip())
 
 
 def is_benchmark(models) -> bool:
@@ -99,8 +107,13 @@ def regular_catalog(case_id: str):
 
 @lru_cache(maxsize=1)
 def _benchmark_catalog_cached():
-    package = Path(os.getenv("BENCHMARK_PACKAGE_DIR", "external/delivery/apr11_wuhan_full"))
-    fenglei = Path(os.getenv("FENGLEI_CASE_DIR", "external/20250411风雷预测资料"))
+    package = environment_path(
+        "BENCHMARK_PACKAGE_DIR",
+        DATA_ROOT / "benchmarks/2025-04-11/wuhan-zero-shot",
+    )
+    fenglei = environment_path(
+        "FENGLEI_CASE_DIR", DATA_ROOT / "cases/2025-04-11/forecasts/fenglei"
+    )
     return build_benchmark_catalog(package, fenglei_directory=fenglei)
 
 

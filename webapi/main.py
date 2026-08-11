@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 import json
 from pathlib import Path
 
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
@@ -21,15 +21,41 @@ from webapi.execution import (
     list_initializations,
 )
 from webapi.jobs import jobs
+from webapi.maintenance import JobOutputJanitor
 from webapi.schemas import CommonTimeRequest, PromptRequest, SelectionRequest, TaskRequest
+from webapi.settings import (
+    WEB_JOB_CLEANUP_INTERVAL_MINUTES,
+    WEB_JOB_MAX_STORAGE_GB,
+    WEB_JOB_OUTPUT_ROOT,
+    WEB_JOB_RETENTION_DAYS,
+)
 
 
-load_dotenv()
+janitor = JobOutputJanitor(
+    WEB_JOB_OUTPUT_ROOT,
+    retention_days=WEB_JOB_RETENTION_DAYS,
+    max_storage_gb=WEB_JOB_MAX_STORAGE_GB,
+    interval_minutes=WEB_JOB_CLEANUP_INTERVAL_MINUTES,
+    active_job_ids=jobs.active_ids,
+    forget_jobs=jobs.forget,
+)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    janitor.start()
+    try:
+        yield
+    finally:
+        janitor.stop()
+
+
 app = FastAPI(
     title="强对流预报检验智能体 API",
-    version="1.0.0-test",
+    version="1.0.0",
     docs_url="/api/docs",
     openapi_url="/api/openapi.json",
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,

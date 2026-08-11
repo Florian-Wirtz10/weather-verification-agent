@@ -32,10 +32,15 @@ from visualization.benchmark_plots import (
     plot_benchmark_score_heatmap,
     plot_benchmark_spatial_comparison,
 )
+from webapi.settings import DATA_ROOT, environment_path
 
 
-BENCHMARK_PACKAGE = Path(os.getenv("BENCHMARK_PACKAGE_DIR", "external/delivery/apr11_wuhan_full"))
-BENCHMARK_FENGLEI_DIR = Path(os.getenv("FENGLEI_CASE_DIR", "external/20250411风雷预测资料"))
+BENCHMARK_PACKAGE = environment_path(
+    "BENCHMARK_PACKAGE_DIR", DATA_ROOT / "benchmarks/2025-04-11/wuhan-zero-shot"
+)
+BENCHMARK_FENGLEI_DIR = environment_path(
+    "FENGLEI_CASE_DIR", DATA_ROOT / "cases/2025-04-11/forecasts/fenglei"
+)
 _INTERNAL_COLUMNS = {
     "absolute_error_sum",
     "squared_error_sum",

@@ -69,9 +69,10 @@ from webapi.config import (
     regular_catalog,
     regular_model_ids,
 )
+from webapi.settings import WEB_JOB_OUTPUT_ROOT
 
 
-OUTPUT_ROOT = Path(os.getenv("WEB_JOB_OUTPUT_DIR", "outputs/web_jobs"))
+OUTPUT_ROOT = WEB_JOB_OUTPUT_ROOT
 
 
 def default_prompt(case_id: str, models: list[str], scope: str) -> str:

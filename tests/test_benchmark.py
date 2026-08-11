@@ -127,11 +127,11 @@ def test_benchmark_four_threshold_titles_use_a_two_by_two_layout():
 
 
 @pytest.mark.skipif(
-    not Path("external/delivery/apr11_wuhan_full/index.csv").is_file(),
+    not Path("external/datasets/benchmarks/2025-04-11/wuhan-zero-shot/index.csv").is_file(),
     reason="private delivery package is not part of the repository",
 )
 def test_delivery_stormdit_scores_match_teacher_crosscheck_csv():
-    package = Path("external/delivery/apr11_wuhan_full")
+    package = Path("external/datasets/benchmarks/2025-04-11/wuhan-zero-shot")
     catalog = build_benchmark_catalog(package)
     result = run_benchmark(
         catalog,
@@ -152,14 +152,14 @@ def test_delivery_stormdit_scores_match_teacher_crosscheck_csv():
 
 
 @pytest.mark.skipif(
-    not Path("external/delivery/apr11_wuhan_full/index.csv").is_file()
-    or not Path("external/20250411风雷预测资料").is_dir(),
+    not Path("external/datasets/benchmarks/2025-04-11/wuhan-zero-shot/index.csv").is_file()
+    or not Path("external/datasets/cases/2025-04-11/forecasts/fenglei").is_dir(),
     reason="private benchmark and Fenglei packages are not part of the repository",
 )
 def test_fenglei_joins_the_benchmark_on_23_strict_common_samples():
     catalog = build_benchmark_catalog(
-        "external/delivery/apr11_wuhan_full",
-        fenglei_directory="external/20250411风雷预测资料",
+        "external/datasets/benchmarks/2025-04-11/wuhan-zero-shot",
+        fenglei_directory="external/datasets/cases/2025-04-11/forecasts/fenglei",
     )
     samples = benchmark_available_samples(
         catalog,

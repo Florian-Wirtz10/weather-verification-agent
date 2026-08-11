@@ -96,5 +96,21 @@ class JobManager:
             jobs = list(self._jobs.values())
         return [job.public() for job in reversed(jobs[-20:])]
 
+    def active_ids(self) -> set[str]:
+        with self._lock:
+            return {
+                job_id
+                for job_id, job in self._jobs.items()
+                if job.status in {"queued", "running"}
+            }
+
+    def forget(self, job_ids) -> None:
+        """Discard completed in-memory records whose artifacts were removed."""
+        with self._lock:
+            for job_id in job_ids:
+                job = self._jobs.get(job_id)
+                if job is not None and job.status not in {"queued", "running"}:
+                    self._jobs.pop(job_id, None)
+
 
 jobs = JobManager()

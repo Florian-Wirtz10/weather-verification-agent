@@ -1,188 +1,104 @@
-# Weather Verification Agent
+# 强对流预报智能检验平台
 
-面向已接入风雷预报个例的受限检验助手：自然语言只负责生成可审计的检验参数，确定性代码
-负责读取资料、计算指标和绘图，LLM 可以在严格证据边界内解释计算结果。
+面向强对流个例的多模型、全时效检验与证据约束型 AI 解读平台。系统将
+StormDiT、风雷、Zero-shot Benchmark 与 CREF 雷达观测放到统一检验流程中：
+自然语言只负责选择受支持的参数和图表，资料读取、时空匹配、指标计算与制图均由确定性代码完成。
 
-它不是实时天气问答、任意数据分析或自由代码/制图工具。
+## 主要功能
 
-## 新版专家工作台
+- 支持 StormDiT、风雷单产品检验与严格公共样本下的双模型对比；
+- 支持 ConvLSTM、PredRNN、Earthformer、NowCastNet、SimVP、DiffCast、
+  Persistence 等 Zero-shot Benchmark；
+- 支持单一起报、自定义 2—8 个起报、全部起报三种检验范围；
+- 支持 CSI、POD、FAR、Bias、MAE、RMSE 和多尺度 FSS；
+- 支持空间分布、GIF 动画、时效曲线、起报—时效矩阵、评分分布、
+  相关性热力图和预报率—观测率图；
+- 支持 PNG、SVG、GIF、CSV、Markdown 与完整 ZIP 下载；
+- DeepSeek 可解析白名单内的自然语言要求并解读结构化结果；API 不可用时自动使用确定性摘要；
+- React + FastAPI 工作台提供任务配置、执行进度、交互式图表、AI 解读和任务归档。
 
-新版界面在不改动检验公式、数据读取和白名单 Agent 的前提下，将主界面迁移为
-React + FastAPI。页面采用深色科研工作台布局，任务配置、实时执行进度、交互式指标曲线、
-空间时效浏览、动态图、图表全屏查看、AI 解读和结果下载均使用真实后端数据；不再显示
-设计稿中的模拟置信度、虚构日志或未经计算的物理结论。
+系统不提供实时天气查询、任意日期预报、自由代码执行或自由制图。
 
-- React 只负责交互与排版，不能计算或改写评分；
-- FastAPI 复用现有 `data_io / verification / visualization / agent` 确定性链路；
-- 长任务在服务端串行执行，页面通过 SSE 接收真实阶段进度；
-- 业务个例模型与 Zero-shot Benchmark 在同一模型区选择，但按资料契约分组且禁止混选；
-- 每个任务的 PNG、SVG、GIF、CSV、Markdown 和 ZIP 写入 `outputs/web_jobs/<job_id>/`；
-- 原 Streamlit 页面仍作为兼容入口保留，便于对照与回退。
+## 环境要求
 
-## 阶段状态
+- Python 3.11
+- Node.js 20 或更高版本
+- npm
+- 建议 16 GB 内存和 SSD
+- 完整业务资料约 51 GB，建议预留至少 80 GB 可用空间
 
-- Phase 1（tag `v1.0-phase1`）：合成降水场、基础指标、绘图和 Streamlit demo。
-- Phase 2（tag `v2.0-phase2`）：接入风雷 V1.0 REFMOSAIC、雷达 CREF、DeepSeek 单轮选图。
-- Phase 3（tag `v3.0-phase3`）：可信的单轮检验助手。
-- Phase 4（tag `v4.0-phase4`）：受控呈现与专业解读。
-- Phase 5：全天公平检验、业务二进制 CREF、快速索引与断点指标缓存。
-- Phase 6（tag `v6.0-phase6`）：地理边界叠加、无网格折线图、分箱热力图，以及自然语言可选的预报率—观测率诊断。
-- Phase 7：新增可勾选 2—8 个起报的自定义多起报检验范围。
-- Phase 8（当前）：接入 StormDiT，统一 StormDiT、风雷和 CREF 的单模型检验与双模型公平对比。
+## 安装
 
-Phase 8 的最终页面新增：
+```bash
+git clone https://github.com/Florian-Wirtz10/weather-verification-agent.git
+cd weather-verification-agent
 
-- 产品可选 `StormDiT`、`风雷` 或 `StormDiT vs 风雷`；不再使用“我们模型”作为产品名；
-- 单模型使用自身与 CREF 的精确匹配样本，双模型强制使用 StormDiT、风雷、CREF 三者同起报、同有效时刻的严格公共交集；
-- 2025-04-11 与 2026-04-08 两个个例均接入页面，内部统一按 UTC 匹配，页面以 BJT 为主并附 UTC；
-- 检验范围统一支持单一起报、自定义 2—8 个起报和全部起报，默认仅使用 6—180 分钟完整起报，也允许显式纳入缺帧起报；
-- Phase 8 产品指标为 `CSI / POD / FAR / Bias`；ETS 仅保留在后端供旧阶段兼容，不再出现在当前页面、提示词规划或AI解读中；
-- 单起报可生成一/双模型预报与 CREF 的同网格空间对比、同步 GIF、多阈值评分曲线，以及固定阈值下 CSI/POD/FAR 同图曲线；
-- 多起报可生成双模型汇总曲线、起报—时效评分矩阵、`StormDiT − Fenglei` 差值矩阵、多阈值评分分布、简洁率值散点和原有边缘联合分布；
-- 新增 Spearman/Pearson 变量相关性热力图，使用严格公共样本中的时效、预报率/观测率、反射率误差、回波质心距离与评分，按产品分面且共用 `−1～1` 色标；
-- 指标缓存键包含产品、StormDiT 数据契约、源文件指纹、区域、阈值、时效和完整性策略；同配置重跑直接复用；
-- DeepSeek 只看到结构化数字事实与图表目录，不接触原始网格和绘图代码；页面始终保留确定性解读兜底；
-- PNG、GIF、逐样本 CSV、AI 解读 Markdown 和完整 ZIP 均可下载。
+python3.11 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+python -m pip install --upgrade pip
+python -m pip install -e .
 
-## Zero-shot Benchmark
-
-页面顶部可切换到“中国雷达 CREF Zero-shot Benchmark”。该入口与原始资料业务检验隔离，
-读取老师交付的 `external/delivery/apr11_wuhan_full` 统一实验包：2025-04-11 武汉区域
-24 个逐小时起报、128×128、0.03°、6 分钟间隔。所有模型和 CREF 真值已经落在同一网格，
-检验阶段不再插值。
-
-- 可多选 ConvLSTM、PredRNN、Earthformer、NowCastNet、SimVP、DiffCast、StormDiT 和 Persistence；
-- 自动采用所选模型的严格共同原生时效：传统模型参与时最长 +72 分钟，DiffCast 与
-  StormDiT 最长 +120 分钟，仅 StormDiT/Persistence 可到 +360 分钟；
-- 支持全部起报、自定义 2—8 个起报和单一起报；
-- 支持 CSI、POD、FAR、Bias、MAE、RMSE，以及 1/3/5 像元邻域 FSS；
-- 支持多模型时效曲线、多尺度 FSS、公共时效汇总、模型—时效热力图和单起报空间对比；
-- 聚合时先合并列联表、误差和 FSS 分子/分母，再重新计算评分，不做逐样本分数平均；
-- 自然语言仍只生成白名单参数，DeepSeek 只读取结构化数字事实；
-- 逐样本 CSV、汇总 CSV、PNG、SVG、AI 解读和完整 ZIP 均可下载。
-
-Benchmark 是 SEVIR 预训练模型向中国 CREF 的 zero-shot 迁移实验，不是同训练数据、同上下文
-预算下的排行榜。随包两个 `apr08` 目录实际属于 2025-04-08，且没有 StormDiT，不能并入当前
-网页的 2026-04-08 多模型业务检验。可用环境变量 `BENCHMARK_PACKAGE_DIR` 覆盖主包路径。
-
-Phase 5 在不改变 Phase 4 单起报链路的前提下新增：
-
-- 直接解析天气雷达拼图系统 V3.0 的 256 字节 `MOC/CREF` 头和 BZ2 压缩 `int16` 网格；按头字段校验文件长度、产品、坐标、时间、网格、压缩方式与缩放因子；
-- 支持 2026-04-07 全天 7200 个风雷 REFMOSAIC 文件和 249 个 CREF `.bin` 交付文件；按预报 BJT 案例日与观测 UTC 案例日分别索引，得到 240 个唯一观测时刻及 5265 对严格匹配样本；
-- 同一有效时刻有多个观测版本时，默认选择生成时间最新的订正版，并在页面保留被替代版本审计；
-- 文件名快速索引带指纹缓存，只抽查文件头；真实目录第二次索引无需逐个解压；
-- 全天计算逐预报流式解压、逐有效时刻复用一帧观测，并把每个完成样本立即提交到 SQLite；中断后同配置可续算，完成后可直接读取指标缓存；
-- 全天汇总按每个时效、阈值先合并 H/M/F/CN，再重新计算评分，而不是简单平均单样本分数；
-- 新增全天评分曲线、起报时刻×时效热力图、跨起报样本分布图，以及只读取结构化事实的全天 AI 诊断；
-- Phase 5 平台固定双方共同检验口径，不预设风雷或未来上游模型谁好谁坏。
-
-Phase 6 在既有计算口径不变的前提下新增：所有经纬度空间图仅叠加内置省界而不改变原色标；
-折线图取消背景网格；单一起报可生成预报率—观测率时效轨迹，全天模式可直接复用列联表缓存，
-生成固定阈值下的大样本散点、1:1 参考线与边缘分布。
-
-Phase 4 在 Phase 3 基础上新增：
-
-- 自然语言可在白名单内选择页面排版（单列、双列、2×2、报告式、动画优先），但不能生成或执行绘图代码；
-- 支持同一起报、指定时效窗的“预报—观测反射率对比”GIF 动画（最多 30 帧、1—4 fps）；
-- 通过“生成检验结果”一步完成；推荐要求直接使用确定性计划，用户修改后的自然语言要求由 DeepSeek 安全解析；
-- 右侧固定、独立滚动的“AI 解读”栏。无论是否配置 DeepSeek 都有确定性摘要；配置 API 后自动生成图表导读、结论摘要、数据证据与诊断分析；
-- 不必手写排版或动画指令：空间过程/演变类请求自动提出受限 GIF 动画；最终页面按实际结果自动选择动画优先、空间图网格或报告式布局；
-- 当用户目标是解释“空间回波演变与 CSI/ETS 等评分的关系”时，LLM 可选择联动评分动画：每帧把预报—观测空间场与完整评分曲线、当前时效指示线合成为**一个 GIF 文件**；
-- AI 只接收结构化评分事实和图表目录，不接收原始网格、图片、路径或代码；因此可写“如图 1 所示”，但不会声称看到了图像；
-- PNG、GIF、CSV、Markdown 和 ZIP 均可下载，ZIP 中含审计元数据与动画文件。
-
-Phase 3 的主要能力：
-
-- 将自然语言解析成版本化、白名单化的请求 Schema；
-- 支持反射率阈值、预报时效范围和精确到单张 Figure 的视图请求；
-- 一次运行强制只使用一个风雷起报，预报和观测时间必须完全一致；
-- 在解压大文件前按起报与时效过滤，逐对流式读取，避免内存随历史帧数累积；
-- 显式区分 `ready / partial / unsupported / out_of_scope / no_data / parser_error`；
-- 不支持、无数据或 API 失败时不计算、不乱出默认图；
-- 保留 hits、misses、false alarms、correct negatives 和有效/无效格点数；
-- 缺测值不再被当作正确否定，空间范围外不再复制最近边界值；
-- 先由代码生成事实摘要，再由 DeepSeek（若 API 可用）组织成文字解读；
-- 结果解读只讨论用户明确请求的评分指标，不主动引入未请求的 POD/FAR/Bias 等指标；
-- DeepSeek 解读失败时，确定性摘要、指标表和图仍然正常展示。
-- 每张图可单独下载 PNG，并可下载请求指标 CSV、解读 Markdown 或完整 ZIP 结果包；
-- Figure 转成 PNG 后立即释放，重复运行不会在 Session 中持续积累 Matplotlib 图对象；
-- 检验完成后可重试 AI 解读，不会重新读取和计算风雷/雷达资料。
-
-## 支持的自然语言能力
-
-当前 Phase 8 产品支持的评分指标：`CSI / POD / FAR / Bias`。ETS 仅为旧阶段兼容保留在后端。
-
-支持的视图：
-
-- 单模型或双模型的多阈值评分时效曲线；
-- 固定阈值下 CSI、POD、FAR 同图时效曲线；
-- 自定义多起报可固定同一有效时间，对比不同起报对应的不同时效空间预报；
-- 指定时效的 StormDiT/风雷预报与 CREF 同网格空间对比图；
-- 指定时效窗的同步预报—观测动画；
-- 起报时刻×预报时效评分矩阵与双模型差值矩阵；
-- 物理诊断量与评分的 Spearman/Pearson 相关性热力图；
-- 跨起报、多阈值评分分布图；
-- 多阈值简洁预报率—观测率散点图，以及固定阈值的边缘联合分布图。
-
-示例：
-
-```text
-使用10、20、30、40 dBZ阈值，只看前1小时，生成CSI、POD和FAR曲线，并在20 dBZ下把三个指标放在一张图中比较和解读。
+npm --prefix frontend ci
+npm --prefix frontend run build
 ```
 
-规范化后只会选择 6—60 分钟的严格匹配资料，并生成受限的多阈值和多指标 Figure。
+复制环境变量模板：
 
-以下请求不会被偷偷替换成全部图表：
-
-- “画 Taylor 图” → `unsupported`，不出图；
-- “画 Taylor 图和 CSI” → `partial`，只出明确要求且已支持的 CSI；
-- “检验 2025 年 4 月 10 日” → `no_data`，列出可用日期；
-- “今天天气怎么样” → `out_of_scope`；
-- DeepSeek/API/JSON 失败 → `parser_error`，可重试或主动点击明确默认方案。
-
-## 数据与计算口径
-
-当前真实个例链路为：
-
-```text
-StormDiT 雷达组合反射率预报（dBZ） ┐
-                                    ├─ vs CREF 组合反射率观测（dBZ）
-风雷 REFMOSAIC 雷达组合反射率预报 ┘
+```bash
+cp .env.example .env              # Windows 可手动复制并改名
 ```
 
-- StormDiT 交付目录与 `start_time` 按 BJT 解释后减 8 小时转 UTC；`predicted_radar` 的前 17 帧是历史重建，后 60 帧对应 +6—+360 分钟；
-- StormDiT 当前使用集中声明的 `phase8-inferred-v1` 契约：640×720、0.03°、西界 101.4°E、北界 41°N、原始行由北向南；
-- 风雷 SWAN 头时间统一按 UTC；2025-04-11 与 2026-04-08 CREF 文件时间直接按 UTC；
-- 2026 风雷 V11 文件名使用 BJT，SWAN 头使用 UTC；程序只按转换后的 UTC 起报与有效时刻严格匹配；
-- CREF 二进制原始值除以头中缩放因子 10；`int16` 最小值作为缺测，其它负值保留为低于正阈值的无回波编码；
-- 只接受有效时间完全相等的预报—观测对；
-- 风雷场通过最近邻重采样到雷达网格；完整风雷范围外填为缺测；
-- 指标只使用预报和观测均为有限值的公共格点；
-- 空间图与空间误差图仅在显示层将低于 0 dBZ 的值按 0 dBZ 呈现，以统一风雷的负值无回波编码与 CREF 的 0 dBZ 无回波编码；原始数据和检验评分不受影响；
-- 相关性热力图使用的反射率均值、最大值、平均误差、MAE与回波质心距离采用相同的 0 dBZ 无回波归一化；这些是新增诊断量，不会改写CSI/POD/FAR/Bias列联表；
-- 时间序列保留逐 6 分钟数据，横轴主刻度每 30 分钟；原始缺帧处断线显示；
-- 单个例结果不能推广为模型整体能力结论。
+至少配置资料根目录；DeepSeek API Key 为可选项：
 
-如果未来切换到风雷 V1.1 `V11-PRE`，必须使用同时段的定量降水实况和 mm 阈值，不能复用
-当前 REFMOSAIC/CREF 的 dBZ 检验口径。
+```dotenv
+DEEPSEEK_API_KEY=
+WEATHER_DATA_ROOT=external/datasets
 
-## 运行方式
+WEB_JOB_OUTPUT_DIR=outputs/web_jobs
+WEB_JOB_RETENTION_DAYS=7
+WEB_JOB_MAX_STORAGE_GB=20
+WEB_JOB_CLEANUP_INTERVAL_MINUTES=60
+```
 
-项目使用 VS Code Dev Container。容器首次创建会自动安装 Python 与前端依赖。
+相对路径始终以项目根目录解析。若单项资料存放在其它位置，可参考 `.env.example`
+分别覆盖风雷、CREF、StormDiT 或 Benchmark 路径。
 
-### 新版 React 专家工作台（推荐）
+## 数据目录
 
-构建前端并启动统一服务：
+真实资料不会进入 Git 仓库，需要单独复制为以下结构：
+
+```text
+external/datasets/
+├── cases/
+│   ├── 2025-04-11/
+│   │   ├── forecasts/fenglei/
+│   │   └── observations/cref/
+│   └── 2026-04-08/
+│       ├── forecasts/fenglei/
+│       └── observations/cref/
+├── models/stormdit/
+└── benchmarks/2025-04-11/wuhan-zero-shot/
+```
+
+StormDiT、风雷与 CREF 按 UTC 有效时间严格匹配，不进行时间插值。双模型比较只使用
+StormDiT、风雷与 CREF 三者共有的起报和有效时刻；空间配准、有效掩膜、区域和阈值口径保持一致。
+
+## 启动
+
+构建前端后启动统一服务：
 
 ```bash
 npm --prefix frontend run build
 weather-agent-web
 ```
 
-浏览器打开 `http://localhost:8000`。FastAPI 文档位于
-`http://localhost:8000/api/docs`。
+浏览器打开：
 
-前端开发时可分别启动热更新服务：
+- 工作台：`http://localhost:8000`
+- API 文档：`http://localhost:8000/api/docs`
+- 健康检查：`http://localhost:8000/api/health`
+
+前端开发模式：
 
 ```bash
 # 终端 1
@@ -192,75 +108,36 @@ uvicorn webapi.main:app --host 0.0.0.0 --port 8000 --reload
 npm --prefix frontend run dev
 ```
 
-浏览器打开 `http://localhost:5173`。Vite 会把 `/api` 请求代理到 8000 端口。
-
-若未使用 Dev Container，先执行：
-
-```bash
-python -m pip install -e ".[dev]"
-npm --prefix frontend ci
-```
-
-### Streamlit 兼容入口
+兼容的 Streamlit 入口：
 
 ```bash
 streamlit run app.py
 ```
 
-在 `.env` 中配置：
+## 任务清理
 
-```dotenv
-DEEPSEEK_API_KEY=...
-FENGLEI_CASE_DIR=external/20250411风雷预测资料
-RADAR_OBS_DIR=external/20250411观测资料
-UPSTREAM_MODEL_DIRS=external/湖北两个个例;external/湖北个例补充
-FENGLEI_20260408_DIR=external/20260408风雷预测资料
-RADAR_20260408_DIR=external/20260408观测资料
-```
+服务启动时会立即清理过期任务，此后按配置周期执行：
 
-页面可直接选择 2025-04-11 或 2026-04-08；两者均使用完全相同的有效时刻匹配、
-空间配准、有效掩膜和评分流程。
-
-页面始终显示确定性摘要；配置 `DEEPSEEK_API_KEY` 后，会自动把白名单事实摘要发送给 DeepSeek 生成专业解读。不会发送路径、文件名、原始网格、图片或代码；API 不可用时自动回退到确定性摘要。
+- 超过 `WEB_JOB_RETENTION_DAYS` 的已完成任务会被删除；
+- 总容量超过 `WEB_JOB_MAX_STORAGE_GB` 时，从最旧任务开始清理；
+- 正在排队或执行的任务不会被删除；
+- 保留天数或容量设为 `0` 可关闭对应规则；
+- 清理周期设为 `0` 时只在服务启动时执行一次。
 
 ## 验证
 
 ```bash
-python -m pytest -q
+pytest -q
 ruff check .
+npm --prefix frontend run lint
 npm --prefix frontend run build
-npx --yes pyright agent data_io reports tests verification visualization app.py --level error
 ```
 
-`external/` 和 `.env` 均被 `.gitignore` 排除，不会进入仓库。
+## 部署提示
 
-## 结构
+- 当前任务队列和任务状态保存在单个进程内，服务器必须使用一个 Uvicorn worker；
+- 生产环境建议绑定 `127.0.0.1:8000`，再通过 Nginx/Caddy 和单位认证入口访问；
+- `.env`、API Key、真实资料和任务输出不得提交到 Git；
+- `frontend/dist` 不在源码包中，部署前必须运行一次前端构建。
 
-```text
-agent/
-├── request_schema.py       # 不可信 JSON → 严格的领域请求 Schema
-├── request_resolution.py   # 能力、日期、个例和状态的确定性闸门
-├── nl_parser.py            # DeepSeek 只负责提出请求 JSON
-├── orchestrator.py         # 单起报、按时效流式计算、按请求渲染
-├── insight.py              # 确定性事实摘要 + 可选 LLM 文字组织
-├── daily_request.py        # 全天曲线/热力图/分布图的受限请求 Schema
-├── daily_insight.py        # 全天结构化诊断事实 + 可选 LLM 解读
-├── multimodel_request.py   # Phase 8 多模型图表与参数白名单
-├── comparison_insight.py   # StormDiT/风雷结构化事实与AI解读
-├── presentation.py         # 按实际媒体确定自动、安全的页面布局
-└── errors.py               # no-data / ambiguous-case / data-contract 错误
-
-data_io/                    # StormDiT、风雷、CREF读取、时空索引与网格对齐
-verification/               # 列联表、指标纯函数、多模型评分与 SQLite 缓存
-visualization/              # 单起报和全天确定性 Matplotlib 图表
-reports/                    # 报告输出
-tests/                      # Schema、拒绝状态、科学计算、端到端测试
-app.py                      # Streamlit UI
-webapi/                     # FastAPI目录、后台任务、产物服务与核心桥接层
-frontend/                   # React/Vite专家工作台
-```
-
-## 下一阶段候选
-
-可继续增加持续性基线、FSS/邻域检验、跨更多个例统计和 V1.1 定量降水适配；这些扩展不应
-改变 Phase 8 已固定的精确时间匹配、公共样本、公平网格和列联表汇总口径。
+提示词示例见 [`prompts.md`](prompts.md)。
