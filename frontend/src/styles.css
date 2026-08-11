@@ -393,6 +393,39 @@ tbody tr:hover { background: #edf4f7; }
 .capability-row strong { color: #304a5f; font-size: 13px; }
 .capability-row span { color: #506376; font-size: 13px; }
 .capability-row small { color: #748393; font-size: 12px; line-height: 1.5; }
+.capability-preview-trigger { position: relative; display: flex; align-items: center; gap: 7px; color: #304a5f; cursor: help; outline: none; }
+.capability-preview-trigger > svg { flex: 0 0 auto; color: #7691a4; opacity: .72; transition: color .15s, opacity .15s; }
+.capability-preview-trigger:hover > svg, .capability-preview-trigger:focus-within > svg { color: var(--primary); opacity: 1; }
+.chart-preview-popover { position: absolute; z-index: 35; left: 9px; top: calc(100% + 7px); width: min(330px, 72vw); padding: 11px 12px 10px; border: 1px solid rgba(138,158,174,.72); border-radius: 7px; background: rgba(252,253,254,.98); box-shadow: 0 18px 45px rgba(30,53,70,.2); opacity: 0; visibility: hidden; pointer-events: auto; transform: translateY(-4px); transition: opacity .16s ease, transform .16s ease, visibility .16s; }
+.chart-preview-popover::before { content: ''; position: absolute; right: 0; bottom: 100%; left: 0; height: 8px; }
+.capability-preview-trigger:hover .chart-preview-popover, .capability-preview-trigger:focus-within .chart-preview-popover { opacity: 1; visibility: visible; transform: translateY(0); }
+.chart-preview-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 7px; }
+.chart-preview-title strong { color: #263f54; font-size: 12px; }
+.chart-preview-title span { color: #81919e; font-size: 10px; letter-spacing: .08em; }
+.chart-preview-popover p { margin: 6px 2px 0; color: #748493; font-size: 10px; line-height: 1.45; }
+.chart-preview-svg { display: block; width: 100%; height: auto; border: 1px solid #d9e1e7; border-radius: 4px; background: #f8fafb; color: #617689; }
+.chart-preview-svg text { fill: #6a7c8c; font: 9px Inter, system-ui, sans-serif; }
+.chart-preview-animation { position: relative; }
+.chart-preview-play { position: absolute; top: 50%; left: 50%; display: grid; width: 42px; height: 42px; padding: 0; border: 1px solid rgba(255,255,255,.78); border-radius: 50%; background: rgba(17,42,60,.82); box-shadow: 0 6px 18px rgba(21,44,60,.25); color: #fff; cursor: pointer; opacity: .94; place-items: center; transform: translate(-50%, -50%); transition: background .15s ease, opacity .15s ease, transform .15s ease; }
+.chart-preview-play:hover, .chart-preview-play:focus-visible { background: var(--primary); opacity: 1; outline: 2px solid rgba(45,139,178,.34); outline-offset: 2px; transform: translate(-50%, -50%) scale(1.06); }
+.chart-preview-animation.is-playing .chart-preview-play { opacity: .28; }
+.chart-preview-animation.is-playing:hover .chart-preview-play, .chart-preview-animation.is-playing .chart-preview-play:focus-visible { opacity: .94; }
+.preview-timeline path { fill: none; stroke: #8da0ad; stroke-width: 1.5; }
+.preview-timeline circle { fill: var(--primary); }
+.chart-preview-animation.is-playing .preview-playhead { animation: preview-playhead 2.4s linear infinite; }
+.chart-preview-animation.is-playing .preview-echo { animation: preview-echo 1.2s ease-in-out infinite alternate; transform-box: fill-box; transform-origin: center; }
+.chart-preview-animation.is-playing .preview-echo-2 { animation-delay: -.35s; }
+.chart-preview-animation.is-playing .preview-echo-3 { animation-delay: -.7s; }
+@keyframes preview-playhead { from { transform: translateX(0); } to { transform: translateX(248px); } }
+@keyframes preview-echo { from { opacity: .72; transform: translateX(-1px) scale(.98); } to { opacity: 1; transform: translateX(2px) scale(1.02); } }
+.preview-axis { fill: none; stroke: #728493; stroke-width: 1.2; }
+.preview-guide { fill: none; stroke: #dbe2e7; stroke-width: 1; }
+.preview-map { fill: #eaf0f3; stroke: #9eafbb; stroke-width: 1; }
+.preview-boundary { fill: none; stroke: rgba(72,91,105,.56); stroke-width: 1; }
+.preview-series { fill: none; stroke-width: 3; stroke-linecap: round; }
+.preview-blue { stroke: #367fae; }.preview-red { stroke: #cf675f; }.preview-green { stroke: #4fa27f; }.preview-gold { stroke: #d5a03e; }
+.preview-reference { fill: none; stroke: #8998a4; stroke-width: 1.2; stroke-dasharray: 5 4; }
+.preview-data-line { fill: none; stroke: #52697a; stroke-width: 1.2; }
 .prompt-example-list { border-top: 1px solid #aebcc7; }
 .prompt-example { display: grid; grid-template-columns: minmax(0, 1fr) 116px; gap: 18px; padding: 18px 4px; border-bottom: 1px solid var(--outline); }
 .prompt-example-body { min-width: 0; }
@@ -627,7 +660,18 @@ tbody tr:hover { background: #edf4f7; }
 .theme-dark .capability-row span,
 .theme-dark .prompt-example-body p { color: #aebac4; }
 .theme-dark .capability-row small,
+.theme-dark .capability-preview-trigger,
 .theme-dark .prompt-example-body header span { color: #82909e; }
+.theme-dark .chart-preview-popover { border-color: #506272; background: rgba(20,31,42,.98); box-shadow: 0 20px 52px rgba(0,0,0,.42); }
+.theme-dark .chart-preview-title strong { color: #d8e1e8; }
+.theme-dark .chart-preview-title span,
+.theme-dark .chart-preview-popover p { color: #8d9ba8; }
+.theme-dark .chart-preview-svg { border-color: #3f4f5e; background: #17232e; }
+.theme-dark .chart-preview-svg text { fill: #9eacb8; }
+.theme-dark .preview-axis { stroke: #8595a2; }
+.theme-dark .preview-guide { stroke: #334351; }
+.theme-dark .preview-map { fill: #263541; stroke: #647684; }
+.theme-dark .preview-boundary { stroke: rgba(193,208,218,.48); }
 .theme-dark .prompt-example-actions button { border-color: #475767; color: #a9b6c1; }
 .theme-dark .prompt-example-actions button:hover { border-color: #68849a; background: #202f3c; color: #d2e1e9; }
 .theme-dark .prompt-example-actions button.use-prompt { border-color: #577c93; background: #243b4a; color: #bfdae8; }

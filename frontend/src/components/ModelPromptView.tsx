@@ -1,6 +1,7 @@
-import { ArrowRight, Check, Copy } from 'lucide-react'
+import { ArrowRight, Check, Copy, Image as ImageIcon } from 'lucide-react'
 import { useState } from 'react'
 import type { Scope, TaskPayload } from '../types'
+import { ChartPreview, type ChartPreviewKind } from './ChartPreview'
 
 type GuideId = 'single' | 'custom' | 'all' | 'benchmark'
 
@@ -8,6 +9,7 @@ interface FigureCapability {
   name: string
   purpose: string
   controls: string
+  preview: ChartPreviewKind
 }
 
 interface PromptExample {
@@ -38,10 +40,10 @@ const guides: ResultGuide[] = [
     scope: 'single',
     sampleRule: '1 个起报；业务模型可选 StormDiT、风雷或二者公共样本',
     figures: [
-      { name: '同步回波动画', purpose: '逐时效对照预报与 CREF 空间演变', controls: '时效范围、抽帧步长、1—4 fps' },
-      { name: '指定时效空间对比图', purpose: '检查某一时效的回波位置、形态和强度', controls: '指定 6 分钟倍数时效' },
-      { name: '单指标多阈值曲线', purpose: '比较 CSI、POD、FAR 或 Bias 随时效变化', controls: '指标、阈值、时效范围' },
-      { name: '固定阈值多指标曲线', purpose: '在一张图中联合查看 CSI、POD 与 FAR', controls: '诊断阈值、时效范围' },
+      { name: '同步回波动画', purpose: '逐时效对照预报与 CREF 空间演变', controls: '时效范围、抽帧步长、1—4 fps', preview: 'animation' },
+      { name: '指定时效空间对比图', purpose: '检查某一时效的回波位置、形态和强度', controls: '指定 6 分钟倍数时效', preview: 'spatial' },
+      { name: '单指标多阈值曲线', purpose: '比较 CSI、POD、FAR 或 Bias 随时效变化', controls: '指标、阈值、时效范围', preview: 'line' },
+      { name: '固定阈值多指标曲线', purpose: '在一张图中联合查看 CSI、POD 与 FAR', controls: '诊断阈值、时效范围', preview: 'multi-line' },
     ],
     prompts: [
       {
@@ -79,12 +81,12 @@ const guides: ResultGuide[] = [
     scope: 'custom',
     sampleRule: '2—8 个起报；可选择这些起报共同拥有的一个有效时间',
     figures: [
-      { name: '同一有效时间空间对比图', purpose: '比较不同起报对同一时刻的预报更新', controls: '起报子集、共同有效时间' },
-      { name: '子集汇总时效曲线', purpose: '比较所选起报内的平均 CSI、POD、FAR 或 Bias', controls: '指标、阈值、时效范围' },
-      { name: '起报—时效评分矩阵', purpose: '定位特定起报或时效的评分异常', controls: '指标、诊断阈值' },
-      { name: '评分分布图', purpose: '查看多个起报和多个阈值的离散程度', controls: '指标、阈值集合' },
-      { name: '预报率—观测率散点图', purpose: '判断所选子集整体偏报、漏报或空报倾向', controls: '阈值集合' },
-      { name: '变量相关性热力图', purpose: '检查强度、误差和位置诊断量与评分的关系', controls: 'Pearson / Spearman、阈值' },
+      { name: '同一有效时间空间对比图', purpose: '比较不同起报对同一时刻的预报更新', controls: '起报子集、共同有效时间', preview: 'spatial' },
+      { name: '子集汇总时效曲线', purpose: '比较所选起报内的平均 CSI、POD、FAR 或 Bias', controls: '指标、阈值、时效范围', preview: 'line' },
+      { name: '起报—时效评分矩阵', purpose: '定位特定起报或时效的评分异常', controls: '指标、诊断阈值', preview: 'heatmap' },
+      { name: '评分分布图', purpose: '查看多个起报和多个阈值的离散程度', controls: '指标、阈值集合', preview: 'distribution' },
+      { name: '预报率—观测率散点图', purpose: '判断所选子集整体偏报、漏报或空报倾向', controls: '阈值集合', preview: 'scatter' },
+      { name: '变量相关性热力图', purpose: '检查强度、误差和位置诊断量与评分的关系', controls: 'Pearson / Spearman、阈值', preview: 'correlation' },
     ],
     prompts: [
       {
@@ -122,12 +124,12 @@ const guides: ResultGuide[] = [
     scope: 'all',
     sampleRule: '自动使用全部可用起报；双模型模式使用三方严格公共样本',
     figures: [
-      { name: '全部起报汇总时效曲线', purpose: '观察总体评分随预报时效的变化', controls: '指标、阈值、时效范围' },
-      { name: '固定阈值多指标曲线', purpose: '同图比较 CSI、POD 与 FAR', controls: '诊断阈值' },
-      { name: '起报—时效评分矩阵', purpose: '定位不同起报与预报时效的稳定结构和异常', controls: '指标、诊断阈值' },
-      { name: '多阈值评分分布图', purpose: '比较模型在不同回波量级下的评分分布', controls: '指标、阈值集合' },
-      { name: '预报率—观测率散点图', purpose: '检查大样本下的系统性偏报方向', controls: '阈值集合' },
-      { name: '变量相关性热力图', purpose: '展示诊断变量间的相关结构', controls: 'Pearson / Spearman、阈值' },
+      { name: '全部起报汇总时效曲线', purpose: '观察总体评分随预报时效的变化', controls: '指标、阈值、时效范围', preview: 'line' },
+      { name: '固定阈值多指标曲线', purpose: '同图比较 CSI、POD 与 FAR', controls: '诊断阈值', preview: 'multi-line' },
+      { name: '起报—时效评分矩阵', purpose: '定位不同起报与预报时效的稳定结构和异常', controls: '指标、诊断阈值', preview: 'heatmap' },
+      { name: '多阈值评分分布图', purpose: '比较模型在不同回波量级下的评分分布', controls: '指标、阈值集合', preview: 'distribution' },
+      { name: '预报率—观测率散点图', purpose: '检查大样本下的系统性偏报方向', controls: '阈值集合', preview: 'scatter' },
+      { name: '变量相关性热力图', purpose: '展示诊断变量间的相关结构', controls: 'Pearson / Spearman、阈值', preview: 'correlation' },
     ],
     prompts: [
       {
@@ -165,11 +167,11 @@ const guides: ResultGuide[] = [
     scope: 'all',
     sampleRule: '模型共同最大时效由所选模型中最短的原生预报长度决定',
     figures: [
-      { name: '多模型多阈值评分曲线', purpose: '比较 CSI、POD、FAR、Bias、MAE 或 RMSE', controls: '指标、阈值、公共时效' },
-      { name: 'FSS空间尺度曲线', purpose: '比较不同邻域容忍度下的空间技巧', controls: '1、3、5 像元邻域' },
-      { name: '公共时段汇总比较图', purpose: '对所选共同时间段作多指标横向比较', controls: '指标、诊断阈值' },
-      { name: '模型—时效评分热力图', purpose: '同时查看多个模型在各预报时效的差异', controls: '指标、诊断阈值' },
-      { name: '多模型空间对比图', purpose: '比较单一起报、单个时效的空间预报', controls: '仅单一起报；指定时效' },
+      { name: '多模型多阈值评分曲线', purpose: '比较 CSI、POD、FAR、Bias、MAE 或 RMSE', controls: '指标、阈值、公共时效', preview: 'line' },
+      { name: 'FSS空间尺度曲线', purpose: '比较不同邻域容忍度下的空间技巧', controls: '1、3、5 像元邻域', preview: 'fss' },
+      { name: '公共时段汇总比较图', purpose: '对所选共同时间段作多指标横向比较', controls: '指标、诊断阈值', preview: 'summary' },
+      { name: '模型—时效评分热力图', purpose: '同时查看多个模型在各预报时效的差异', controls: '指标、诊断阈值', preview: 'heatmap' },
+      { name: '多模型空间对比图', purpose: '比较单一起报、单个时效的空间预报', controls: '仅单一起报；指定时效', preview: 'spatial' },
     ],
     prompts: [
       {
@@ -246,7 +248,17 @@ export function ModelPromptView({ onUseTemplate }: { onUseTemplate: (draft: Part
             <div className="guide-section-heading"><div><h3>可生成图表</h3></div><em>共 {guide.figures.length} 类</em></div>
             <div className="capability-table" role="table">
               <div className="capability-row capability-head" role="row"><span>图表</span><span>主要用途</span><span>可控内容</span></div>
-              {guide.figures.map((figure) => <div className="capability-row" role="row" key={figure.name}><strong>{figure.name}</strong><span>{figure.purpose}</span><small>{figure.controls}</small></div>)}
+              {guide.figures.map((figure) => <div className="capability-row" role="row" key={figure.name}>
+                <div className="capability-preview-trigger" tabIndex={0} aria-label={`${figure.name}，悬停或聚焦查看示意图`}>
+                  <strong>{figure.name}</strong><ImageIcon size={13} aria-hidden="true" />
+                  <div className="chart-preview-popover" role="tooltip">
+                    <div className="chart-preview-title"><strong>{figure.name}</strong><span>形式示意</span></div>
+                    <ChartPreview kind={figure.preview} />
+                    <p>实际图表由所选资料、模型、阈值和时效计算生成。</p>
+                  </div>
+                </div>
+                <span>{figure.purpose}</span><small>{figure.controls}</small>
+              </div>)}
             </div>
           </section>
 
