@@ -223,29 +223,27 @@ export function ModelPromptView({ onUseTemplate }: { onUseTemplate: (draft: Part
     <div className="reference-page prompt-guide-page">
       <div className="page-heading prompt-guide-heading">
         <div><h1>检验功能与提示词</h1><p>先选择结果类型，再查看可生成图表和可直接使用的检验要求。</p></div>
-        <div className="parser-status"><span>自然语言解析</span><strong>DeepSeek · deepseek-chat</strong><em>评分与制图由确定性代码执行</em></div>
       </div>
 
       <section className="panel prompt-guide-shell">
         <aside className="result-type-index" aria-label="结果类型">
-          <div className="index-heading"><span>结果类型</span><b>{guides.length}</b></div>
+          <div className="index-heading"><span>检验类型</span></div>
           {guides.map((item) => (
             <button key={item.id} className={item.id === selectedId ? 'active' : ''} onClick={() => setSelectedId(item.id)}>
-              <span>{item.number}</span><div><strong>{item.shortLabel}</strong><small>{item.figures.length} 类图表</small></div><ArrowRight size={14} />
+              <div><strong>{item.shortLabel}</strong><small>支持 {item.figures.length} 类图表</small></div><ArrowRight size={15} />
             </button>
           ))}
         </aside>
 
         <article className="prompt-guide-content">
           <header className="result-guide-header">
-            <span>RESULT TYPE {guide.number}</span>
             <h2>{guide.label}</h2>
             <p>{guide.summary}</p>
             <dl><div><dt>样本范围</dt><dd>{guide.sampleRule}</dd></div><div><dt>页面选择</dt><dd>{guide.shortLabel}</dd></div></dl>
           </header>
 
           <section className="guide-section capability-section">
-            <div className="guide-section-heading"><div><span>01</span><h3>可生成图表</h3></div><em>{guide.figures.length} 类</em></div>
+            <div className="guide-section-heading"><div><h3>可生成图表</h3></div><em>共 {guide.figures.length} 类</em></div>
             <div className="capability-table" role="table">
               <div className="capability-row capability-head" role="row"><span>图表</span><span>主要用途</span><span>可控内容</span></div>
               {guide.figures.map((figure) => <div className="capability-row" role="row" key={figure.name}><strong>{figure.name}</strong><span>{figure.purpose}</span><small>{figure.controls}</small></div>)}
@@ -253,11 +251,10 @@ export function ModelPromptView({ onUseTemplate }: { onUseTemplate: (draft: Part
           </section>
 
           <section className="guide-section prompt-examples-section">
-            <div className="guide-section-heading"><div><span>02</span><h3>提示词示例</h3></div><em>{guide.prompts.length} 条</em></div>
+            <div className="guide-section-heading"><div><h3>提示词示例</h3></div><em>共 {guide.prompts.length} 条</em></div>
             <div className="prompt-example-list">
-              {guide.prompts.map((example, index) => (
+              {guide.prompts.map((example) => (
                 <article className="prompt-example" key={example.title}>
-                  <div className="prompt-example-index">{String(index + 1).padStart(2, '0')}</div>
                   <div className="prompt-example-body"><header><strong>{example.title}</strong><span>{example.note}</span></header><p>{example.draft.prompt}</p></div>
                   <div className="prompt-example-actions">
                     <button onClick={() => copyPrompt(example)}>{copiedTitle === example.title ? <Check size={14} /> : <Copy size={14} />}{copiedTitle === example.title ? '已复制' : '复制'}</button>

@@ -26,7 +26,7 @@ interface ShellProps extends PropsWithChildren {
 }
 
 const nav = [
-  { view: 'task' as const, label: '检验任务', icon: Radar },
+  { view: 'task' as const, label: '任务配置', icon: Radar },
   { view: 'progress' as const, label: '执行状态', icon: Activity },
   { view: 'result' as const, label: '结果分析', icon: BarChart3 },
   { view: 'archive' as const, label: '任务归档', icon: Archive },
@@ -57,13 +57,13 @@ export function Shell({
         </div>
         <nav className="topnav" aria-label="主导航">
           <button className={view === 'models' ? 'active' : ''} onClick={() => onNavigate('models')}>
-            模型与提示词
+            功能与提示词
           </button>
           <button className={view === 'data' ? 'active' : ''} onClick={() => onNavigate('data')}>
-            数据资料
+            资料说明
           </button>
           <button className={['task', 'progress', 'result', 'archive'].includes(view) ? 'active' : ''} onClick={() => onNavigate('task')}>
-            检验工作台
+            任务工作台
           </button>
         </nav>
         <button
@@ -82,6 +82,7 @@ export function Shell({
         <button className="execute-button" onClick={onNewTask}>
           <Play size={16} fill="currentColor" /> 新建检验任务
         </button>
+        <div className="side-nav-label">任务流程</div>
         <div className="side-nav">
           {nav.map((item) => {
             const disabled = (item.view === 'progress' && !hasJob) || (item.view === 'result' && !hasResult)
