@@ -22,8 +22,7 @@ StormDiT、风雷、Zero-shot Benchmark 与 CREF 雷达观测放到统一检验�
 ## 环境要求
 
 - Python 3.11
-- Node.js 20 或更高版本
-- npm
+- Node.js 20 或更高版本、npm（仅在修改或重新构建前端时需要）
 - 建议 16 GB 内存和 SSD
 - 完整业务资料约 51 GB，建议预留至少 80 GB 可用空间
 
@@ -41,6 +40,9 @@ python -m pip install -e .
 npm --prefix frontend ci
 npm --prefix frontend run build
 ```
+
+仓库同时包含已经构建好的 `frontend/dist`。只负责运行服务的 Linux 服务器不需要
+安装 Node.js 或 npm，可以跳过上面两条 npm 命令；只有修改前端源码后才需要重新构建。
 
 复制环境变量模板：
 
@@ -85,10 +87,9 @@ StormDiT、风雷与 CREF 三者共有的起报和有效时刻；空间配准、
 
 ## 启动
 
-构建前端后启动统一服务：
+仓库已包含生产前端，安装 Python 依赖后可直接启动统一服务：
 
 ```bash
-npm --prefix frontend run build
 weather-agent-web
 ```
 
@@ -138,6 +139,7 @@ npm --prefix frontend run build
 - 当前任务队列和任务状态保存在单个进程内，服务器必须使用一个 Uvicorn worker；
 - 生产环境建议绑定 `127.0.0.1:8000`，再通过 Nginx/Caddy 和单位认证入口访问；
 - `.env`、API Key、真实资料和任务输出不得提交到 Git；
-- `frontend/dist` 不在源码包中，部署前必须运行一次前端构建。
+- `frontend/dist` 已作为部署资产纳入仓库；服务器无需安装 Node.js。前端源码发生变化时，
+  应在兼容的构建环境中重新执行 `npm --prefix frontend run build` 并提交新的构建产物。
 
 提示词示例见 [`prompts.md`](prompts.md)。

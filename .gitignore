@@ -47,7 +47,6 @@ htmlcov/
 
 # React/Vite
 node_modules/
-frontend/dist/
 frontend/.vite/
 frontend/*.tsbuildinfo
 frontend/vite.config.js
