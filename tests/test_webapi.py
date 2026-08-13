@@ -61,6 +61,19 @@ def test_default_prompt_changes_with_scope_and_model_family():
     assert benchmark.status_code == 200
     assert "FSS" in benchmark.json()["prompt"]
     assert "在20 dBZ阈值下" in benchmark.json()["prompt"]
+    assert "空间分布动画" not in benchmark.json()["prompt"]
+
+    benchmark_single = client.post(
+        "/api/tasks/default-prompt",
+        json={
+            "case_id": "2025-04-11",
+            "models": ["StormDiT", "风雷", "Earthformer", "NowCastNet"],
+            "scope": "single",
+            "complete_only": True,
+        },
+    )
+    assert benchmark_single.status_code == 200
+    assert "生成空间分布动画，时效曲线、热力图" in benchmark_single.json()["prompt"]
 
 
 def test_business_models_can_join_zero_shot_benchmark_selection():

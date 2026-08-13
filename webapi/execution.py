@@ -31,7 +31,7 @@ from data_io.forecast_sources import MODEL_LABELS, discover_multimodel_initializ
 from reports import figure_to_png, figure_to_svg
 from verification.benchmark import (
     benchmark_available_samples,
-    benchmark_frame,
+    benchmark_frames,
     common_horizon_minutes,
     run_benchmark,
     summarize_benchmark_period,
@@ -48,6 +48,7 @@ from visualization.benchmark_plots import (
     plot_benchmark_score_curves,
     plot_benchmark_score_heatmap,
     plot_benchmark_spatial_comparison,
+    render_benchmark_reflectivity_animation,
 )
 from visualization.comparison_plots import (
     plot_multimodel_batch_multi_metric_curves,
@@ -80,9 +81,10 @@ def default_prompt(case_id: str, models: list[str], scope: str) -> str:
     if is_benchmark(models):
         horizon = common_horizon_minutes(benchmark_model_ids(models))
         subject = "、".join(models)
+        spatial = "生成空间分布动画，" if scope == "single" else "生成"
         return (
             f"比较{subject}，使用20、35、45 dBZ阈值，查看+6—+{horizon}分钟的"
-            "CSI、POD、FAR和多尺度FSS，生成时效曲线、热力图，并在20 dBZ阈值下"
+            f"CSI、POD、FAR和多尺度FSS，{spatial}时效曲线、热力图，并在20 dBZ阈值下"
             "生成公共样本汇总和解读。"
         )
     subject = "和".join(models)
@@ -295,14 +297,23 @@ def _single_rows(result) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _curve_series(frame: pd.DataFrame, model_column: str = "model_id") -> list[dict]:
+def _curve_series(
+    frame: pd.DataFrame,
+    model_column: str = "model_id",
+    *,
+    metrics=None,
+    fss_windows=(5,),
+) -> list[dict]:
     series = []
-    metrics = [
-        metric for metric in ("csi", "pod", "far", "bias_score", "fss_w5") if metric in frame
-    ]
+    requested = list(metrics or ("csi", "pod", "far", "bias_score", "fss"))
+    curve_metrics = []
+    for metric in requested:
+        candidates = [f"fss_w{window}" for window in fss_windows] if metric == "fss" else [metric]
+        curve_metrics.extend(candidate for candidate in candidates if candidate in frame)
+    curve_metrics = list(dict.fromkeys(curve_metrics))
     for (model, threshold), rows in frame.groupby([model_column, "threshold_dbz"], sort=False):
         rows = rows.sort_values("lead_minutes")
-        for metric in metrics:
+        for metric in curve_metrics:
             points = [
                 [int(row.lead_minutes), _finite(getattr(row, metric))] for row in rows.itertuples()
             ]
@@ -423,7 +434,7 @@ def _regular_single(payload, job_id, update):
         store.gallery.append(spatial[0])
     rows = _single_rows(result)
     if "score_curve" in views:
-        for metric in request["metrics"]:
+        for metric in request["score_curve_metrics"]:
             store.add_figure(
                 f"score_{metric}",
                 f"{metric.upper()}随预报时效变化",
@@ -434,7 +445,9 @@ def _regular_single(payload, job_id, update):
             "multi_metric",
             f"{request['diagnostic_threshold_dbz']:g} dBZ多指标比较",
             plot_multimodel_multi_metric_curves(
-                result, request["metrics"], request["diagnostic_threshold_dbz"]
+                result,
+                request["multi_metric_metrics"],
+                request["diagnostic_threshold_dbz"],
             ),
         )
     update("interpret", "正在生成证据约束型AI解读", 0.82)
@@ -456,7 +469,15 @@ def _regular_single(payload, job_id, update):
             "context": result["context"],
             "coverage": result["coverage"],
             "curves": (
-                _curve_series(rows)
+                _curve_series(
+                    rows,
+                    metrics=list(
+                        dict.fromkeys(
+                            request["score_curve_metrics"]
+                            + request["multi_metric_metrics"]
+                        )
+                    ),
+                )
                 if views.intersection({"score_curve", "multi_metric_curve"})
                 else []
             ),
@@ -531,7 +552,7 @@ def _regular_batch(payload, job_id, update):
                 plot_multimodel_same_valid_time_comparison(comparison, model_id),
             )
     if "score_curve" in views:
-        for metric in request["metrics"]:
+        for metric in request["score_curve_metrics"]:
             store.add_figure(
                 f"batch_{metric}",
                 f"汇总{metric.upper()}随预报时效变化",
@@ -542,7 +563,9 @@ def _regular_batch(payload, job_id, update):
             "batch_multi_metric",
             f"{request['diagnostic_threshold_dbz']:g} dBZ多指标比较",
             plot_multimodel_batch_multi_metric_curves(
-                result["summary"], request["metrics"], request["diagnostic_threshold_dbz"]
+                result["summary"],
+                request["multi_metric_metrics"],
+                request["diagnostic_threshold_dbz"],
             ),
         )
     if "score_heatmap" in views:
@@ -601,7 +624,15 @@ def _regular_batch(payload, job_id, update):
             "context": result["context"],
             "coverage": result["coverage"],
             "curves": (
-                _curve_series(result["summary"])
+                _curve_series(
+                    result["summary"],
+                    metrics=list(
+                        dict.fromkeys(
+                            request["score_curve_metrics"]
+                            + request["multi_metric_metrics"]
+                        )
+                    ),
+                )
                 if views.intersection({"score_curve", "multi_metric_curve"})
                 else []
             ),
@@ -613,6 +644,56 @@ def _regular_batch(payload, job_id, update):
             "downloads": [bundle, metrics_file, insight_file],
         }
     )
+
+
+def _benchmark_artifact_manifest(request, models, animation_leads, spatial, gallery):
+    """Validate and describe the exact renderer output promised by the request."""
+    expected_gallery = []
+    views = set(request["views"])
+    if animation_leads:
+        expected_gallery.append("benchmark_reflectivity_animation.gif")
+    if "spatial_comparison" in views:
+        expected_gallery.append("benchmark_spatial.png")
+    if "score_curve" in views:
+        expected_gallery.extend(
+            f"benchmark_{metric}.png"
+            for metric in request["metrics"]
+            if metric != "fss"
+        )
+    if "fss" in request["metrics"] and "fss_curve" in views:
+        expected_gallery.append("benchmark_fss.png")
+    if "period_summary" in views:
+        expected_gallery.append("benchmark_period.png")
+    if "score_heatmap" in views:
+        expected_gallery.append("benchmark_heatmap.png")
+    actual_gallery = [item["name"] for item in gallery]
+    if actual_gallery != expected_gallery:
+        raise RuntimeError(
+            "benchmark artifacts do not match the validated request: "
+            f"expected {expected_gallery}, got {actual_gallery}"
+        )
+    actual_leads = [int(item["lead_minutes"]) for item in spatial]
+    if actual_leads != animation_leads:
+        raise RuntimeError(
+            "benchmark animation frames do not match the requested lead sequence: "
+            f"expected {animation_leads}, got {actual_leads}"
+        )
+    return {
+        "models": list(models),
+        "thresholds_dbz": list(request["thresholds_dbz"]),
+        "metrics": list(request["metrics"]),
+        "fss_windows": list(request["fss_windows"]),
+        "diagnostic_threshold_dbz": request["diagnostic_threshold_dbz"],
+        "diagnostic_metric": request["diagnostic_metric"],
+        "animation": {
+            "enabled": bool(animation_leads),
+            "frame_count": len(animation_leads),
+            "lead_minutes": list(animation_leads),
+            "panel_order": [*models, "CREF"],
+            "fps": request["animation"]["fps"],
+        },
+        "gallery_files": actual_gallery,
+    }
 
 
 def _benchmark(payload, job_id, update):
@@ -657,13 +738,51 @@ def _benchmark(payload, job_id, update):
     )
     update("render", "正在生成多模型公共样本图表", 0.72)
     views = set(request["views"])
+    animation_leads = []
+    if single and "reflectivity_animation" in views:
+        step = request["animation"]["frame_step"]
+        native_leads = list(range(lead["start"], lead["end"] + 1, 6))
+        animation_leads = _frame_subset(native_leads[::step])
+    static_leads = []
     if single and "spatial_comparison" in views:
-        spatial_lead = request["spatial_lead_minutes"] or lead["start"]
-        frame = benchmark_frame(catalog, samples[0].sample_id, models, spatial_lead)
+        static_leads = [request["spatial_lead_minutes"] or lead["start"]]
+    frame_leads = sorted(set(animation_leads + static_leads))
+    spatial = []
+    frame_map = {}
+    if frame_leads:
+        loaded_frames = benchmark_frames(catalog, samples[0].sample_id, models, frame_leads)
+        frame_map = {frame["lead_minutes"]: frame for frame in loaded_frames}
+        for index, frame_lead in enumerate(animation_leads, start=1):
+            item = store.add_figure(
+                f"benchmark_spatial_{frame_lead:03d}",
+                f"+{frame_lead}分钟多模型—CREF空间对比",
+                plot_benchmark_spatial_comparison(frame_map[frame_lead]),
+                gallery=False,
+                svg=False,
+            )
+            spatial.append({"lead_minutes": frame_lead, **item})
+            update(
+                "render",
+                f"正在生成多模型空间帧 {index}/{len(animation_leads)}",
+                0.72 + 0.08 * index / max(1, len(animation_leads)),
+            )
+    if animation_leads:
+        animation = store.add_bytes(
+            "benchmark_reflectivity_animation.gif",
+            render_benchmark_reflectivity_animation(
+                [frame_map[value] for value in animation_leads],
+                fps=request["animation"]["fps"],
+            ),
+            "image/gif",
+            "多模型—CREF同步空间分布动画",
+        )
+        store.gallery.append(animation)
+    if static_leads:
+        static_lead = static_leads[0]
         store.add_figure(
             "benchmark_spatial",
-            f"+{spatial_lead}分钟多模型—CREF空间对比",
-            plot_benchmark_spatial_comparison(frame),
+            f"+{static_lead}分钟多模型—CREF空间对比",
+            plot_benchmark_spatial_comparison(frame_map[static_lead]),
         )
     if "score_curve" in views:
         for metric in request["metrics"]:
@@ -680,7 +799,7 @@ def _benchmark(payload, job_id, update):
             "多模型多尺度FSS随预报时效变化",
             plot_benchmark_fss_curves(
                 result["summary"],
-                request["diagnostic_threshold_dbz"],
+                request["thresholds_dbz"],
                 request["fss_windows"],
             ),
         )
@@ -693,7 +812,7 @@ def _benchmark(payload, job_id, update):
                 period,
                 request["metrics"],
                 request["diagnostic_threshold_dbz"],
-                fss_window=max(request["fss_windows"]),
+                fss_windows=request["fss_windows"],
             ),
         )
     if "score_heatmap" in views:
@@ -702,13 +821,14 @@ def _benchmark(payload, job_id, update):
             "模型—时效评分热力图",
             plot_benchmark_score_heatmap(
                 result["summary"],
-                next(metric for metric in request["metrics"] if metric != "fss")
-                if any(metric != "fss" for metric in request["metrics"])
-                else "fss",
+                request["diagnostic_metric"],
                 request["diagnostic_threshold_dbz"],
                 fss_window=max(request["fss_windows"]),
             ),
         )
+    artifact_manifest = _benchmark_artifact_manifest(
+        request, models, animation_leads, spatial, store.gallery
+    )
     facts = build_benchmark_insight_facts(
         result,
         request,
@@ -739,7 +859,12 @@ def _benchmark(payload, job_id, update):
     bundle = store.bundle()
     labels = {model: BENCHMARK_MODEL_LABELS[model] for model in models}
     curves = (
-        _curve_series(result["summary"], model_column="model")
+        _curve_series(
+            result["summary"],
+            model_column="model",
+            metrics=request["metrics"],
+            fss_windows=request["fss_windows"],
+        )
         if views.intersection({"score_curve", "fss_curve"})
         else []
     )
@@ -753,10 +878,15 @@ def _benchmark(payload, job_id, update):
             "kind": "benchmark",
             "request": request,
             "context": {**result["context"], "model_labels": list(labels.values())},
-            "coverage": result["coverage"],
+            "coverage": {
+                **result["coverage"],
+                "animation_frame_count": len(animation_leads),
+                "animation_leads": animation_leads,
+            },
+            "artifact_manifest": artifact_manifest,
             "curves": curves,
             "summary_table": table,
-            "spatial_frames": [],
+            "spatial_frames": spatial,
             "gallery": store.gallery,
             "insight": insight,
             "insight_source": insight_source,

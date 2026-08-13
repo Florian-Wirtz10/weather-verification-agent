@@ -26,14 +26,86 @@ StormDiT、风雷、Zero-shot Benchmark 与 CREF 雷达观测放到统一检验�
 - 建议 16 GB 内存和 SSD
 - 完整业务资料约 51 GB，建议预留至少 80 GB 可用空间
 
-## 安装
+## Windows PowerShell 操作文档
+
+以下步骤适用于 Windows 10/11。请先安装 Python 3.11、Node.js 20 或更高版本和 Git，
+然后在项目根目录打开 **PowerShell**。命令行提示符所在目录应能看到 `pyproject.toml`
+和 `frontend` 文件夹。
+
+### 1. 创建并激活 Python 环境
+
+```powershell
+py -3.11 -m venv .venv
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+`Set-ExecutionPolicy` 只对当前 PowerShell 窗口生效，不会永久修改计算机策略。激活成功后，
+命令行开头会出现 `(.venv)`。
+
+### 2. 安装后端依赖
+
+```powershell
+python -m pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple
+python -m pip install -e . -i https://pypi.tuna.tsinghua.edu.cn/simple --timeout 120 --retries 10
+```
+
+### 3. 安装并构建前端
+
+```powershell
+npm --prefix frontend ci --registry=https://registry.npmmirror.com
+npm --prefix frontend run build
+Test-Path .\frontend\dist\index.html
+```
+
+最后一条命令应输出 `True`。如果输出 `False`，说明前端尚未成功构建，不要继续启动服务，
+应先查看上一条命令末尾的报错。
+
+### 4. 配置资料和可选的 DeepSeek
+
+首次运行时复制配置模板：
+
+```powershell
+Copy-Item .env.example .env
+notepad .env
+```
+
+至少确认 `.env` 中的 `WEATHER_DATA_ROOT` 指向实际资料目录。需要使用自然语言解析和 AI
+解读时填写 `DEEPSEEK_API_KEY`；不填写时，系统仍可执行默认计划并生成确定性摘要。真实资料的
+推荐目录结构见下文“数据目录”。
+
+### 5. 启动并访问系统
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn webapi.main:app --host 127.0.0.1 --port 8000
+```
+
+保持这个 PowerShell 窗口运行，在浏览器打开：
+
+- 系统首页：`http://127.0.0.1:8000`
+- API 文档：`http://127.0.0.1:8000/api/docs`
+- 健康检查：`http://127.0.0.1:8000/api/health`
+
+终端出现 `Application startup complete` 表示服务已经启动。按 `Ctrl+C` 停止服务。
+以后再次运行时，只需进入项目目录后执行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\python.exe -m uvicorn webapi.main:app --host 127.0.0.1 --port 8000
+```
+
+`127.0.0.1` 只允许本机访问。如果要供内网其他电脑访问，应在完成单位网络与访问控制配置后，
+改用 `--host 0.0.0.0`，并通过防火墙、Nginx/Caddy 和单位认证入口限制访问。
+
+## Linux 安装
 
 ```bash
 git clone https://github.com/Florian-Wirtz10/weather-verification-agent.git
 cd weather-verification-agent
 
 python3.11 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
 
@@ -47,7 +119,7 @@ npm --prefix frontend run build
 复制环境变量模板：
 
 ```bash
-cp .env.example .env              # Windows 可手动复制并改名
+cp .env.example .env
 ```
 
 至少配置资料根目录；DeepSeek API Key 为可选项：
@@ -85,7 +157,7 @@ external/datasets/
 StormDiT、风雷与 CREF 按 UTC 有效时间严格匹配，不进行时间插值。双模型比较只使用
 StormDiT、风雷与 CREF 三者共有的起报和有效时刻；空间配准、有效掩膜、区域和阈值口径保持一致。
 
-## 启动
+## Linux 启动
 
 仓库已包含生产前端，安装 Python 依赖后可直接启动统一服务：
 

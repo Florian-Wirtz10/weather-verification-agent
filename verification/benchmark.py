@@ -263,28 +263,40 @@ def summarize_benchmark_period(rows: pd.DataFrame, *, fss_windows=(1, 3, 5)):
     return pd.DataFrame(records).sort_values(["model", "threshold_dbz"]).reset_index(drop=True)
 
 
-def benchmark_frame(catalog, sample_id, models, lead_minutes):
-    """Load one already aligned spatial comparison frame."""
+def benchmark_frames(catalog, sample_id, models, lead_minutes):
+    """Load ordered, already aligned spatial frames with one data read."""
     sample = next((item for item in catalog.samples if item.sample_id == int(sample_id)), None)
     if sample is None:
         raise ValueError(f"unknown benchmark sample ID: {sample_id}")
-    lead_minutes = int(lead_minutes)
-    if lead_minutes < 6 or lead_minutes % 6:
-        raise ValueError("benchmark spatial lead must be a positive multiple of 6")
-    if lead_minutes > common_horizon_minutes(models):
+    leads = tuple(dict.fromkeys(int(value) for value in lead_minutes))
+    if not leads:
+        raise ValueError("benchmark spatial frames require at least one lead")
+    if any(value < 6 or value % 6 for value in leads):
+        raise ValueError("benchmark spatial leads must be positive multiples of 6")
+    if any(value > common_horizon_minutes(models) for value in leads):
         raise ValueError("benchmark spatial lead exceeds a selected model's native horizon")
     arrays = load_benchmark_arrays(
         sample,
         models,
         catalog=catalog,
-        leads=(lead_minutes,),
+        leads=leads,
     )
-    index = lead_minutes // 6 - 1
-    return {
-        "sample": sample,
-        "lat": arrays["lat"],
-        "lon": arrays["lon"],
-        "truth": arrays["truth"][index],
-        "forecasts": {model: values[index] for model, values in arrays["forecasts"].items()},
-        "lead_minutes": lead_minutes,
-    }
+    return [
+        {
+            "sample": sample,
+            "lat": arrays["lat"],
+            "lon": arrays["lon"],
+            "truth": arrays["truth"][value // 6 - 1],
+            "forecasts": {
+                model: frames[value // 6 - 1]
+                for model, frames in arrays["forecasts"].items()
+            },
+            "lead_minutes": value,
+        }
+        for value in leads
+    ]
+
+
+def benchmark_frame(catalog, sample_id, models, lead_minutes):
+    """Load one already aligned spatial comparison frame."""
+    return benchmark_frames(catalog, sample_id, models, (lead_minutes,))[0]

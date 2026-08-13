@@ -13,6 +13,7 @@ from openai import OpenAI
 
 BENCHMARK_METRICS = ("csi", "pod", "far", "bias_score", "mae", "rmse", "fss")
 BENCHMARK_VIEWS = (
+    "reflectivity_animation",
     "score_curve",
     "fss_curve",
     "period_summary",
@@ -28,18 +29,20 @@ _SYSTEM_PROMPT = f"""你是中国雷达CREF Zero-shot Benchmark的受限请求�
 - fss_curve：FSS随预报时效变化，可选1/3/5像元邻域；
 - period_summary：整个所选共同时间段的多模型汇总比较；
 - score_heatmap：模型×预报时效热力图；
+- reflectivity_animation：单一起报内，多模型预报与CREF随公共预报时效同步演变的动画；
 - spatial_comparison：单一起报、单个时效的多模型预报与CREF空间对比。
 规则：
-1. 全部或自定义多起报不支持空间图；单一起报仅在用户明确要求时支持空间图。
+1. 全部或自定义多起报不支持空间图或动画；单一起报仅在用户明确要求时支持。
 2. 默认阈值20、35、45 dBZ，默认指标CSI、POD、FAR、FSS。
 3. 时效必须为6分钟倍数，且不得超过服务端给出的共同最大时效。
 4. FSS邻域只能是1、3、5像元。
 5. 不支持的要求必须放入unmatched_requests，不能偷偷替换。
-6. “全面、汇总”只选择四类统计图；不得据此擅自增加空间图。动画尚未实现，用户要求动画时写入unmatched_requests，不得用静态空间图替代。
+6. “全面、汇总”只选择四类统计图；不得据此擅自增加空间图或动画。“空间分布动画、动图、GIF、同步演变”选择reflectivity_animation，不能用spatial_comparison静态图替代。
 JSON结构：
 {{"metrics":["csi","pod","far","fss"],"thresholds_dbz":[20,35,45],
-"lead_range_minutes":{{"start":6,"end":72}},"views":["score_curve","fss_curve","period_summary","score_heatmap"],
-"diagnostic_threshold_dbz":20,"spatial_lead_minutes":null,"fss_windows":[1,3,5],
+"lead_range_minutes":{{"start":6,"end":72}},"views":["reflectivity_animation","score_curve","fss_curve","period_summary","score_heatmap"],
+"diagnostic_threshold_dbz":20,"diagnostic_metric":"csi","spatial_lead_minutes":null,
+"fss_windows":[1,3,5],"animation":{{"fps":2,"frame_step":1}},
 "unmatched_requests":[],"notes":""}}"""
 
 
@@ -48,15 +51,13 @@ def default_benchmark_request(*, single: bool, common_horizon: int) -> dict:
         "metrics": ["csi", "pod", "far", "fss"],
         "thresholds_dbz": [20.0, 35.0, 45.0],
         "lead_range_minutes": {"start": 6, "end": int(common_horizon)},
-        "views": [
-            "score_curve",
-            "fss_curve",
-            "period_summary",
-            "score_heatmap",
-        ],
+        "views": (["reflectivity_animation"] if single else [])
+        + ["score_curve", "fss_curve", "period_summary", "score_heatmap"],
         "diagnostic_threshold_dbz": 20.0,
+        "diagnostic_metric": "csi",
         "spatial_lead_minutes": None,
         "fss_windows": [1, 3, 5],
+        "animation": {"fps": 2, "frame_step": 1},
         "unmatched_requests": [],
         "notes": "",
     }
@@ -104,13 +105,20 @@ def validate_benchmark_request(parsed, *, single: bool, common_horizon: int) -> 
         view = str(value).strip().lower()
         if view not in BENCHMARK_VIEWS:
             unmatched.append(f"暂不支持图表：{view}")
-        elif view == "spatial_comparison" and not single:
-            unmatched.append("空间对比图仅支持单一起报")
+        elif view in {"spatial_comparison", "reflectivity_animation"} and not single:
+            unmatched.append(
+                "空间对比图仅支持单一起报"
+                if view == "spatial_comparison"
+                else "空间分布动画仅支持单一起报"
+            )
         elif view not in views:
             views.append(view)
     diagnostic = float(parsed.get("diagnostic_threshold_dbz", thresholds[0]))
     if diagnostic not in thresholds:
         raise ValueError("diagnostic_threshold_dbz must be included in thresholds_dbz")
+    diagnostic_metric = str(parsed.get("diagnostic_metric", metrics[0])).strip().lower()
+    if diagnostic_metric not in metrics:
+        raise ValueError("diagnostic_metric must be included in metrics")
     spatial = parsed.get("spatial_lead_minutes")
     if spatial is not None:
         if isinstance(spatial, bool) or not isinstance(spatial, int) or spatial % 6:
@@ -128,14 +136,35 @@ def validate_benchmark_request(parsed, *, single: bool, common_horizon: int) -> 
     if "fss_curve" in views and "fss" not in metrics:
         views.remove("fss_curve")
         unmatched.append("FSS曲线需要在metrics中选择fss")
+    if (
+        "spatial_comparison" in views
+        and "reflectivity_animation" in views
+        and spatial is None
+    ):
+        views.remove("spatial_comparison")
+    animation = parsed.get("animation", {})
+    if not isinstance(animation, dict):
+        raise ValueError("animation must be an object")
+    fps = animation.get("fps", 2)
+    frame_step = animation.get("frame_step", 1)
+    if isinstance(fps, bool) or not isinstance(fps, int) or not 1 <= fps <= 4:
+        raise ValueError("animation.fps must be an integer from 1 to 4")
+    if (
+        isinstance(frame_step, bool)
+        or not isinstance(frame_step, int)
+        or not 1 <= frame_step <= 30
+    ):
+        raise ValueError("animation.frame_step must be an integer from 1 to 30")
     return {
         "metrics": metrics,
         "thresholds_dbz": thresholds,
         "lead_range_minutes": {"start": start, "end": end},
         "views": views,
         "diagnostic_threshold_dbz": diagnostic,
+        "diagnostic_metric": diagnostic_metric,
         "spatial_lead_minutes": spatial,
         "fss_windows": windows,
+        "animation": {"fps": fps, "frame_step": frame_step},
         "unmatched_requests": list(
             dict.fromkeys(item.strip() for item in unmatched if item.strip())
         ),
@@ -150,7 +179,16 @@ def apply_explicit_benchmark_contract(parsed: dict, user_text: str) -> dict:
     not ask for or silently analyze a different threshold.  Only unambiguous
     wording is handled here; vague requests are left to the closed planner.
     """
-    normalized = str(user_text).lower().replace("＋", "+")
+    normalized = (
+        str(user_text)
+        .lower()
+        .replace("＋", "+")
+        .replace("－", "-")
+        .replace("–", "-")
+        .replace("—", "-")
+        .replace("～", "-")
+        .replace("~", "-")
+    )
     result = dict(parsed)
     requested_views: set[str] = set()
     comprehensive = any(token in normalized for token in ("全面", "全套", "完整展示"))
@@ -171,32 +209,109 @@ def apply_explicit_benchmark_contract(parsed: dict, user_text: str) -> dict:
             requested_views.add("period_summary")
         if "热力图" in normalized:
             requested_views.add("score_heatmap")
-    explicit_spatial = any(
+    animation_requested = any(
         token in normalized
-        for token in ("空间对比", "空间分布", "静态回波图", "预报—cref", "预报-cref")
+        for token in ("空间分布动画", "同步回波动画", "同步动画", "动画", "动图", "gif", "逐帧", "随时效演变")
     )
-    if explicit_spatial:
+    if animation_requested:
+        requested_views.add("reflectivity_animation")
+    explicit_static = any(
+        token in normalized
+        for token in ("静态空间", "静态回波图", "空间对比图", "指定时效空间")
+    )
+    if explicit_static:
         requested_views.add("spatial_comparison")
     if requested_views:
         result["views"] = [view for view in BENCHMARK_VIEWS if view in requested_views]
 
-    unmatched = list(result.get("unmatched_requests", []))
-    if any(token in normalized for token in ("动画", "动图", "gif")):
-        unmatched.append("多模型公共样本基准暂不支持动画")
-    result["unmatched_requests"] = unmatched
+    result["unmatched_requests"] = [
+        item
+        for item in result.get("unmatched_requests", [])
+        if "不支持动画" not in item
+    ]
 
-    diagnostic_match = re.search(
+    threshold_values = []
+    for match in re.finditer(
+        r"((?:\d+(?:\.\d+)?\s*[、,，和及/]\s*)*\d+(?:\.\d+)?)\s*dbz",
+        normalized,
+    ):
+        for value in re.findall(r"\d+(?:\.\d+)?", match.group(1)):
+            threshold = float(value)
+            if threshold not in threshold_values:
+                threshold_values.append(threshold)
+    if threshold_values:
+        result["thresholds_dbz"] = threshold_values
+
+    lead_match = re.search(
+        r"\+?\s*(\d+)\s*(?:-|至|到)\s*\+?\s*(\d+)\s*分钟",
+        normalized,
+    )
+    if lead_match:
+        result["lead_range_minutes"] = {
+            "start": int(lead_match.group(1)),
+            "end": int(lead_match.group(2)),
+        }
+
+    metric_tokens = {
+        "csi": "csi",
+        "pod": "pod",
+        "far": "far",
+        "bias": "bias_score",
+        "mae": "mae",
+        "rmse": "rmse",
+        "fss": "fss",
+    }
+    explicit_metrics = [
+        metric for token, metric in metric_tokens.items() if token in normalized
+    ]
+    if explicit_metrics:
+        result["metrics"] = list(dict.fromkeys(explicit_metrics))
+
+    if "fss" in normalized:
+        window_values = []
+        for match in re.finditer(
+            r"((?:[135]\s*[、,，和及/]\s*)*[135])\s*像元(?:邻域)?",
+            normalized,
+        ):
+            for value in re.findall(r"[135]", match.group(1)):
+                window = int(value)
+                if window not in window_values:
+                    window_values.append(window)
+        result["fss_windows"] = window_values or [1, 3, 5]
+
+    diagnostic_matches = list(re.finditer(
         r"(?:在\s*)?(\d+(?:\.\d+)?)\s*dbz\s*(?:阈值)?\s*(?:下|的)?"
         r".{0,18}?(?:汇总|解读|热力图)",
         normalized,
-    )
-    if diagnostic_match:
-        diagnostic = float(diagnostic_match.group(1))
+    ))
+    if diagnostic_matches:
+        diagnostic = float(diagnostic_matches[-1].group(1))
         thresholds = list(result.get("thresholds_dbz", []))
         if diagnostic not in thresholds:
             thresholds.append(diagnostic)
         result["thresholds_dbz"] = thresholds
         result["diagnostic_threshold_dbz"] = diagnostic
+    heatmap_context = re.search(
+        r"(csi|pod|far|bias|mae|rmse|fss).{0,12}?热力图", normalized
+    )
+    if heatmap_context:
+        token = heatmap_context.group(1)
+        for name, metric in metric_tokens.items():
+            if name in token and metric in result.get("metrics", []):
+                result["diagnostic_metric"] = metric
+                break
+    elif result.get("metrics"):
+        result["diagnostic_metric"] = next(
+            (metric for metric in result["metrics"] if metric != "fss"),
+            result["metrics"][0],
+        )
+
+    static_lead = re.search(
+        r"\+(\d+)\s*分钟[^。；;]{0,80}?(?:静态空间|空间对比图|静态回波图)",
+        normalized,
+    )
+    if static_lead:
+        result["spatial_lead_minutes"] = int(static_lead.group(1))
     if "spatial_comparison" not in result.get("views", []):
         result["spatial_lead_minutes"] = None
     return result

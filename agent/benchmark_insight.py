@@ -53,16 +53,22 @@ def build_benchmark_insight_facts(result, request, period, figure_catalog):
     threshold = float(request["diagnostic_threshold_dbz"])
     selected_period = period[(period["threshold_dbz"] - threshold).abs() < 1e-7]
     metrics = []
-    fss_window = max(request["fss_windows"])
+    metric_specs = []
     for requested in request["metrics"]:
-        column = f"fss_w{fss_window}" if requested == "fss" else requested
+        if requested == "fss":
+            metric_specs.extend(
+                (f"fss_w{window}", f"FSS {window}×{window}像元")
+                for window in request["fss_windows"]
+            )
+        else:
+            metric_specs.append((requested, requested.upper()))
+    for column, label in metric_specs:
         values = {
             str(row.model): _finite(getattr(row, column))
             for row in selected_period.itertuples(index=False)
         }
         if not values:
             continue
-        leader = min(values, key=lambda model: _better(requested, values[model]))
         trends = {}
         selected_summary = result["summary"][
             (result["summary"]["threshold_dbz"] - threshold).abs() < 1e-7
@@ -75,9 +81,9 @@ def build_benchmark_insight_facts(result, request, period, figure_catalog):
             }
         metrics.append(
             {
-                "metric": requested,
+                "metric": label,
                 "pooled_values": values,
-                "leader": leader,
+                "leader": min(values, key=lambda model: _better(column, values[model])),
                 "lead_trends": trends,
             }
         )
@@ -103,7 +109,7 @@ def build_benchmark_insight_facts(result, request, period, figure_catalog):
             "sample_count": result["coverage"]["sample_count"],
             "lead_range_minutes": result["context"]["lead_range_minutes"],
             "diagnostic_threshold_dbz": threshold,
-            "fss_window_pixels": fss_window,
+            "fss_window_pixels": list(request["fss_windows"]),
             "grid": "128x128 common patch; 0.03 degree; no verification-stage interpolation",
             "fairness": (
                 "Business products, SEVIR-pretrained zero-shot baselines, and persistence "

@@ -1,10 +1,13 @@
 from datetime import datetime, timedelta
+from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pytest
+from PIL import Image
 
 from agent.benchmark_request import (
     apply_explicit_benchmark_contract,
@@ -28,8 +31,10 @@ from verification.benchmark import (
 )
 from visualization.benchmark_plots import (
     plot_benchmark_fss_curves,
+    plot_benchmark_period_summary,
     plot_benchmark_score_curves,
     plot_benchmark_score_heatmap,
+    render_benchmark_reflectivity_animation,
 )
 
 
@@ -88,10 +93,11 @@ def test_request_rejects_lead_beyond_strict_common_horizon():
         validate_benchmark_request(request, single=False, common_horizon=72)
 
 
-def test_single_default_does_not_invent_a_static_spatial_figure():
+def test_single_default_includes_animation_without_inventing_a_static_figure():
     request = default_benchmark_request(single=True, common_horizon=72)
 
     assert request["views"] == [
+        "reflectivity_animation",
         "score_curve",
         "fss_curve",
         "period_summary",
@@ -122,7 +128,40 @@ def test_explicit_prompt_controls_views_and_diagnostic_threshold():
     assert contracted["spatial_lead_minutes"] is None
 
 
-def test_unsupported_animation_is_not_replaced_by_spatial_comparison():
+def test_target_prompt_has_an_exact_deterministic_figure_contract():
+    prompt = (
+        "比较StormDiT、风雷、Earthformer、NowCastNet，使用20、35、45 dBZ阈值，"
+        "查看+6—+72分钟的CSI、POD、FAR和多尺度FSS，生成空间分布动画，"
+        "时效曲线、热力图，并在20 dBZ阈值下生成公共样本汇总和解读。"
+    )
+
+    contracted = apply_explicit_benchmark_contract(
+        default_benchmark_request(single=True, common_horizon=72), prompt
+    )
+    request = validate_benchmark_request(contracted, single=True, common_horizon=72)
+
+    assert request == {
+        "metrics": ["csi", "pod", "far", "fss"],
+        "thresholds_dbz": [20.0, 35.0, 45.0],
+        "lead_range_minutes": {"start": 6, "end": 72},
+        "views": [
+            "reflectivity_animation",
+            "score_curve",
+            "fss_curve",
+            "period_summary",
+            "score_heatmap",
+        ],
+        "diagnostic_threshold_dbz": 20.0,
+        "diagnostic_metric": "csi",
+        "spatial_lead_minutes": None,
+        "fss_windows": [1, 3, 5],
+        "animation": {"fps": 2, "frame_step": 1},
+        "unmatched_requests": [],
+        "notes": "",
+    }
+
+
+def test_animation_is_supported_without_being_replaced_by_spatial_comparison():
     parsed = default_benchmark_request(single=True, common_horizon=72)
 
     contracted = apply_explicit_benchmark_contract(
@@ -130,8 +169,68 @@ def test_unsupported_animation_is_not_replaced_by_spatial_comparison():
         "生成6到72分钟多模型预报动画和CSI曲线。",
     )
 
-    assert contracted["views"] == ["score_curve"]
-    assert contracted["unmatched_requests"] == ["多模型公共样本基准暂不支持动画"]
+    assert contracted["views"] == ["reflectivity_animation", "score_curve"]
+    assert contracted["unmatched_requests"] == []
+
+
+@pytest.mark.parametrize(
+    "wording",
+    [
+        "生成+6—+72分钟空间分布动画和CSI时效曲线",
+        "绘制6-72分钟多模型动图，并给出CSI曲线",
+        "查看6到72分钟多模型GIF与CSI随时效变化",
+        "展示+6至+72分钟逐帧空间演变及CSI曲线",
+    ],
+)
+def test_animation_wording_variants_keep_the_requested_lead_range(wording):
+    parsed = default_benchmark_request(single=True, common_horizon=72)
+
+    contracted = apply_explicit_benchmark_contract(parsed, wording)
+    request = validate_benchmark_request(contracted, single=True, common_horizon=72)
+
+    assert "reflectivity_animation" in request["views"]
+    assert "spatial_comparison" not in request["views"]
+    assert request["lead_range_minutes"] == {"start": 6, "end": 72}
+
+
+def test_small_parameter_edits_replace_the_original_contract_values():
+    prompt = (
+        "查看12到60分钟的CSI、POD和3、5像元FSS，采用25、35 dBZ，"
+        "生成动图、时效曲线，并在35 dBZ下绘制POD热力图和公共时段汇总。"
+    )
+    parsed = apply_explicit_benchmark_contract(
+        default_benchmark_request(single=True, common_horizon=72), prompt
+    )
+    request = validate_benchmark_request(parsed, single=True, common_horizon=72)
+
+    assert request["lead_range_minutes"] == {"start": 12, "end": 60}
+    assert request["thresholds_dbz"] == [25.0, 35.0]
+    assert request["metrics"] == ["csi", "pod", "fss"]
+    assert request["fss_windows"] == [3, 5]
+    assert request["diagnostic_threshold_dbz"] == 35.0
+    assert request["diagnostic_metric"] == "pod"
+    assert request["views"] == [
+        "reflectivity_animation",
+        "score_curve",
+        "fss_curve",
+        "period_summary",
+        "score_heatmap",
+    ]
+
+
+def test_animation_and_explicit_static_lead_can_coexist_without_substitution():
+    prompt = "生成6—72分钟动画，另生成+60分钟静态空间对比图和CSI曲线。"
+    parsed = apply_explicit_benchmark_contract(
+        default_benchmark_request(single=True, common_horizon=72), prompt
+    )
+    request = validate_benchmark_request(parsed, single=True, common_horizon=72)
+
+    assert request["views"] == [
+        "reflectivity_animation",
+        "score_curve",
+        "spatial_comparison",
+    ]
+    assert request["spatial_lead_minutes"] == 60
 
 
 def test_request_explicitly_rejects_spatial_view_for_multiple_initializations():
@@ -197,6 +296,94 @@ def test_benchmark_plots_render_selected_models_and_thresholds():
 
     assert len(score.axes) == 2
     assert len(fss.axes) == 3
+
+
+def test_fss_figure_covers_every_requested_threshold_and_scale():
+    rows = [
+        {
+            "model": "StormDiT",
+            "lead_minutes": lead,
+            "threshold_dbz": threshold,
+            "fss_w1": 0.5,
+            "fss_w3": 0.6,
+            "fss_w5": 0.7,
+        }
+        for threshold in (20.0, 35.0, 45.0)
+        for lead in (6, 12)
+    ]
+
+    figure = plot_benchmark_fss_curves(
+        pd.DataFrame(rows), [20.0, 35.0, 45.0], (1, 3, 5)
+    )
+    try:
+        assert len(figure.axes) == 9
+        assert {axis.get_title() for axis in figure.axes} == {
+            f"{threshold:g} dBZ | {window}×{window} pixels"
+            for threshold in (20.0, 35.0, 45.0)
+            for window in (1, 3, 5)
+        }
+    finally:
+        plt.close(figure)
+
+
+def test_period_summary_keeps_every_requested_fss_scale():
+    period = pd.DataFrame(
+        [
+            {
+                "model": model,
+                "threshold_dbz": 20.0,
+                "csi": 0.6,
+                "pod": 0.7,
+                "far": 0.2,
+                "fss_w1": 0.5,
+                "fss_w3": 0.6,
+                "fss_w5": 0.7,
+            }
+            for model in ("StormDiT", "Fenglei", "Earthformer", "NowCastNet")
+        ]
+    )
+
+    figure = plot_benchmark_period_summary(
+        period,
+        ["csi", "pod", "far", "fss"],
+        20.0,
+        fss_windows=(1, 3, 5),
+    )
+    try:
+        assert len(figure.axes) == 6
+        assert {axis.get_title() for axis in figure.axes} >= {
+            "FSS 1×1 pixels ↑",
+            "FSS 3×3 pixels ↑",
+            "FSS 5×5 pixels ↑",
+        }
+    finally:
+        plt.close(figure)
+
+
+def test_benchmark_animation_preserves_ordered_leads_and_all_panels():
+    sample = SimpleNamespace(analysis_time_bjt=datetime(2025, 4, 11, 9, 36))
+    frames = []
+    for lead in (6, 12, 18):
+        frames.append(
+            {
+                "sample": sample,
+                "lat": np.array([32.0, 31.97]),
+                "lon": np.array([112.0, 112.03]),
+                "truth": np.full((2, 2), lead, dtype=float),
+                "forecasts": {
+                    model: np.full((2, 2), lead + index, dtype=float)
+                    for index, model in enumerate(
+                        ("StormDiT", "Fenglei", "Earthformer", "NowCastNet")
+                    )
+                },
+                "lead_minutes": lead,
+            }
+        )
+
+    gif = render_benchmark_reflectivity_animation(frames, fps=2)
+
+    with Image.open(BytesIO(gif)) as image:
+        assert image.n_frames == 3
 
 
 def test_benchmark_four_threshold_titles_use_a_two_by_two_layout():

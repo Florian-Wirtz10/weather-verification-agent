@@ -6,6 +6,7 @@ import json
 import math
 from numbers import Real
 import os
+import re
 
 from openai import OpenAI
 
@@ -99,6 +100,8 @@ def default_multimodel_request(
     return {
         "scope": scope,
         "metrics": ["csi", "pod", "far"],
+        "score_curve_metrics": ["csi", "pod", "far"],
+        "multi_metric_metrics": ["csi", "pod", "far"],
         "thresholds_dbz": (
             [20.0]
             if scope == "custom"
@@ -179,6 +182,28 @@ def validate_multimodel_request(
             thresholds.append(threshold)
     if len(thresholds) > 8:
         raise ValueError("at most eight thresholds are supported")
+
+    def selected_metrics(name, default):
+        raw_values = parsed.get(name, default)
+        if not isinstance(raw_values, list):
+            raise ValueError(f"{name} must be a list")
+        values = []
+        for value in raw_values:
+            metric = str(value).strip().lower()
+            if metric not in MULTIMODEL_METRICS:
+                raise ValueError(f"unsupported metric in {name}: {metric}")
+            if metric not in values:
+                values.append(metric)
+        return values
+
+    score_curve_metrics = selected_metrics("score_curve_metrics", metrics)
+    multi_metric_metrics = selected_metrics(
+        "multi_metric_metrics",
+        [metric for metric in metrics if metric in COMBINABLE_METRICS],
+    )
+    for metric in score_curve_metrics + multi_metric_metrics:
+        if metric not in metrics:
+            metrics.append(metric)
     diagnostic = float(parsed.get("diagnostic_threshold_dbz", 20))
     if diagnostic not in thresholds:
         raise ValueError("diagnostic_threshold_dbz must be in thresholds_dbz")
@@ -237,10 +262,15 @@ def validate_multimodel_request(
         # selected lead. Do not invent an unexplained standalone middle frame.
         views.remove("spatial_comparison")
     if "multi_metric_curve" in views:
-        combined = [metric for metric in metrics if metric in COMBINABLE_METRICS]
-        if len(combined) < 2:
+        multi_metric_metrics = [
+            metric for metric in multi_metric_metrics if metric in COMBINABLE_METRICS
+        ]
+        if len(multi_metric_metrics) < 2:
             views.remove("multi_metric_curve")
             unmatched.append("多指标同图至少需要CSI、POD、FAR中的两项")
+    if "score_curve" in views and not score_curve_metrics:
+        views.remove("score_curve")
+        unmatched.append("时效曲线至少需要一个指标")
     correlation_method = str(
         parsed.get("correlation_method", "spearman")
     ).strip().lower()
@@ -264,6 +294,8 @@ def validate_multimodel_request(
     return {
         "scope": scope,
         "metrics": metrics,
+        "score_curve_metrics": score_curve_metrics,
+        "multi_metric_metrics": multi_metric_metrics,
         "thresholds_dbz": thresholds,
         "diagnostic_threshold_dbz": diagnostic,
         "diagnostic_metric": diagnostic_metric,
@@ -275,6 +307,180 @@ def validate_multimodel_request(
         "unmatched_requests": list(dict.fromkeys(item.strip() for item in unmatched if item.strip())),
         "notes": str(parsed.get("notes", ""))[:1000],
     }
+
+
+def apply_explicit_multimodel_contract(parsed: dict, user_text: str, *, scope: str) -> dict:
+    """Bind explicit Chinese chart wording to deterministic renderer parameters."""
+    normalized = (
+        str(user_text)
+        .lower()
+        .replace("＋", "+")
+        .replace("－", "-")
+        .replace("–", "-")
+        .replace("—", "-")
+        .replace("～", "-")
+        .replace("~", "-")
+    )
+    result = dict(parsed)
+    metric_tokens = {
+        "csi": "csi",
+        "pod": "pod",
+        "far": "far",
+        "bias": "bias_score",
+    }
+    explicit_metrics = [
+        metric for token, metric in metric_tokens.items() if token in normalized
+    ]
+    if explicit_metrics:
+        result["metrics"] = list(dict.fromkeys(explicit_metrics))
+
+    threshold_values = []
+    for match in re.finditer(
+        r"((?:\d+(?:\.\d+)?\s*[、,，和及/]\s*)*\d+(?:\.\d+)?)\s*dbz",
+        normalized,
+    ):
+        for value in re.findall(r"\d+(?:\.\d+)?", match.group(1)):
+            threshold = float(value)
+            if threshold not in threshold_values:
+                threshold_values.append(threshold)
+    if threshold_values:
+        result["thresholds_dbz"] = threshold_values
+
+    lead_match = re.search(
+        r"\+?\s*(\d+)\s*(?:-|至|到)\s*\+?\s*(\d+)\s*分钟",
+        normalized,
+    )
+    if lead_match:
+        result["lead_range_minutes"] = {
+            "start": int(lead_match.group(1)),
+            "end": int(lead_match.group(2)),
+        }
+
+    requested_views: set[str] = set()
+    animation_requested = any(
+        token in normalized
+        for token in (
+            "同步回波动画",
+            "同步动画",
+            "空间分布动画",
+            "空间演变",
+            "动画",
+            "动图",
+            "gif",
+            "逐帧",
+        )
+    )
+    if animation_requested:
+        requested_views.add("reflectivity_animation")
+    same_valid = "同一有效时间" in normalized or "同一有效时刻" in normalized
+    if same_valid:
+        requested_views.add("same_valid_time_comparison")
+    if not same_valid and any(
+        token in normalized
+        for token in ("静态空间", "静态回波图", "空间对比图", "指定时效空间")
+    ):
+        requested_views.add("spatial_comparison")
+    curve_requested = "曲线" in normalized or "随时效" in normalized
+    if curve_requested and explicit_metrics:
+        requested_views.add("score_curve")
+    multi_metric_requested = any(
+        token in normalized for token in ("联合展示", "联合曲线", "多指标", "同一张图")
+    )
+    if multi_metric_requested:
+        requested_views.add("multi_metric_curve")
+    score_heatmap_text = normalized.replace("相关性热力图", "")
+    if (
+        "热力图" in score_heatmap_text
+        or "评分矩阵" in normalized
+        or "起报-时效矩阵" in normalized
+    ):
+        requested_views.add("score_heatmap")
+    if "相关性" in normalized:
+        requested_views.add("variable_correlation_heatmap")
+    if "评分分布" in normalized:
+        requested_views.add("score_distribution")
+    if "预报率" in normalized and "观测率" in normalized:
+        requested_views.add("forecast_observed_rate_scatter")
+    if any(token in normalized for token in ("全面", "全套", "完整展示")):
+        requested_views.update(
+            (
+                {"reflectivity_animation", "score_curve", "multi_metric_curve"}
+                if scope == "single"
+                else {
+                    "score_curve",
+                    "multi_metric_curve",
+                    "score_heatmap",
+                    "variable_correlation_heatmap",
+                    "score_distribution",
+                    "forecast_observed_rate_scatter",
+                }
+            )
+        )
+    if requested_views:
+        result["views"] = [view for view in MULTIMODEL_VIEWS if view in requested_views]
+
+    curve_context = " ".join(
+        match.group(1)
+        for match in re.finditer(r"([^；;。]{0,90}?)(?:时效)?曲线", normalized)
+    )
+    score_curve_metrics = [
+        metric for token, metric in metric_tokens.items() if token in curve_context
+    ]
+    if score_curve_metrics:
+        result["score_curve_metrics"] = list(dict.fromkeys(score_curve_metrics))
+    elif "score_curve" not in requested_views:
+        result["score_curve_metrics"] = []
+    if multi_metric_requested:
+        combined = [
+            metric
+            for token, metric in metric_tokens.items()
+            if token in normalized and metric in COMBINABLE_METRICS
+        ]
+        result["multi_metric_metrics"] = list(dict.fromkeys(combined))
+    elif "multi_metric_curve" not in requested_views:
+        result["multi_metric_metrics"] = []
+
+    evidence_metrics = list(result.get("metrics", []))
+    for metric in result.get("score_curve_metrics", []) + result.get(
+        "multi_metric_metrics", []
+    ):
+        if metric not in evidence_metrics:
+            evidence_metrics.append(metric)
+    if evidence_metrics:
+        result["metrics"] = evidence_metrics
+
+    diagnostic_matches = list(re.finditer(
+        r"(?:在|使用|用)?\s*(\d+(?:\.\d+)?)\s*dbz\s*(?:阈值)?\s*(?:下|的)?"
+        r".{0,12}?(?:联合|矩阵|热力图|分布|相关性|说明|解读)",
+        normalized,
+    ))
+    if diagnostic_matches:
+        diagnostic = float(diagnostic_matches[-1].group(1))
+        thresholds = list(result.get("thresholds_dbz", []))
+        if diagnostic not in thresholds:
+            thresholds.append(diagnostic)
+        result["thresholds_dbz"] = thresholds
+        result["diagnostic_threshold_dbz"] = diagnostic
+
+    diagnostic_metric_match = re.search(
+        r"(csi|pod|far|bias).{0,14}?(?:起报-时效|评分矩阵|热力图|评分分布)",
+        normalized,
+    )
+    if diagnostic_metric_match:
+        result["diagnostic_metric"] = metric_tokens[diagnostic_metric_match.group(1)]
+    elif result.get("metrics"):
+        result["diagnostic_metric"] = result["metrics"][0]
+
+    result["correlation_method"] = "pearson" if "pearson" in normalized else "spearman"
+    static_lead = re.search(
+        r"\+(\d+)\s*分钟[^。；;]{0,80}?(?:静态空间|空间对比图|静态回波图)",
+        normalized,
+    )
+    if static_lead:
+        result["spatial_lead_minutes"] = int(static_lead.group(1))
+    if "spatial_comparison" not in result.get("views", []):
+        result["spatial_lead_minutes"] = None
+    return result
 
 
 def parse_multimodel_request(
@@ -302,8 +508,13 @@ def parse_multimodel_request(
     )
     if not response.choices or not response.choices[0].message.content:
         raise ValueError("DeepSeek returned an empty multi-model request")
-    return validate_multimodel_request(
+    parsed = apply_explicit_multimodel_contract(
         json.loads(response.choices[0].message.content),
+        str(user_text),
+        scope=scope,
+    )
+    return validate_multimodel_request(
+        parsed,
         batch=batch,
         scope=scope,
     )

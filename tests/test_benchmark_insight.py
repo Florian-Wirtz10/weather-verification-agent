@@ -75,3 +75,40 @@ def test_benchmark_insight_uses_only_the_requested_diagnostic_threshold():
     assert facts["metrics"][0]["pooled_values"] == {"Fenglei": 0.4, "StormDiT": 0.6}
     assert "在20 dBZ下" in text
     assert "在35 dBZ下" not in text
+
+
+def test_benchmark_insight_keeps_every_requested_fss_scale():
+    models = ["StormDiT", "Fenglei"]
+    summary = pd.DataFrame(
+        [
+            {
+                "model": model,
+                "lead_minutes": lead,
+                "threshold_dbz": 20.0,
+                "fss_w1": 0.5,
+                "fss_w3": 0.6,
+                "fss_w5": 0.7,
+            }
+            for model in models
+            for lead in (6, 12)
+        ]
+    )
+    period = summary.groupby(["model", "threshold_dbz"], as_index=False).mean()
+    result = {
+        "context": {"models": models, "lead_range_minutes": [6, 12]},
+        "coverage": {"sample_count": 1},
+        "summary": summary,
+    }
+    request = {
+        "diagnostic_threshold_dbz": 20.0,
+        "metrics": ["fss"],
+        "fss_windows": [1, 3, 5],
+    }
+
+    facts = build_benchmark_insight_facts(result, request, period, [])
+
+    assert [item["metric"] for item in facts["metrics"]] == [
+        "FSS 1×1像元",
+        "FSS 3×3像元",
+        "FSS 5×5像元",
+    ]

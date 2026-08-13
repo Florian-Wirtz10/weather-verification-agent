@@ -9,7 +9,11 @@ import numpy as np
 import pandas as pd
 
 from visualization.geography import add_admin_boundaries
-from visualization.plots import _reflectivity_cmap_norm, _reflectivity_display_data
+from visualization.plots import (
+    _figures_to_gif,
+    _reflectivity_cmap_norm,
+    _reflectivity_display_data,
+)
 from visualization.style import style_axes
 
 
@@ -84,56 +88,82 @@ def plot_benchmark_score_curves(summary: pd.DataFrame, metric: str, thresholds):
         axis.set_visible(False)
     handles, labels = axes.flat[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="outside lower center", ncol=min(4, len(labels)), frameon=False)
-    fig.suptitle(f"Zero-shot benchmark | {METRIC_LABELS[metric]} by forecast lead")
+    fig.suptitle(f"Multi-model CREF benchmark | {METRIC_LABELS[metric]} by forecast lead")
     return fig
 
 
-def plot_benchmark_fss_curves(summary, threshold: float, windows=(1, 3, 5)):
-    selected = summary[np.isclose(summary["threshold_dbz"], float(threshold))]
-    if selected.empty:
-        raise ValueError("benchmark summary has no selected FSS threshold")
+def plot_benchmark_fss_curves(summary, thresholds, windows=(1, 3, 5)):
+    thresholds = (
+        [float(thresholds)]
+        if np.isscalar(thresholds)
+        else [float(value) for value in thresholds]
+    )
+    if not thresholds:
+        raise ValueError("select at least one FSS threshold")
     windows = tuple(windows)
     fig, axes = plt.subplots(
-        1,
+        len(thresholds),
         len(windows),
-        figsize=(6.2 * len(windows), 5.2),
+        figsize=(5.7 * len(windows), 4.3 * len(thresholds)),
         sharey=True,
         squeeze=False,
         layout="constrained",
     )
-    for axis, window in zip(axes.flat, windows):
-        column = f"fss_w{window}"
-        for model, rows in selected.groupby("model", sort=False):
-            rows = rows.sort_values("lead_minutes")
-            axis.plot(
-                rows["lead_minutes"],
-                rows[column],
-                color=MODEL_COLORS.get(model, "#333333"),
-                linewidth=2,
-                marker="o",
-                markersize=3,
-                label=model,
+    for row_index, threshold in enumerate(thresholds):
+        selected = summary[np.isclose(summary["threshold_dbz"], threshold)]
+        if selected.empty:
+            raise ValueError(f"benchmark summary has no FSS threshold {threshold:g} dBZ")
+        for column_index, window in enumerate(windows):
+            axis = axes[row_index, column_index]
+            column = f"fss_w{window}"
+            for model, rows in selected.groupby("model", sort=False):
+                rows = rows.sort_values("lead_minutes")
+                axis.plot(
+                    rows["lead_minutes"],
+                    rows[column],
+                    color=MODEL_COLORS.get(model, "#333333"),
+                    linewidth=2,
+                    marker="o",
+                    markersize=3,
+                    label=model,
+                )
+            axis.set(
+                title=f"{threshold:g} dBZ | {window}×{window} pixels",
+                xlabel="Lead time (min)",
+                ylabel="FSS ↑",
+                ylim=(0, 1),
             )
-        axis.set(
-            title=f"{window}×{window} pixels",
-            xlabel="Lead time (min)",
-            ylabel="FSS ↑",
-            ylim=(0, 1),
-        )
-        style_axes(axis)
+            style_axes(axis)
     handles, labels = axes.flat[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="outside upper center", ncol=min(4, len(labels)), frameon=False)
-    fig.suptitle(f"Zero-shot benchmark | FSS at {threshold:g} dBZ")
+    fig.legend(handles, labels, loc="outside lower center", ncol=min(4, len(labels)), frameon=False)
+    fig.suptitle("Multi-model CREF benchmark | Multi-threshold, multi-scale FSS")
     return fig
 
 
-def plot_benchmark_period_summary(period: pd.DataFrame, metrics, threshold: float, *, fss_window=5):
+def plot_benchmark_period_summary(
+    period: pd.DataFrame,
+    metrics,
+    threshold: float,
+    *,
+    fss_window=5,
+    fss_windows=None,
+):
     selected = period[np.isclose(period["threshold_dbz"], float(threshold))].copy()
     if selected.empty:
         raise ValueError("benchmark period summary is empty")
-    metrics = list(dict.fromkeys(metrics))[:6]
-    columns = 2 if len(metrics) > 1 else 1
-    rows = math.ceil(len(metrics) / columns)
+    windows = tuple(dict.fromkeys(fss_windows or (fss_window,)))
+    plot_specs = []
+    for metric in dict.fromkeys(metrics):
+        if metric == "fss":
+            plot_specs.extend(
+                (f"fss_w{window}", f"FSS {window}×{window} pixels ↑", "fss")
+                for window in windows
+            )
+        else:
+            plot_specs.append((metric, METRIC_LABELS[metric], metric))
+    plot_specs = plot_specs[:8]
+    columns = 2 if len(plot_specs) > 1 else 1
+    rows = math.ceil(len(plot_specs) / columns)
     fig, axes = plt.subplots(
         rows,
         columns,
@@ -143,8 +173,7 @@ def plot_benchmark_period_summary(period: pd.DataFrame, metrics, threshold: floa
     )
     order = [model for model in MODEL_COLORS if model in set(selected["model"])]
     selected = selected.set_index("model").reindex(order)
-    for axis, metric in zip(axes.flat, metrics):
-        column = f"fss_w{fss_window}" if metric == "fss" else metric
+    for axis, (column, label, metric) in zip(axes.flat, plot_specs):
         axis.bar(
             np.arange(len(order)),
             selected[column],
@@ -152,15 +181,15 @@ def plot_benchmark_period_summary(period: pd.DataFrame, metrics, threshold: floa
             width=0.7,
         )
         axis.set_xticks(np.arange(len(order)), order, rotation=32, ha="right")
-        axis.set_ylabel(METRIC_LABELS[metric])
-        axis.set_title(METRIC_LABELS[metric])
+        axis.set_ylabel(label)
+        axis.set_title(label)
         _score_limits(axis, metric)
         style_axes(axis)
-    for axis in axes.flat[len(metrics) :]:
+    for axis in axes.flat[len(plot_specs) :]:
         axis.set_visible(False)
     fig.suptitle(
         f"Pooled common-window comparison | {threshold:g} dBZ | "
-        f"FSS uses {fss_window}×{fss_window} pixels"
+        f"FSS scales {', '.join(f'{window}×{window}' for window in windows)} pixels"
     )
     return fig
 
@@ -234,7 +263,26 @@ def plot_benchmark_spatial_comparison(frame):
         )
     sample = frame["sample"]
     fig.suptitle(
-        f"Zero-shot spatial comparison | Init {sample.analysis_time_bjt:%Y-%m-%d %H:%M} BJT | "
+        f"Multi-model spatial comparison | Init {sample.analysis_time_bjt:%Y-%m-%d %H:%M} BJT | "
         f"+{frame['lead_minutes']} min"
     )
     return fig
+
+
+def render_benchmark_reflectivity_animation(frames, *, fps=2):
+    """Encode ordered benchmark spatial comparisons as a deterministic GIF."""
+    frames = list(frames)
+    if not frames:
+        raise ValueError("benchmark animation requires at least one frame")
+    if isinstance(fps, bool) or not isinstance(fps, int) or not 1 <= fps <= 4:
+        raise ValueError("fps must be an integer from 1 to 4")
+    leads = [int(frame["lead_minutes"]) for frame in frames]
+    if leads != sorted(set(leads)):
+        raise ValueError("benchmark animation frames must use unique increasing leads")
+    panel_order = list(frames[0]["forecasts"])
+    if any(list(frame["forecasts"]) != panel_order for frame in frames):
+        raise ValueError("benchmark animation model panels must keep a fixed order")
+    return _figures_to_gif(
+        (plot_benchmark_spatial_comparison(frame) for frame in frames),
+        fps=fps,
+    )
