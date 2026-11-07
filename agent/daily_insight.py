@@ -262,7 +262,8 @@ def generate_daily_insight(
     """Ask DeepSeek to verbalize the precomputed multi-initialization fact sheet."""
     payload = json.dumps(facts, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
     llm_client = client or OpenAI(
-        api_key=api_key or os.environ["DEEPSEEK_API_KEY"], base_url=base_url
+        api_key=api_key or os.environ["DEEPSEEK_API_KEY"], base_url=base_url,
+        timeout=60.0, max_retries=1,
     )
     response = llm_client.chat.completions.create(
         model=model,

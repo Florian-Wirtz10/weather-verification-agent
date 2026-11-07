@@ -206,6 +206,14 @@ const guides: ResultGuide[] = [
           prompt: '生成+60分钟StormDiT、DiffCast、Persistence与CREF的空间对比图，同时使用20和35 dBZ绘制CSI、POD、FAR及5像元FSS时效曲线。',
         },
       },
+      {
+        title: '老师修改版四类图',
+        note: 'CSI、四张POD箱线图、FAR分组柱状图、多尺度FSS；固定绿黄红配色',
+        draft: {
+          case_id: '2025-04-11', models: ['PredRNN', 'NowCastNet', 'StormDiT'], scope: 'all', bbox: [28.7, 32.51, 112.38, 116.19],
+          prompt: '使用10、20、35、45 dBZ阈值，生成CSI时效曲线；每个阈值分别生成一张三模型POD箱线图；生成FAR分组柱状图（横轴预报时效）；生成1、3、5像元FSS曲线。PredRNN绿色、NowCastNet黄色、StormDiT红色，去掉指标箭头并放大坐标、标题和图例字体。',
+        },
+      },
     ],
   },
 ]

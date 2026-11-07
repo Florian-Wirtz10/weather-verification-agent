@@ -103,6 +103,9 @@ def read_cref(path):
     if lat[0] > lat[-1]:
         data = data[::-1, :]
         lat = lat[::-1]
+    if lon[0] > lon[-1]:
+        data = data[:, ::-1]
+        lon = lon[::-1]
 
     return GriddedField(
         data=data.astype("float32"),

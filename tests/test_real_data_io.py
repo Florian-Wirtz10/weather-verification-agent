@@ -147,6 +147,18 @@ def _make_cref_nc(path, *, lat, lon, data, valid_time_str):
         cref_var[:] = data[None, :, :]
 
 
+def test_read_cref_normalizes_descending_longitude(tmp_path):
+    path = tmp_path / "descending.nc"
+    _make_cref_nc(
+        path, lat=np.array([30.0, 29.0]), lon=np.array([111.0, 110.0]),
+        data=np.array([[1.0, 2.0], [3.0, 4.0]]), valid_time_str="2025-04-11 00:00:00",
+    )
+    field = read_cref(path)
+    np.testing.assert_array_equal(field.lon, [110.0, 111.0])
+    np.testing.assert_array_equal(field.lat, [29.0, 30.0])
+    np.testing.assert_array_equal(field.data, [[4.0, 3.0], [2.0, 1.0]])
+
+
 def test_read_cref_preserves_delivered_utc_time(tmp_path):
     lat = np.array([28.0, 28.01, 28.02], dtype="f4")
     lon = np.array([110.0, 110.01], dtype="f4")

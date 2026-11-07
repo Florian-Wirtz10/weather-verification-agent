@@ -142,6 +142,7 @@ def test_target_prompt_has_an_exact_deterministic_figure_contract():
 
     assert request == {
         "metrics": ["csi", "pod", "far", "fss"],
+        "score_curve_metrics": ["csi", "pod", "far"],
         "thresholds_dbz": [20.0, 35.0, 45.0],
         "lead_range_minutes": {"start": 6, "end": 72},
         "views": [

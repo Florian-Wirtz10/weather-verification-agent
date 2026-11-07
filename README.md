@@ -6,6 +6,10 @@ StormDiT、风雷、Zero-shot Benchmark 与 CREF 雷达观测放到统一检验�
 
 ## 主要功能
 
+图表效果可查看 [老师修改版样图（CSI、POD、FAR、FSS）](docs/sample_figures/README.md)。
+
+部署到老师电脑可按 [Windows 部署清单](docs/deployment-windows.md) 操作。
+
 - 支持 StormDiT、风雷单产品检验与严格公共样本下的双模型对比；
 - 支持 ConvLSTM、PredRNN、Earthformer、NowCastNet、SimVP、DiffCast、
   Persistence 等 Zero-shot Benchmark；
@@ -28,7 +32,7 @@ StormDiT、风雷、Zero-shot Benchmark 与 CREF 雷达观测放到统一检验�
 
 ## Windows PowerShell 操作文档
 
-以下步骤适用于 Windows 10/11。请先安装 Python 3.11、Node.js 20 或更高版本和 Git，
+以下步骤适用于 Windows 10/11。请先安装 Python 3.11 和 Git（下载 ZIP 时不需要 Git），
 然后在项目根目录打开 **PowerShell**。命令行提示符所在目录应能看到 `pyproject.toml`
 和 `frontend` 文件夹。
 
@@ -47,10 +51,19 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ```powershell
 python -m pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple
-python -m pip install -e . -i https://pypi.tuna.tsinghua.edu.cn/simple --timeout 120 --retries 10
+python -m pip install -e . -c constraints-security.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --timeout 120 --retries 10
 ```
 
-### 3. 安装并构建前端
+### 3. 检查前端
+
+仓库已带构建好的前端，普通部署不需要 Node.js，先执行：
+
+```powershell
+Test-Path .\frontend\dist\index.html
+```
+
+输出 `True` 即可跳到下一步。只有修改前端源码或构建产物缺失时，才安装 Node.js 20+
+并执行：
 
 ```powershell
 npm --prefix frontend ci --registry=https://registry.npmmirror.com
@@ -66,7 +79,7 @@ Test-Path .\frontend\dist\index.html
 首次运行时复制配置模板：
 
 ```powershell
-Copy-Item .env.example .env
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 notepad .env
 ```
 
@@ -107,7 +120,7 @@ cd weather-verification-agent
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
+python -m pip install -e . -c constraints-security.txt
 
 npm --prefix frontend ci
 npm --prefix frontend run build
@@ -164,6 +177,12 @@ StormDiT、风雷与 CREF 三者共有的起报和有效时刻；空间配准、
 ```bash
 weather-agent-web
 ```
+
+默认仅监听本机 `127.0.0.1:8000`。本服务没有内置用户认证和任务隔离；共享部署应通过
+带认证的反向代理访问。需要显式开放监听时使用
+`python -m uvicorn webapi.main:app --host 0.0.0.0 --port 8000`。
+最多接受 8 个排队或执行中的任务，超出时返回 HTTP 429；内存保留最近最多 100 个任务记录，
+文件按下方保留策略清理。进程重启后内存任务记录不会恢复。
 
 浏览器打开：
 

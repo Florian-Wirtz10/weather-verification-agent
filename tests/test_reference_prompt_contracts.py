@@ -169,7 +169,7 @@ BENCHMARK_CONTRACTS = [
 
 
 def test_reference_page_has_all_current_examples_under_contract():
-    assert len(_reference_prompts()) == 13
+    assert len(_reference_prompts()) == 14
 
 
 @pytest.mark.parametrize("index, expected", list(enumerate(REGULAR_CONTRACTS)))

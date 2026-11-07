@@ -66,6 +66,8 @@ def _fraction_field(binary, window: int):
 def _frame_row(forecast, truth, threshold, window_sizes):
     forecast = np.asarray(forecast, dtype=np.float64)
     truth = np.asarray(truth, dtype=np.float64)
+    if forecast.ndim != 2 or forecast.shape != truth.shape or not forecast.size:
+        raise ValueError("benchmark frames must be non-empty 2D arrays with matching shapes")
     valid = np.isfinite(forecast) & np.isfinite(truth)
     if not np.all(valid):
         # The delivery contract contains no NaNs. Keep an explicit guard so a

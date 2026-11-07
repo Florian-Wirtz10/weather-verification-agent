@@ -150,7 +150,10 @@ def parse_request(
     base_url="https://api.deepseek.com",
 ):
     """Parse text into a validated declarative verification request."""
-    client = OpenAI(api_key=api_key or os.environ["DEEPSEEK_API_KEY"], base_url=base_url)
+    client = OpenAI(
+        api_key=api_key or os.environ["DEEPSEEK_API_KEY"], base_url=base_url,
+        timeout=60.0, max_retries=1,
+    )
     response = client.chat.completions.create(
         model=model,
         messages=[

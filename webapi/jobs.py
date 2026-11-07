@@ -10,6 +10,10 @@ import time
 import uuid
 
 
+class JobQueueFull(RuntimeError):
+    """The single-worker service has reached its admission limit."""
+
+
 @dataclass
 class Job:
     id: str
@@ -25,7 +29,7 @@ class Job:
     error: str | None = None
     events: list[dict] = field(default_factory=list)
     created_monotonic: float = field(default_factory=time.perf_counter, repr=False)
-    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     def update(self, stage: str, message: str, progress: float) -> None:
         with self.lock:
@@ -59,7 +63,11 @@ class Job:
 
 
 class JobManager:
-    def __init__(self):
+    def __init__(self, *, max_pending=8, max_history=100):
+        if max_pending < 1 or max_history < max_pending:
+            raise ValueError("require 1 <= max_pending <= max_history")
+        self._max_pending = max_pending
+        self._max_history = max_history
         # Matplotlib and the large source readers are deliberately serialized.
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="verification")
         self._jobs: dict[str, Job] = {}
@@ -69,20 +77,36 @@ class JobManager:
         job = Job(id=uuid.uuid4().hex[:12], request=request)
         job.update("queued", "任务已进入队列", 0.0)
         with self._lock:
+            pending = sum(job.status in {"queued", "running"} for job in self._jobs.values())
+            if pending >= self._max_pending:
+                raise JobQueueFull("任务队列已满，请等待现有任务完成后重试")
+            for old_id, old_job in list(self._jobs.items()):
+                if len(self._jobs) < self._max_history:
+                    break
+                if old_job.status not in {"queued", "running"}:
+                    del self._jobs[old_id]
             self._jobs[job.id] = job
-        self._executor.submit(self._run, job, runner)
+            try:
+                self._executor.submit(self._run, job, runner)
+            except Exception:
+                del self._jobs[job.id]
+                raise
         return job
 
     def _run(self, job: Job, runner) -> None:
-        job.status = "running"
+        with job.lock:
+            job.status = "running"
         try:
-            job.result = runner(job.request, job.id, job.update)
-            job.status = "complete"
-            job.update("complete", "检验、制图与解读均已完成", 1.0)
+            result = runner(job.request, job.id, job.update)
+            with job.lock:
+                job.result = result
+                job.update("complete", "检验、制图与解读均已完成", 1.0)
+                job.status = "complete"
         except Exception as exc:  # surfaced verbatim to the local expert user
-            job.error = str(exc)
-            job.status = "failed"
-            job.update("failed", str(exc), job.progress)
+            with job.lock:
+                job.error = str(exc)
+                job.update("failed", str(exc), job.progress)
+                job.status = "failed"
 
     def get(self, job_id: str) -> Job:
         with self._lock:

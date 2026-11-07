@@ -12,7 +12,14 @@ from openai import OpenAI
 
 
 BENCHMARK_METRICS = ("csi", "pod", "far", "bias_score", "mae", "rmse", "fss")
+TEACHER_FIGURE_PROMPT = (
+    "使用10、20、35、45 dBZ阈值，生成CSI时效曲线；每个阈值分别生成一张三模型POD箱线图；"
+    "生成FAR分组柱状图（横轴预报时效）；生成1、3、5像元FSS曲线。"
+    "PredRNN绿色、NowCastNet黄色、StormDiT红色，去掉指标箭头并放大坐标、标题和图例字体。"
+)
 BENCHMARK_VIEWS = (
+    "pod_distribution",
+    "far_bar",
     "reflectivity_animation",
     "score_curve",
     "fss_curve",
@@ -26,6 +33,8 @@ _SYSTEM_PROMPT = f"""你是中国雷达CREF Zero-shot Benchmark的受限请求�
 可选指标：{list(BENCHMARK_METRICS)}。
 可选图表：
 - score_curve：CSI/POD/FAR/Bias/MAE/RMSE随预报时效变化；
+- pod_distribution：每个阈值独立一张POD箱线图，横轴模型，样本为起报×时效；
+- far_bar：FAR随预报时效的模型分组柱状图，按阈值分面；
 - fss_curve：FSS随预报时效变化，可选1/3/5像元邻域；
 - period_summary：整个所选共同时间段的多模型汇总比较；
 - score_heatmap：模型×预报时效热力图；
@@ -75,6 +84,11 @@ def validate_benchmark_request(parsed, *, single: bool, common_horizon: int) -> 
             metrics.append(metric)
     if not metrics:
         raise ValueError("select at least one benchmark metric")
+    curve_metrics = parsed.get("score_curve_metrics", [m for m in metrics if m != "fss"])
+    if not isinstance(curve_metrics, list) or any(
+        m not in metrics or m == "fss" for m in curve_metrics
+    ):
+        raise ValueError("score_curve_metrics must be selected non-FSS metrics")
     thresholds = []
     for value in parsed.get("thresholds_dbz", [20, 35, 45]):
         if isinstance(value, bool) or not isinstance(value, Real):
@@ -86,6 +100,12 @@ def validate_benchmark_request(parsed, *, single: bool, common_horizon: int) -> 
             thresholds.append(threshold)
     if not thresholds or len(thresholds) > 6:
         raise ValueError("select one to six benchmark thresholds")
+    fss_thresholds = parsed.get("fss_thresholds_dbz", thresholds)
+    if not isinstance(fss_thresholds, list) or not fss_thresholds or any(
+        isinstance(t, bool) or not isinstance(t, Real) or t not in thresholds
+        for t in fss_thresholds
+    ):
+        raise ValueError("FSS thresholds must be a non-empty subset of scored thresholds")
     lead = parsed.get("lead_range_minutes", {})
     if not isinstance(lead, dict):
         raise ValueError("lead_range_minutes must be an object")
@@ -136,6 +156,9 @@ def validate_benchmark_request(parsed, *, single: bool, common_horizon: int) -> 
     if "fss_curve" in views and "fss" not in metrics:
         views.remove("fss_curve")
         unmatched.append("FSS曲线需要在metrics中选择fss")
+    for view, metric in (("pod_distribution", "pod"), ("far_bar", "far")):
+        if view in views and metric not in metrics:
+            metrics.append(metric)
     if (
         "spatial_comparison" in views
         and "reflectivity_animation" in views
@@ -157,6 +180,9 @@ def validate_benchmark_request(parsed, *, single: bool, common_horizon: int) -> 
         raise ValueError("animation.frame_step must be an integer from 1 to 30")
     return {
         "metrics": metrics,
+        "score_curve_metrics": list(dict.fromkeys(curve_metrics)),
+        **({"fss_thresholds_dbz": list(dict.fromkeys(fss_thresholds))}
+           if "fss_thresholds_dbz" in parsed else {}),
         "thresholds_dbz": thresholds,
         "lead_range_minutes": {"start": start, "end": end},
         "views": views,
@@ -221,6 +247,10 @@ def apply_explicit_benchmark_contract(parsed: dict, user_text: str) -> dict:
     )
     if explicit_static:
         requested_views.add("spatial_comparison")
+    if "pod" in normalized and any(t in normalized for t in ("箱线", "箱型", "分布图")):
+        requested_views.add("pod_distribution")
+    if "far" in normalized and any(t in normalized for t in ("柱状", "直方", "柱形")):
+        requested_views.add("far_bar")
     if requested_views:
         result["views"] = [view for view in BENCHMARK_VIEWS if view in requested_views]
 
@@ -266,6 +296,9 @@ def apply_explicit_benchmark_contract(parsed: dict, user_text: str) -> dict:
     ]
     if explicit_metrics:
         result["metrics"] = list(dict.fromkeys(explicit_metrics))
+    explicit_curves = re.findall(r"(csi|pod|far|bias|mae|rmse)\s*(?:时效)?曲线", normalized)
+    if explicit_curves and requested_views.intersection({"pod_distribution", "far_bar"}):
+        result["score_curve_metrics"] = list(dict.fromkeys(metric_tokens[m] for m in explicit_curves))
 
     if "fss" in normalized:
         window_values = []
@@ -326,7 +359,19 @@ def parse_benchmark_request(
     api_key=None,
     base_url="https://api.deepseek.com",
 ) -> dict:
-    client = OpenAI(api_key=api_key or os.environ["DEEPSEEK_API_KEY"], base_url=base_url)
+    if str(user_text).strip() == TEACHER_FIGURE_PROMPT:
+        request = default_benchmark_request(single=single, common_horizon=common_horizon)
+        request.update(
+            metrics=["csi", "pod", "far", "fss"], score_curve_metrics=["csi"],
+            thresholds_dbz=[10.0, 20.0, 35.0, 45.0],
+            fss_thresholds_dbz=[20.0, 35.0, 45.0],
+            views=["score_curve", "pod_distribution", "far_bar", "fss_curve"],
+        )
+        return validate_benchmark_request(request, single=single, common_horizon=common_horizon)
+    client = OpenAI(
+        api_key=api_key or os.environ["DEEPSEEK_API_KEY"], base_url=base_url,
+        timeout=60.0, max_retries=1,
+    )
     response = client.chat.completions.create(
         model=model,
         messages=[

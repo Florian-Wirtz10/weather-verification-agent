@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 from streamlit.testing.v1 import AppTest
@@ -91,7 +92,7 @@ def _patch_catalog(monkeypatch):
 def test_streamlit_initial_screen_has_final_phase8_controls(monkeypatch):
     _patch_catalog(monkeypatch)
 
-    app = AppTest.from_file("app.py", default_timeout=30).run()
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py", default_timeout=30).run()
 
     assert not app.exception
     assert [item.value for item in app.number_input] == [29.0, 33.5, 108.0, 116.5]
@@ -120,7 +121,7 @@ def test_streamlit_initial_screen_has_final_phase8_controls(monkeypatch):
 def test_default_prompt_tracks_selected_product(monkeypatch):
     _patch_catalog(monkeypatch)
 
-    app = AppTest.from_file("app.py", default_timeout=30).run()
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py", default_timeout=30).run()
     assert "StormDiT和风雷" in app.text_area[0].value
 
     app = app.multiselect[0].set_value(["StormDiT"]).run()
@@ -148,7 +149,7 @@ def test_single_stormdit_result_has_ai_and_downloads(monkeypatch):
         lambda *_args, **_kwargs: _single_result(),
     )
 
-    app = AppTest.from_file("app.py", default_timeout=30).run()
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py", default_timeout=30).run()
     app = app.multiselect[0].set_value(["StormDiT"]).run()
     app = app.radio[0].set_value("单一起报").run()
     app = _button(app, "生成检验结果").click().run()
@@ -216,7 +217,7 @@ def test_two_model_batch_uses_final_product_name(monkeypatch):
         lambda *_args, **_kwargs: result,
     )
 
-    app = AppTest.from_file("app.py", default_timeout=30).run()
+    app = AppTest.from_file(Path(__file__).resolve().parents[1] / "app.py", default_timeout=30).run()
     app = app.multiselect[0].set_value(["StormDiT", "风雷"]).run()
     app = _button(app, "生成检验结果").click().run()
 

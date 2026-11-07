@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import math
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -39,7 +40,7 @@ def _nonnegative_float(name: str, default: float) -> float:
         value = float(raw)
     except ValueError as exc:
         raise ValueError(f"{name} must be a number, got {raw!r}") from exc
-    if value < 0:
+    if not math.isfinite(value) or value < 0:
         raise ValueError(f"{name} must be non-negative, got {value}")
     return value
 

@@ -3,8 +3,8 @@ import { useEffect, useMemo, useState } from 'react'
 import type { CurveSeries, ThemeName } from '../types'
 
 const modelColors: Record<string, string> = {
-  stormdit: '#65a4ff', StormDiT: '#65a4ff', fenglei: '#ffad6f', '风雷': '#ffad6f',
-  ConvLSTM: '#4ecdc4', PredRNN: '#c792ea', Earthformer: '#82aaff', NowCastNet: '#f6c177',
+  stormdit: '#E15759', StormDiT: '#E15759', fenglei: '#ffad6f', '风雷': '#ffad6f',
+  ConvLSTM: '#4ecdc4', PredRNN: '#59A14F', Earthformer: '#82aaff', NowCastNet: '#E6B800',
   SimVP: '#7bd88f', DiffCast: '#f78c6c', Persistence: '#8c96aa',
 }
 const modelLabels: Record<string, string> = {

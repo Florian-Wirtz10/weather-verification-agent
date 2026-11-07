@@ -27,7 +27,7 @@ def _directory_size(path: Path) -> int:
     total = 0
     for item in path.rglob("*"):
         try:
-            if item.is_file():
+            if not item.is_symlink() and item.is_file():
                 total += item.stat().st_size
         except FileNotFoundError:
             continue
@@ -40,7 +40,7 @@ def _job_directories(root: Path) -> list[Path]:
     return [
         item
         for item in root.iterdir()
-        if item.is_dir() and _JOB_ID.fullmatch(item.name) is not None
+        if not item.is_symlink() and item.is_dir() and _JOB_ID.fullmatch(item.name) is not None
     ]
 
 

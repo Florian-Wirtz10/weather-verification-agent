@@ -20,7 +20,7 @@ from webapi.execution import (
     list_common_valid_times,
     list_initializations,
 )
-from webapi.jobs import jobs
+from webapi.jobs import JobQueueFull, jobs
 from webapi.maintenance import JobOutputJanitor
 from webapi.schemas import CommonTimeRequest, PromptRequest, SelectionRequest, TaskRequest
 from webapi.settings import (
@@ -114,7 +114,10 @@ def task_default_prompt(request: PromptRequest):
 
 @app.post("/api/jobs", status_code=202)
 def create_job(request: TaskRequest):
-    job = jobs.submit(request.model_dump(), execute_task)
+    try:
+        job = jobs.submit(request.model_dump(), execute_task)
+    except JobQueueFull as exc:
+        raise HTTPException(status_code=429, detail=str(exc), headers={"Retry-After": "30"}) from exc
     return job.public()
 
 
@@ -183,7 +186,7 @@ def frontend(path: str):
 def run():
     import uvicorn
 
-    uvicorn.run("webapi.main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("webapi.main:app", host="127.0.0.1", port=8000, reload=False)
 
 
 if __name__ == "__main__":

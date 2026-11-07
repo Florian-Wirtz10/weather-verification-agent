@@ -2,12 +2,17 @@ import type { CaseOption, DataMetadata, Initialization, Job, Scope, TaskPayload 
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
-    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
     ...init,
+    headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
   })
   if (!response.ok) {
     const body = await response.json().catch(() => ({ detail: response.statusText }))
-    throw new Error(body.detail || '请求失败')
+    const detail = body.detail
+    const message = Array.isArray(detail)
+      ? detail.map((item: { loc?: (string | number)[]; msg?: string }) =>
+        `${item.loc?.join('.') || '参数'}: ${item.msg || '无效'}`).join('；')
+      : typeof detail === 'string' ? detail : '请求失败'
+    throw new Error(message)
   }
   return response.json() as Promise<T>
 }

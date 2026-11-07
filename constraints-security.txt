@@ -1,0 +1,5 @@
+# Apply with: python -m pip install -e . -c constraints-security.txt
+# Security floors for transitive dependencies; does not install unused packages.
+certifi>=2026.10.18
+httpx2>=2.12.0
+urllib3>=2.8.0

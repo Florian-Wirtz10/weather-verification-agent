@@ -43,6 +43,8 @@ from verification.multimodel import (
     run_multimodel_same_valid_time,
 )
 from visualization.benchmark_plots import (
+    plot_benchmark_pod_distribution,
+    plot_benchmark_far_bars,
     plot_benchmark_fss_curves,
     plot_benchmark_period_summary,
     plot_benchmark_score_curves,
@@ -164,6 +166,8 @@ def list_common_valid_times(
         common_only=len(model_ids) > 1,
     )
     selected = [case for case in cases if case["case_id"] in set(initialization_ids)]
+    if {case["case_id"] for case in selected} != set(initialization_ids):
+        raise ValueError("部分所选起报已不在当前严格匹配目录中，请刷新后重选")
     values = common_valid_times(selected)
     return [
         {
@@ -511,6 +515,8 @@ def _regular_batch(payload, job_id, update):
         [case["init_time"] for case in selected_cases] if payload["scope"] == "custom" else None
     )
     comparison = None
+    if "same_valid_time_comparison" in request["views"] and not payload.get("comparison_valid_time"):
+        raise ValueError("同有效时间对比需要选择共同有效时间")
     if (
         payload["scope"] == "custom"
         and payload.get("comparison_valid_time")
@@ -657,7 +663,7 @@ def _benchmark_artifact_manifest(request, models, animation_leads, spatial, gall
     if "score_curve" in views:
         expected_gallery.extend(
             f"benchmark_{metric}.png"
-            for metric in request["metrics"]
+            for metric in request.get("score_curve_metrics", request["metrics"])
             if metric != "fss"
         )
     if "fss" in request["metrics"] and "fss_curve" in views:
@@ -666,6 +672,13 @@ def _benchmark_artifact_manifest(request, models, animation_leads, spatial, gall
         expected_gallery.append("benchmark_period.png")
     if "score_heatmap" in views:
         expected_gallery.append("benchmark_heatmap.png")
+    if "pod_distribution" in views:
+        expected_gallery.extend(
+            f"benchmark_pod_distribution_{threshold:g}.png"
+            for threshold in request["thresholds_dbz"]
+        )
+    if "far_bar" in views:
+        expected_gallery.append("benchmark_far_bars.png")
     actual_gallery = [item["name"] for item in gallery]
     if actual_gallery != expected_gallery:
         raise RuntimeError(
@@ -720,6 +733,8 @@ def _benchmark(payload, job_id, update):
     )
     if not samples:
         raise ValueError("当前模型、起报和时效范围没有严格公共样本")
+    if payload["scope"] != "all" and selected_ids != {sample.sample_id for sample in samples}:
+        raise ValueError("部分所选起报已不在当前严格公共样本中，请刷新后重选")
 
     def progress(done, total, sample_id):
         update(
@@ -785,7 +800,7 @@ def _benchmark(payload, job_id, update):
             plot_benchmark_spatial_comparison(frame_map[static_lead]),
         )
     if "score_curve" in views:
-        for metric in request["metrics"]:
+        for metric in request.get("score_curve_metrics", request["metrics"]):
             if metric == "fss":
                 continue
             store.add_figure(
@@ -799,7 +814,7 @@ def _benchmark(payload, job_id, update):
             "多模型多尺度FSS随预报时效变化",
             plot_benchmark_fss_curves(
                 result["summary"],
-                request["thresholds_dbz"],
+                request.get("fss_thresholds_dbz", request["thresholds_dbz"]),
                 request["fss_windows"],
             ),
         )
@@ -825,6 +840,18 @@ def _benchmark(payload, job_id, update):
                 request["diagnostic_threshold_dbz"],
                 fss_window=max(request["fss_windows"]),
             ),
+        )
+    if "pod_distribution" in views:
+        for threshold in request["thresholds_dbz"]:
+            store.add_figure(
+                f"benchmark_pod_distribution_{threshold:g}",
+                f"{threshold:g} dBZ三模型POD箱线图（起报×时效样本）",
+                plot_benchmark_pod_distribution(result["per_sample"], threshold),
+            )
+    if "far_bar" in views:
+        store.add_figure(
+            "benchmark_far_bars", "FAR分组柱状图（横轴预报时效）",
+            plot_benchmark_far_bars(result["summary"], request["thresholds_dbz"]),
         )
     artifact_manifest = _benchmark_artifact_manifest(
         request, models, animation_leads, spatial, store.gallery
@@ -897,11 +924,16 @@ def _benchmark(payload, job_id, update):
 
 def execute_task(payload: dict, job_id: str, update):
     """JobManager entry point."""
-    if is_benchmark(payload["models"]):
-        return _benchmark(payload, job_id, update)
-    if payload["scope"] == "single":
-        return _regular_single(payload, job_id, update)
-    return _regular_batch(payload, job_id, update)
+    try:
+        if is_benchmark(payload["models"]):
+            return _benchmark(payload, job_id, update)
+        if payload["scope"] == "single":
+            return _regular_single(payload, job_id, update)
+        return _regular_batch(payload, job_id, update)
+    finally:
+        # Jobs are serialized; release figures even when rendering fails before
+        # a figure can be handed to ArtifactStore.add_figure().
+        plt.close("all")
 
 
 def artifact_path(job_id: str, name: str) -> Path:
@@ -912,6 +944,6 @@ def artifact_path(job_id: str, name: str) -> Path:
         raise FileNotFoundError(name)
     path = (OUTPUT_ROOT / job_id / safe_name).resolve()
     root = (OUTPUT_ROOT / job_id).resolve()
-    if path.parent != root or not path.is_file():
+    if root.parent != OUTPUT_ROOT.resolve() or path.parent != root or not path.is_file():
         raise FileNotFoundError(name)
     return path

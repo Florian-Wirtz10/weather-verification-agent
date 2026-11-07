@@ -17,8 +17,8 @@ def _common_finite_values(forecast, obs):
             f"(got {forecast_array.shape} and {obs_array.shape})"
         )
 
-    forecast_data = np.asarray(np.ma.getdata(forecast_array))
-    obs_data = np.asarray(np.ma.getdata(obs_array))
+    forecast_data = np.asarray(np.ma.getdata(forecast_array), dtype=np.float64)
+    obs_data = np.asarray(np.ma.getdata(obs_array), dtype=np.float64)
     valid = (
         ~np.ma.getmaskarray(forecast_array)
         & ~np.ma.getmaskarray(obs_array)

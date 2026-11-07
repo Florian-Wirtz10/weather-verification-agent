@@ -21,7 +21,7 @@ MODEL_COLORS = {
     "ConvLSTM": "#4E79A7",
     "PredRNN": "#59A14F",
     "Earthformer": "#9C755F",
-    "NowCastNet": "#F28E2B",
+    "NowCastNet": "#E6B800",
     "SimVP": "#76B7B2",
     "DiffCast": "#B07AA1",
     "StormDiT": "#E15759",
@@ -29,14 +29,29 @@ MODEL_COLORS = {
     "Persistence": "#6B7280",
 }
 METRIC_LABELS = {
-    "csi": "CSI ↑",
-    "pod": "POD ↑",
-    "far": "FAR ↓",
+    "csi": "CSI",
+    "pod": "POD",
+    "far": "FAR",
     "bias_score": "Frequency bias → 1",
     "mae": "MAE (dBZ) ↓",
     "rmse": "RMSE (dBZ) ↓",
-    "fss": "FSS ↑",
+    "fss": "FSS",
 }
+
+
+def _publication_fonts(fig):
+    """Keep text legible in exported multi-panel figures without global rc changes."""
+    for axis in fig.axes:
+        axis.tick_params(labelsize=13)
+        axis.xaxis.label.set_size(15)
+        axis.yaxis.label.set_size(15)
+        axis.title.set_size(16)
+    for legend in fig.legends:
+        for text in legend.get_texts():
+            text.set_fontsize(14)
+    if fig._suptitle is not None:
+        fig._suptitle.set_fontsize(18)
+    return fig
 
 
 def _score_limits(axis, metric):
@@ -89,7 +104,7 @@ def plot_benchmark_score_curves(summary: pd.DataFrame, metric: str, thresholds):
     handles, labels = axes.flat[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="outside lower center", ncol=min(4, len(labels)), frameon=False)
     fig.suptitle(f"Multi-model CREF benchmark | {METRIC_LABELS[metric]} by forecast lead")
-    return fig
+    return _publication_fonts(fig)
 
 
 def plot_benchmark_fss_curves(summary, thresholds, windows=(1, 3, 5)):
@@ -130,14 +145,81 @@ def plot_benchmark_fss_curves(summary, thresholds, windows=(1, 3, 5)):
             axis.set(
                 title=f"{threshold:g} dBZ | {window}×{window} pixels",
                 xlabel="Lead time (min)",
-                ylabel="FSS ↑",
+                ylabel="FSS",
                 ylim=(0, 1),
             )
             style_axes(axis)
     handles, labels = axes.flat[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="outside lower center", ncol=min(4, len(labels)), frameon=False)
     fig.suptitle("Multi-model CREF benchmark | Multi-threshold, multi-scale FSS")
-    return fig
+    return _publication_fonts(fig)
+
+
+def plot_benchmark_pod_distribution(per_sample, threshold):
+    """One threshold per figure; boxes use individual matched sample/lead PODs."""
+    selected = per_sample[np.isclose(per_sample["threshold_dbz"], threshold)]
+    models = [model for model in MODEL_COLORS if model in set(selected["model"])]
+    if not models:
+        raise ValueError(f"no POD samples for {threshold:g} dBZ")
+    fig, axis = plt.subplots(figsize=(8, 6.5), layout="constrained")
+    rng = np.random.default_rng(0)
+    labels = []
+    for index, model in enumerate(models, start=1):
+        values = selected.loc[selected["model"] == model, "pod"].to_numpy(dtype=float)
+        values = values[np.isfinite(values)]
+        labels.append(f"{model}\n(n={len(values)})")
+        if not len(values):
+            continue
+        color = MODEL_COLORS[model]
+        axis.boxplot(
+            [values], positions=[index], widths=0.5, patch_artist=True,
+            showfliers=False, showmeans=True,
+            boxprops={"facecolor": color, "alpha": 0.4},
+            medianprops={"color": "#222222", "linewidth": 1.5},
+            meanprops={"marker": "D", "markerfacecolor": "white", "markeredgecolor": "#222222"},
+        )
+        # Box statistics use ALL valid samples. Thin points only for readability.
+        points = values if len(values) <= 400 else rng.choice(values, 400, replace=False)
+        axis.scatter(index + rng.uniform(-0.16, 0.16, len(points)), points,
+                     color=color, s=12, alpha=0.5, edgecolors="none")
+    axis.set_xticks(range(1, len(models) + 1), labels)
+    axis.set(xlim=(0.5, len(models) + 0.5), ylim=(0, 1), ylabel="POD", xlabel="Model",
+             title=f"POD distribution | {threshold:g} dBZ")
+    style_axes(axis)
+    return _publication_fonts(fig)
+
+
+def plot_benchmark_far_bars(summary, thresholds):
+    """Grouped bars by native lead using pooled FAR, never averaged sample ratios."""
+    thresholds = list(thresholds)
+    if not thresholds:
+        raise ValueError("select at least one FAR threshold")
+    columns = min(2, len(thresholds))
+    fig, axes = plt.subplots(math.ceil(len(thresholds) / columns), columns,
+                             figsize=(8 * columns, 5.5 * math.ceil(len(thresholds) / columns)),
+                             squeeze=False, layout="constrained")
+    for axis, threshold in zip(axes.flat, thresholds):
+        selected = summary[np.isclose(summary["threshold_dbz"], threshold)]
+        models = [model for model in MODEL_COLORS if model in set(selected["model"])]
+        leads = sorted(selected["lead_minutes"].unique())
+        if not models or not leads:
+            plt.close(fig)
+            raise ValueError(f"no FAR scores for {threshold:g} dBZ")
+        width = 0.8 / len(models)
+        for index, model in enumerate(models):
+            values = selected[selected["model"] == model].set_index("lead_minutes").reindex(leads)
+            axis.bar(np.arange(len(leads)) + (index - (len(models) - 1) / 2) * width,
+                     values["far"], width=width, color=MODEL_COLORS[model], label=model)
+        axis.set_xticks(range(len(leads)), [str(value) for value in leads])
+        axis.set(xlabel="Lead time (min)", ylabel="FAR", ylim=(0, 1),
+                 title=f"{threshold:g} dBZ")
+        style_axes(axis)
+    for axis in axes.flat[len(thresholds):]:
+        axis.set_visible(False)
+    handles, labels = axes.flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="outside lower center", ncol=min(4, len(labels)), frameon=False)
+    fig.suptitle("Multi-model CREF benchmark | FAR by forecast lead")
+    return _publication_fonts(fig)
 
 
 def plot_benchmark_period_summary(

@@ -26,6 +26,8 @@ from verification.benchmark import (
     summarize_benchmark_period,
 )
 from visualization.benchmark_plots import (
+    plot_benchmark_pod_distribution,
+    plot_benchmark_far_bars,
     plot_benchmark_fss_curves,
     plot_benchmark_period_summary,
     plot_benchmark_score_curves,
@@ -139,7 +141,7 @@ def _media(catalog, result, request, *, single_sample_id=None):
             full_width=True,
         )
     if "score_curve" in request["views"]:
-        for metric in request["metrics"]:
+        for metric in request.get("score_curve_metrics", request["metrics"]):
             if metric == "fss":
                 continue
             _add_figure(
@@ -150,11 +152,12 @@ def _media(catalog, result, request, *, single_sample_id=None):
                 full_width=len(thresholds) >= 3,
             )
     if "fss_curve" in request["views"] and "fss" in request["metrics"]:
-        threshold = request["diagnostic_threshold_dbz"]
         _add_figure(
             media,
-            plot_benchmark_fss_curves(summary, threshold, request["fss_windows"]),
-            f"{threshold:g} dBZ多尺度FSS随预报时效变化",
+            plot_benchmark_fss_curves(
+                summary, request.get("fss_thresholds_dbz", thresholds), request["fss_windows"]
+            ),
+            "多阈值多尺度FSS随预报时效变化",
             "benchmark_fss_curve",
             full_width=True,
         )
@@ -189,6 +192,18 @@ def _media(catalog, result, request, *, single_sample_id=None):
             f"{threshold:g} dBZ模型—时效{metric.upper()}热力图",
             "benchmark_score_heatmap",
             full_width=True,
+        )
+    if "pod_distribution" in request["views"]:
+        for threshold in thresholds:
+            _add_figure(
+                media, plot_benchmark_pod_distribution(result["per_sample"], threshold),
+                f"{threshold:g} dBZ POD箱线图", f"benchmark_pod_distribution_{threshold:g}",
+                full_width=True,
+            )
+    if "far_bar" in request["views"]:
+        _add_figure(
+            media, plot_benchmark_far_bars(summary, thresholds),
+            "FAR分组柱状图", "benchmark_far_bars", full_width=True,
         )
     return media, period
 
