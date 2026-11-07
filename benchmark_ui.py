@@ -15,7 +15,9 @@ from agent.benchmark_insight import (
     generate_benchmark_insight,
     render_benchmark_deterministic_summary,
 )
-from agent.benchmark_request import default_benchmark_request, parse_benchmark_request
+from agent.benchmark_request import (
+    TEACHER_FIGURE_PROMPT, default_benchmark_request, parse_benchmark_request,
+)
 from data_io.benchmark import BENCHMARK_MODEL_LABELS, build_benchmark_catalog
 from reports import figure_to_png, figure_to_svg
 from verification.benchmark import (
@@ -359,18 +361,7 @@ def render_benchmark_page(*, models, scope):
 
     single = scope == "单一起报"
     request = default_benchmark_request(single=single, common_horizon=horizon)
-    if single:
-        default_prompt = (
-            f"比较所选{len(models)}个模型，使用20、35、45 dBZ阈值，查看+6—+{horizon}分钟"
-            "CSI、POD、FAR和FSS曲线，并生成+60分钟多模型—CREF空间对比、"
-            "公共时效汇总图和模型—时效热力图，全面解读。"
-        )
-    else:
-        default_prompt = (
-            f"比较所选{len(models)}个模型和{len(selected_samples)}个起报，使用20、35、45 dBZ阈值，"
-            f"只看严格公共的+6—+{horizon}分钟，生成CSI、POD、FAR和多尺度FSS曲线、"
-            "公共时效汇总图及模型—时效热力图，全面解读。"
-        )
+    default_prompt = TEACHER_FIGURE_PROMPT
     prompt_context = (tuple(models), scope, horizon, len(selected_samples))
     if st.session_state.get("benchmark_prompt_context") != prompt_context:
         st.session_state["benchmark_prompt"] = default_prompt

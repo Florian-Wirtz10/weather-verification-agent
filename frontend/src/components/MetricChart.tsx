@@ -24,7 +24,12 @@ export function MetricChart({ curves, theme }: { curves: CurveSeries[]; theme: T
   )
   const [metric, setMetric] = useState(metrics[0] || 'csi')
   const [threshold, setThreshold] = useState(thresholds[0] || 20)
+  const modelOrder = ['PredRNN', 'NowCastNet', 'StormDiT', 'stormdit', 'ConvLSTM', 'Earthformer', 'SimVP', 'DiffCast', 'Fenglei', 'fenglei', '风雷', 'Persistence']
   const selected = curves.filter((item) => item.metric === metric && item.threshold_dbz === threshold)
+    .sort((a, b) => {
+      const rank = (name: string) => modelOrder.includes(name) ? modelOrder.indexOf(name) : modelOrder.length
+      return rank(a.model) - rank(b.model) || a.model.localeCompare(b.model)
+    })
   const dark = theme === 'dark'
 
   useEffect(() => {

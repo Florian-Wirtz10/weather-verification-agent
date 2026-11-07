@@ -18,13 +18,13 @@ from visualization.style import style_axes
 
 
 MODEL_COLORS = {
-    "ConvLSTM": "#4E79A7",
     "PredRNN": "#59A14F",
-    "Earthformer": "#9C755F",
     "NowCastNet": "#E6B800",
+    "StormDiT": "#E15759",
+    "ConvLSTM": "#4E79A7",
+    "Earthformer": "#9C755F",
     "SimVP": "#76B7B2",
     "DiffCast": "#B07AA1",
-    "StormDiT": "#E15759",
     "Fenglei": "#EDC948",
     "Persistence": "#6B7280",
 }
@@ -42,6 +42,12 @@ METRIC_LABELS = {
 def _publication_fonts(fig):
     """Keep text legible in exported multi-panel figures without global rc changes."""
     for axis in fig.axes:
+        label = axis.get_title()
+        axis.set_title("")
+        if label:
+            axis.text(0.98, 0.98, label, transform=axis.transAxes,
+                      ha="right", va="top", fontsize=14,
+                      bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.8})
         axis.tick_params(labelsize=13)
         axis.xaxis.label.set_size(15)
         axis.yaxis.label.set_size(15)
@@ -50,7 +56,8 @@ def _publication_fonts(fig):
         for text in legend.get_texts():
             text.set_fontsize(14)
     if fig._suptitle is not None:
-        fig._suptitle.set_fontsize(18)
+        fig._suptitle.remove()
+        fig._suptitle = None
     return fig
 
 
@@ -83,7 +90,10 @@ def plot_benchmark_score_curves(summary: pd.DataFrame, metric: str, thresholds):
     )
     for axis, threshold in zip(axes.flat, thresholds):
         selected = summary[np.isclose(summary["threshold_dbz"], float(threshold))]
-        for model, rows in selected.groupby("model", sort=False):
+        for model in MODEL_COLORS:
+            rows = selected[selected["model"] == model]
+            if rows.empty:
+                continue
             rows = rows.sort_values("lead_minutes")
             axis.plot(
                 rows["lead_minutes"],
@@ -131,7 +141,10 @@ def plot_benchmark_fss_curves(summary, thresholds, windows=(1, 3, 5)):
         for column_index, window in enumerate(windows):
             axis = axes[row_index, column_index]
             column = f"fss_w{window}"
-            for model, rows in selected.groupby("model", sort=False):
+            for model in MODEL_COLORS:
+                rows = selected[selected["model"] == model]
+                if rows.empty:
+                    continue
                 rows = rows.sort_values("lead_minutes")
                 axis.plot(
                     rows["lead_minutes"],
@@ -184,7 +197,7 @@ def plot_benchmark_pod_distribution(per_sample, threshold):
                      color=color, s=12, alpha=0.5, edgecolors="none")
     axis.set_xticks(range(1, len(models) + 1), labels)
     axis.set(xlim=(0.5, len(models) + 0.5), ylim=(0, 1), ylabel="POD", xlabel="Model",
-             title=f"POD distribution | {threshold:g} dBZ")
+             title=f"{threshold:g} dBZ")
     style_axes(axis)
     return _publication_fonts(fig)
 
@@ -273,7 +286,7 @@ def plot_benchmark_period_summary(
         f"Pooled common-window comparison | {threshold:g} dBZ | "
         f"FSS scales {', '.join(f'{window}×{window}' for window in windows)} pixels"
     )
-    return fig
+    return _publication_fonts(fig)
 
 
 def plot_benchmark_score_heatmap(summary, metric: str, threshold: float, *, fss_window=5):
@@ -301,11 +314,12 @@ def plot_benchmark_score_heatmap(summary, metric: str, threshold: float, *, fss_
     axis.set_ylabel("Model")
     axis.set_title(f"{METRIC_LABELS[metric]} | {threshold:g} dBZ")
     fig.colorbar(image, ax=axis, label=METRIC_LABELS[metric])
-    return fig
+    return _publication_fonts(fig)
 
 
 def plot_benchmark_spatial_comparison(frame):
-    panels = list(frame["forecasts"].items()) + [("CREF observation", frame["truth"])]
+    panels = [(model, frame["forecasts"][model]) for model in MODEL_COLORS
+              if model in frame["forecasts"]] + [("CREF observation", frame["truth"])]
     columns = 3 if len(panels) > 4 else 2
     rows = math.ceil(len(panels) / columns)
     fig, axes = plt.subplots(
@@ -348,7 +362,7 @@ def plot_benchmark_spatial_comparison(frame):
         f"Multi-model spatial comparison | Init {sample.analysis_time_bjt:%Y-%m-%d %H:%M} BJT | "
         f"+{frame['lead_minutes']} min"
     )
-    return fig
+    return _publication_fonts(fig)
 
 
 def render_benchmark_reflectivity_animation(frames, *, fps=2):

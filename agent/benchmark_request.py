@@ -13,9 +13,10 @@ from openai import OpenAI
 
 BENCHMARK_METRICS = ("csi", "pod", "far", "bias_score", "mae", "rmse", "fss")
 TEACHER_FIGURE_PROMPT = (
-    "使用10、20、35、45 dBZ阈值，生成CSI时效曲线；每个阈值分别生成一张三模型POD箱线图；"
+    "使用10、20、35、45 dBZ阈值，生成CSI时效曲线；每个阈值分别生成一张所选模型POD箱线图；"
     "生成FAR分组柱状图（横轴预报时效）；生成1、3、5像元FSS曲线。"
-    "PredRNN绿色、NowCastNet黄色、StormDiT红色，去掉指标箭头并放大坐标、标题和图例字体。"
+    "所有图均使用上述阈值。模型顺序统一为PredRNN、NowCastNet、StormDiT，分别为绿色、黄色、红色。"
+    "去掉所有上方标题和指标箭头，放大坐标和图例字体。"
 )
 BENCHMARK_VIEWS = (
     "pod_distribution",
@@ -42,14 +43,15 @@ _SYSTEM_PROMPT = f"""你是中国雷达CREF Zero-shot Benchmark的受限请求�
 - spatial_comparison：单一起报、单个时效的多模型预报与CREF空间对比。
 规则：
 1. 全部或自定义多起报不支持空间图或动画；单一起报仅在用户明确要求时支持。
-2. 默认阈值20、35、45 dBZ，默认指标CSI、POD、FAR、FSS。
+2. 默认阈值10、20、35、45 dBZ，默认CSI曲线、逐阈值POD箱线图、FAR分组柱状图和FSS曲线。
+   score_curve_metrics指定折线图指标，默认仅csi；所有图使用thresholds_dbz，可增加55等阈值，最多8个。
 3. 时效必须为6分钟倍数，且不得超过服务端给出的共同最大时效。
 4. FSS邻域只能是1、3、5像元。
 5. 不支持的要求必须放入unmatched_requests，不能偷偷替换。
 6. “全面、汇总”只选择四类统计图；不得据此擅自增加空间图或动画。“空间分布动画、动图、GIF、同步演变”选择reflectivity_animation，不能用spatial_comparison静态图替代。
 JSON结构：
-{{"metrics":["csi","pod","far","fss"],"thresholds_dbz":[20,35,45],
-"lead_range_minutes":{{"start":6,"end":72}},"views":["reflectivity_animation","score_curve","fss_curve","period_summary","score_heatmap"],
+{{"metrics":["csi","pod","far","fss"],"score_curve_metrics":["csi"],"thresholds_dbz":[10,20,35,45],
+"lead_range_minutes":{{"start":6,"end":72}},"views":["score_curve","pod_distribution","far_bar","fss_curve"],
 "diagnostic_threshold_dbz":20,"diagnostic_metric":"csi","spatial_lead_minutes":null,
 "fss_windows":[1,3,5],"animation":{{"fps":2,"frame_step":1}},
 "unmatched_requests":[],"notes":""}}"""
@@ -58,10 +60,10 @@ JSON结构：
 def default_benchmark_request(*, single: bool, common_horizon: int) -> dict:
     return {
         "metrics": ["csi", "pod", "far", "fss"],
-        "thresholds_dbz": [20.0, 35.0, 45.0],
+        "thresholds_dbz": [10.0, 20.0, 35.0, 45.0],
+        "score_curve_metrics": ["csi"],
         "lead_range_minutes": {"start": 6, "end": int(common_horizon)},
-        "views": (["reflectivity_animation"] if single else [])
-        + ["score_curve", "fss_curve", "period_summary", "score_heatmap"],
+        "views": ["score_curve", "pod_distribution", "far_bar", "fss_curve"],
         "diagnostic_threshold_dbz": 20.0,
         "diagnostic_metric": "csi",
         "spatial_lead_minutes": None,
@@ -90,7 +92,7 @@ def validate_benchmark_request(parsed, *, single: bool, common_horizon: int) -> 
     ):
         raise ValueError("score_curve_metrics must be selected non-FSS metrics")
     thresholds = []
-    for value in parsed.get("thresholds_dbz", [20, 35, 45]):
+    for value in parsed.get("thresholds_dbz", [10, 20, 35, 45]):
         if isinstance(value, bool) or not isinstance(value, Real):
             raise ValueError("benchmark thresholds must be numeric")
         threshold = float(value)
@@ -98,8 +100,8 @@ def validate_benchmark_request(parsed, *, single: bool, common_horizon: int) -> 
             raise ValueError("benchmark thresholds must be between 0 and 75 dBZ")
         if threshold not in thresholds:
             thresholds.append(threshold)
-    if not thresholds or len(thresholds) > 6:
-        raise ValueError("select one to six benchmark thresholds")
+    if not thresholds or len(thresholds) > 8:
+        raise ValueError("select one to eight benchmark thresholds")
     fss_thresholds = parsed.get("fss_thresholds_dbz", thresholds)
     if not isinstance(fss_thresholds, list) or not fss_thresholds or any(
         isinstance(t, bool) or not isinstance(t, Real) or t not in thresholds
@@ -216,6 +218,7 @@ def apply_explicit_benchmark_contract(parsed: dict, user_text: str) -> dict:
         .replace("~", "-")
     )
     result = dict(parsed)
+    result.pop("score_curve_metrics", None)
     requested_views: set[str] = set()
     comprehensive = any(token in normalized for token in ("全面", "全套", "完整展示"))
     curve_requested = any(token in normalized for token in ("曲线", "随时效", "时效变化"))
@@ -359,13 +362,18 @@ def parse_benchmark_request(
     api_key=None,
     base_url="https://api.deepseek.com",
 ) -> dict:
-    if str(user_text).strip() == TEACHER_FIGURE_PROMPT:
+    # Editing only the threshold list in the default prompt stays deterministic
+    # and does not require an LLM/API key. All requested plots share that list.
+    pattern = r"^使用([\d.、,，\s]+)\s*dBZ阈值"
+    match = re.match(pattern, str(user_text).strip(), re.IGNORECASE)
+    template_tail = TEACHER_FIGURE_PROMPT.split("dBZ阈值", 1)[1]
+    if match and str(user_text).strip()[match.end():] == template_tail:
         request = default_benchmark_request(single=single, common_horizon=common_horizon)
-        request.update(
-            metrics=["csi", "pod", "far", "fss"], score_curve_metrics=["csi"],
-            thresholds_dbz=[10.0, 20.0, 35.0, 45.0],
-            fss_thresholds_dbz=[20.0, 35.0, 45.0],
-            views=["score_curve", "pod_distribution", "far_bar", "fss_curve"],
+        request["thresholds_dbz"] = [float(t) for t in re.split(r"[、,，\s]+", match[1].strip()) if t]
+        if not request["thresholds_dbz"]:
+            raise ValueError("select at least one threshold")
+        request["diagnostic_threshold_dbz"] = (
+            20.0 if 20.0 in request["thresholds_dbz"] else request["thresholds_dbz"][0]
         )
         return validate_benchmark_request(request, single=single, common_horizon=common_horizon)
     client = OpenAI(

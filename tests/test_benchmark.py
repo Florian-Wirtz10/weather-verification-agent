@@ -93,15 +93,14 @@ def test_request_rejects_lead_beyond_strict_common_horizon():
         validate_benchmark_request(request, single=False, common_horizon=72)
 
 
-def test_single_default_includes_animation_without_inventing_a_static_figure():
+def test_single_default_includes_teacher_paper_figures():
     request = default_benchmark_request(single=True, common_horizon=72)
 
     assert request["views"] == [
-        "reflectivity_animation",
         "score_curve",
+        "pod_distribution",
+        "far_bar",
         "fss_curve",
-        "period_summary",
-        "score_heatmap",
     ]
     assert request["diagnostic_threshold_dbz"] == 20.0
     assert request["spatial_lead_minutes"] is None
@@ -318,7 +317,7 @@ def test_fss_figure_covers_every_requested_threshold_and_scale():
     )
     try:
         assert len(figure.axes) == 9
-        assert {axis.get_title() for axis in figure.axes} == {
+        assert {text.get_text() for axis in figure.axes for text in axis.texts} == {
             f"{threshold:g} dBZ | {window}×{window} pixels"
             for threshold in (20.0, 35.0, 45.0)
             for window in (1, 3, 5)
@@ -352,7 +351,7 @@ def test_period_summary_keeps_every_requested_fss_scale():
     )
     try:
         assert len(figure.axes) == 6
-        assert {axis.get_title() for axis in figure.axes} >= {
+        assert {text.get_text() for axis in figure.axes for text in axis.texts} >= {
             "FSS 1×1 pixels ↑",
             "FSS 3×3 pixels ↑",
             "FSS 5×5 pixels ↑",
@@ -402,7 +401,7 @@ def test_benchmark_four_threshold_titles_use_a_two_by_two_layout():
     figure = plot_benchmark_score_curves(pd.DataFrame(rows), "csi", [10, 20, 30, 40])
     try:
         assert len(figure.axes) == 4
-        assert [axis.get_title() for axis in figure.axes] == [
+        assert [axis.texts[0].get_text() for axis in figure.axes] == [
             "10 dBZ", "20 dBZ", "30 dBZ", "40 dBZ"
         ]
         assert len({tuple(axis.get_position().bounds[:2]) for axis in figure.axes}) == 4

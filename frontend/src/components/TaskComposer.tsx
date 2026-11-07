@@ -28,8 +28,8 @@ const DEFAULT_CASE_ID = '2025-04-11'
 export function TaskComposer({ onSubmit, onBboxChange, initialDraft, jobStatus, onOpenModels, onOpenData }: TaskComposerProps) {
   const [cases, setCases] = useState<CaseOption[]>([])
   const [caseId, setCaseId] = useState(initialDraft?.case_id || DEFAULT_CASE_ID)
-  const [models, setModels] = useState<string[]>(initialDraft?.models || ['StormDiT', '风雷'])
-  const [scope, setScope] = useState<Scope>(initialDraft?.scope || 'single')
+  const [models, setModels] = useState<string[]>(initialDraft?.models || ['PredRNN', 'NowCastNet', 'StormDiT'])
+  const [scope, setScope] = useState<Scope>(initialDraft?.scope || 'all')
   const [bbox, setBbox] = useState<number[]>(initialDraft?.bbox || [29, 33.5, 108, 116.5])
   const [completeOnly, setCompleteOnly] = useState(initialDraft?.complete_only ?? true)
   const [initializations, setInitializations] = useState<Initialization[]>([])

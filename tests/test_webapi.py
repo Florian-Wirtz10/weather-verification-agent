@@ -60,7 +60,7 @@ def test_default_prompt_changes_with_scope_and_model_family():
     )
     assert benchmark.status_code == 200
     assert "FSS" in benchmark.json()["prompt"]
-    assert "在20 dBZ阈值下" in benchmark.json()["prompt"]
+    assert "使用10、20、35、45 dBZ阈值" in benchmark.json()["prompt"]
     assert "空间分布动画" not in benchmark.json()["prompt"]
 
     benchmark_single = client.post(
@@ -73,7 +73,7 @@ def test_default_prompt_changes_with_scope_and_model_family():
         },
     )
     assert benchmark_single.status_code == 200
-    assert "生成空间分布动画，时效曲线、热力图" in benchmark_single.json()["prompt"]
+    assert benchmark_single.json()["prompt"] == benchmark.json()["prompt"]
 
 
 def test_business_models_can_join_zero_shot_benchmark_selection():
@@ -87,8 +87,8 @@ def test_business_models_can_join_zero_shot_benchmark_selection():
         },
     )
     assert response.status_code == 200
-    assert "StormDiT、风雷、ConvLSTM" in response.json()["prompt"]
-    assert "+6—+72分钟" in response.json()["prompt"]
+    assert "所选模型POD箱线图" in response.json()["prompt"]
+    assert "FAR分组柱状图" in response.json()["prompt"]
     assert "FSS" in response.json()["prompt"]
 
 

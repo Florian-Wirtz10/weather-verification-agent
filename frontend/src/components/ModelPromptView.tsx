@@ -211,7 +211,7 @@ const guides: ResultGuide[] = [
         note: 'CSI、四张POD箱线图、FAR分组柱状图、多尺度FSS；固定绿黄红配色',
         draft: {
           case_id: '2025-04-11', models: ['PredRNN', 'NowCastNet', 'StormDiT'], scope: 'all', bbox: [28.7, 32.51, 112.38, 116.19],
-          prompt: '使用10、20、35、45 dBZ阈值，生成CSI时效曲线；每个阈值分别生成一张三模型POD箱线图；生成FAR分组柱状图（横轴预报时效）；生成1、3、5像元FSS曲线。PredRNN绿色、NowCastNet黄色、StormDiT红色，去掉指标箭头并放大坐标、标题和图例字体。',
+          prompt: '使用10、20、35、45 dBZ阈值，生成CSI时效曲线；每个阈值分别生成一张所选模型POD箱线图；生成FAR分组柱状图（横轴预报时效）；生成1、3、5像元FSS曲线。所有图均使用上述阈值。模型顺序统一为PredRNN、NowCastNet、StormDiT，分别为绿色、黄色、红色。去掉所有上方标题和指标箭头，放大坐标和图例字体。',
         },
       },
     ],

@@ -25,7 +25,9 @@ from agent.benchmark_insight import (
     generate_benchmark_insight,
     render_benchmark_deterministic_summary,
 )
-from agent.benchmark_request import default_benchmark_request, parse_benchmark_request
+from agent.benchmark_request import (
+    TEACHER_FIGURE_PROMPT, default_benchmark_request, parse_benchmark_request,
+)
 from data_io.benchmark import BENCHMARK_MODEL_LABELS
 from data_io.forecast_sources import MODEL_LABELS, discover_multimodel_initializations
 from reports import figure_to_png, figure_to_svg
@@ -81,14 +83,7 @@ OUTPUT_ROOT = WEB_JOB_OUTPUT_ROOT
 def default_prompt(case_id: str, models: list[str], scope: str) -> str:
     """Return the visible deterministic recommendation for the selected workflow."""
     if is_benchmark(models):
-        horizon = common_horizon_minutes(benchmark_model_ids(models))
-        subject = "、".join(models)
-        spatial = "生成空间分布动画，" if scope == "single" else "生成"
-        return (
-            f"比较{subject}，使用20、35、45 dBZ阈值，查看+6—+{horizon}分钟的"
-            f"CSI、POD、FAR和多尺度FSS，{spatial}时效曲线、热力图，并在20 dBZ阈值下"
-            "生成公共样本汇总和解读。"
-        )
+        return TEACHER_FIGURE_PROMPT
     subject = "和".join(models)
     if scope == "single":
         return (
