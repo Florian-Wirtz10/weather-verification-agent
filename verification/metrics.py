@@ -7,6 +7,19 @@ precipitation threshold; continuous scores work on the raw fields.
 import numpy as np
 
 
+def common_valid_arrays(*fields):
+    """Return float arrays restricted to every field's unmasked, finite cells."""
+    if not fields:
+        raise ValueError("at least one field is required")
+    arrays = [np.ma.asarray(field, dtype=np.float64).filled(np.nan) for field in fields]
+    if any(array.shape != arrays[0].shape for array in arrays[1:]):
+        raise ValueError("common verification fields must have the same shape")
+    valid = np.isfinite(arrays[0])
+    for array in arrays[1:]:
+        valid &= np.isfinite(array)
+    return tuple(np.where(valid, array, np.nan) for array in arrays)
+
+
 def _common_finite_values(forecast, obs):
     """Return input data and a mask where both fields contain finite values."""
     forecast_array = np.ma.asarray(forecast)

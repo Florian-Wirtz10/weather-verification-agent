@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from io import BytesIO
+import json
 import math
 import os
 from pathlib import Path
@@ -868,15 +869,33 @@ def _benchmark(payload, job_id, update):
             insight, insight_source = fallback, "确定性解读"
     else:
         insight, insight_source = fallback, "确定性解读"
-    rows = result["per_sample"].drop(
-        columns=[
-            column
-            for column in result["per_sample"]
-            if column.endswith(("_sum", "_numerator", "_denominator"))
+    # Retain sufficient statistics: pooled FSS and RMSE cannot be recovered
+    # by averaging the individual scores in a stripped per-sample table.
+    metrics_file = store.add_table("benchmark_metrics.csv", result["per_sample"])
+    summary_file = store.add_table("benchmark_summary.csv", result["summary"])
+    period_file = store.add_table("benchmark_period_summary.csv", period)
+    export_manifest = {
+        "schema_version": 1,
+        "request": request,
+        "context": result["context"],
+        "coverage": result["coverage"],
+        "artifact_manifest": artifact_manifest,
+        "samples": [
+            {
+                "sample_id": sample.sample_id,
+                "file": sample.path.name,
+                "analysis_time_utc": sample.analysis_time_utc.isoformat(),
+                "analysis_time_bjt": sample.analysis_time_bjt.isoformat(),
+            }
+            for sample in samples
         ],
-        errors="ignore",
+        "aggregation": "Pool contingency counts, error sums and FSS components before scoring.",
+    }
+    manifest_file = store.add_bytes(
+        "benchmark_manifest.json",
+        json.dumps(_json_safe(export_manifest), ensure_ascii=False, allow_nan=False, indent=2).encode(),
+        "application/json",
     )
-    metrics_file = store.add_table("benchmark_metrics.csv", rows)
     insight_file = store.add_bytes("ai_insight.md", insight.encode(), "text/markdown", "AI解读")
     bundle = store.bundle()
     labels = {model: BENCHMARK_MODEL_LABELS[model] for model in models}
@@ -912,7 +931,7 @@ def _benchmark(payload, job_id, update):
             "gallery": store.gallery,
             "insight": insight,
             "insight_source": insight_source,
-            "downloads": [bundle, metrics_file, insight_file],
+            "downloads": [bundle, metrics_file, summary_file, period_file, manifest_file, insight_file],
         }
     )
 

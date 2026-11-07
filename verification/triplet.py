@@ -15,7 +15,7 @@ from data_io.upstream_model import (
     read_upstream_model_forecasts,
     read_upstream_model_metadata,
 )
-from verification.metrics import CATEGORICAL_SCORES, contingency_table
+from verification.metrics import CATEGORICAL_SCORES, common_valid_arrays, contingency_table
 
 _FENGLEI_RE = re.compile(
     r"(?:FENGL(?:-V11)?-)?REFMOSAIC-(?P<init>\d{12})-(?P<lead>\d{3})MIN\.bz2\Z"
@@ -46,9 +46,13 @@ def _index_fenglei_init(directory, init_time_utc: datetime) -> dict[int, Path]:
 
 def _score(field, observation, thresholds):
     forecast_on_obs = regrid_nearest(field, observation.lat, observation.lon)
+    return _score_arrays(forecast_on_obs, observation.data, thresholds)
+
+
+def _score_arrays(forecast, observation, thresholds):
     result = {}
     for threshold in thresholds:
-        table = contingency_table(forecast_on_obs, observation.data, threshold)
+        table = contingency_table(forecast, observation, threshold)
         result[float(threshold)] = {
             "contingency": table,
             **{name: score_fn(table) for name, score_fn in CATEGORICAL_SCORES.items()},
@@ -97,19 +101,29 @@ def run_triplet_case(
             fenglei_by_lead[lead],
             bbox=(lat_min - 0.02, lat_max + 0.02, lon_min - 0.02, lon_max + 0.02),
         )
-        valid_time = model.valid_time
+        valid_time = metadata.init_time_utc + timedelta(minutes=lead)
         observation = read_radar_observation(
             observation_by_time[valid_time],
             bbox=(lat_min, lat_max, lon_min, lon_max),
         )
-        if fenglei.valid_time != valid_time or observation.valid_time != valid_time:
-            raise ValueError(f"triplet header-time mismatch at lead {lead}")
+        if observation.valid_time != valid_time or any(
+            forecast.valid_time != valid_time
+            or forecast.init_time != metadata.init_time_utc
+            or forecast.lead_minutes != lead
+            for forecast in (model, fenglei)
+        ):
+            raise ValueError(f"triplet header time mismatch at lead {lead}")
+        obs_data, model_data, fenglei_data = common_valid_arrays(
+            observation.data,
+            regrid_nearest(model, observation.lat, observation.lon),
+            regrid_nearest(fenglei, observation.lat, observation.lon),
+        )
         per_lead.append(
             {
                 "lead_minutes": lead,
                 "valid_time_utc": valid_time,
-                "model": _score(model, observation, thresholds),
-                "fenglei": _score(fenglei, observation, thresholds),
+                "model": _score_arrays(model_data, obs_data, thresholds),
+                "fenglei": _score_arrays(fenglei_data, obs_data, thresholds),
             }
         )
 

@@ -8,7 +8,7 @@ from io import BytesIO
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap, Normalize
+from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap, Normalize, TwoSlopeNorm
 from matplotlib.ticker import MultipleLocator
 from PIL import Image
 
@@ -77,14 +77,21 @@ def _reflectivity_cmap_norm(minimum_display_dbz=None):
         start = min(max(start, 0), len(_REFLECTIVITY_COLORS) - 1)
     bounds = _REFLECTIVITY_BOUNDS[start:]
     colors = _REFLECTIVITY_COLORS[start:]
-    cmap = ListedColormap(
-        colors,
-        under="#ffffff",
-        over=colors[-1],
-        bad="#ffffff",
-    )
+    cmap = ListedColormap(colors)
+    cmap.set_under("#ffffff")
+    cmap.set_over(colors[-1])
+    cmap.set_bad("#ffffff")
     norm = BoundaryNorm(bounds, len(colors), clip=False)
     return cmap, norm
+
+
+def _bias_score_norm(values):
+    """Share a data-aware bias scale with the neutral colour fixed at one."""
+    values = np.asarray(values, dtype=float)
+    finite = values[np.isfinite(values)]
+    vmin = min(0.0, float(finite.min())) if finite.size else 0.0
+    vmax = max(2.0, float(finite.max())) if finite.size else 2.0
+    return TwoSlopeNorm(vmin=vmin, vcenter=1.0, vmax=vmax)
 
 
 def _reflectivity_display_data(data, minimum_display_dbz=None):

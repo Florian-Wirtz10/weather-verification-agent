@@ -79,11 +79,13 @@ def build_benchmark_insight_facts(result, request, period, figure_catalog):
                 "first": _finite(rows.iloc[0][column]),
                 "last": _finite(rows.iloc[-1][column]),
             }
+        finite_models = [model for model, value in values.items() if value is not None]
         metrics.append(
             {
                 "metric": label,
                 "pooled_values": values,
-                "leader": min(values, key=lambda model: _better(column, values[model])),
+                "leader": min(finite_models, key=lambda model: _better(column, values[model]))
+                if finite_models else None,
                 "lead_trends": trends,
             }
         )
@@ -138,6 +140,12 @@ def render_benchmark_deterministic_summary(facts):
         ),
     ]
     for item in facts["metrics"]:
+        if item["leader"] is None:
+            lines.append(
+                f"在{experiment['diagnostic_threshold_dbz']:g} dBZ下，"
+                f"{item['metric'].upper()}汇总值未定义，本次不进行排名。"
+            )
+            continue
         value = item["pooled_values"][item["leader"]]
         lines.append(
             f"在{experiment['diagnostic_threshold_dbz']:g} dBZ下，"

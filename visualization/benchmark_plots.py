@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from datetime import timedelta
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,6 +11,7 @@ import pandas as pd
 
 from visualization.geography import add_admin_boundaries
 from visualization.plots import (
+    _bias_score_norm,
     _figures_to_gif,
     _reflectivity_cmap_norm,
     _reflectivity_display_data,
@@ -66,6 +68,16 @@ def _score_limits(axis, metric):
         axis.set_ylim(0, 1)
     elif metric == "bias_score":
         axis.axhline(1, color="#7A7A7A", linestyle=":", linewidth=1)
+
+
+def _mark_undefined_far_bars(axis, bars):
+    for bar in bars:
+        if not np.isfinite(bar.get_height()):
+            axis.text(
+                bar.get_x() + bar.get_width() / 2, 0.02, "N/A",
+                ha="center", va="bottom", rotation=90, fontsize=9,
+                color=bar.get_facecolor(),
+            )
 
 
 def plot_benchmark_score_curves(summary: pd.DataFrame, metric: str, thresholds):
@@ -221,8 +233,9 @@ def plot_benchmark_far_bars(summary, thresholds):
         width = 0.8 / len(models)
         for index, model in enumerate(models):
             values = selected[selected["model"] == model].set_index("lead_minutes").reindex(leads)
-            axis.bar(np.arange(len(leads)) + (index - (len(models) - 1) / 2) * width,
-                     values["far"], width=width, color=MODEL_COLORS[model], label=model)
+            bars = axis.bar(np.arange(len(leads)) + (index - (len(models) - 1) / 2) * width,
+                            values["far"], width=width, color=MODEL_COLORS[model], label=model)
+            _mark_undefined_far_bars(axis, bars)
         axis.set_xticks(range(len(leads)), [str(value) for value in leads])
         axis.set(xlabel="Lead time (min)", ylabel="FAR", ylim=(0, 1),
                  title=f"{threshold:g} dBZ")
@@ -269,12 +282,14 @@ def plot_benchmark_period_summary(
     order = [model for model in MODEL_COLORS if model in set(selected["model"])]
     selected = selected.set_index("model").reindex(order)
     for axis, (column, label, metric) in zip(axes.flat, plot_specs):
-        axis.bar(
+        bars = axis.bar(
             np.arange(len(order)),
             selected[column],
             color=[MODEL_COLORS[model] for model in order],
             width=0.7,
         )
+        if metric == "far":
+            _mark_undefined_far_bars(axis, bars)
         axis.set_xticks(np.arange(len(order)), order, rotation=32, ha="right")
         axis.set_ylabel(label)
         axis.set_title(label)
@@ -286,6 +301,7 @@ def plot_benchmark_period_summary(
         f"Pooled common-window comparison | {threshold:g} dBZ | "
         f"FSS scales {', '.join(f'{window}×{window}' for window in windows)} pixels"
     )
+    fig.supxlabel(f"Threshold {threshold:g} dBZ", fontsize=12)
     return _publication_fonts(fig)
 
 
@@ -305,8 +321,8 @@ def plot_benchmark_score_heatmap(summary, metric: str, threshold: float, *, fss_
         values,
         aspect="auto",
         cmap="RdBu_r",
-        vmin=vmin,
-        vmax=vmax,
+        **({"norm": _bias_score_norm(values)} if metric == "bias_score"
+           else {"vmin": vmin, "vmax": vmax}),
     )
     axis.set_xticks(np.arange(matrix.shape[1]), [str(value) for value in matrix.columns])
     axis.set_yticks(np.arange(matrix.shape[0]), matrix.index)
@@ -358,9 +374,11 @@ def plot_benchmark_spatial_comparison(frame):
             shrink=0.88,
         )
     sample = frame["sample"]
-    fig.suptitle(
-        f"Multi-model spatial comparison | Init {sample.analysis_time_bjt:%Y-%m-%d %H:%M} BJT | "
-        f"+{frame['lead_minutes']} min"
+    valid_time_bjt = sample.analysis_time_bjt + timedelta(minutes=int(frame["lead_minutes"]))
+    fig.supxlabel(
+        f"Init {sample.analysis_time_bjt:%Y-%m-%d %H:%M} BJT | "
+        f"Lead +{frame['lead_minutes']} min | Valid {valid_time_bjt:%Y-%m-%d %H:%M} BJT",
+        fontsize=12,
     )
     return _publication_fonts(fig)
 

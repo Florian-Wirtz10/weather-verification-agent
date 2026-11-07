@@ -213,7 +213,16 @@ def test_same_valid_time_comparison_uses_native_lead_for_each_init(monkeypatch, 
                     }
                 }
             ],
-            "frames": {lead: {"lead_minutes": lead}},
+            "frames": {lead: {
+                "lead_minutes": lead,
+                "observation": _field([[20, 0], [0, 0]], valid_time, product="CREF"),
+                "forecasts": {
+                    model_id: _field(
+                        [[20, 0], [0, 0]], valid_time, product=model_id,
+                        init=init_time, lead=lead,
+                    ) for model_id in model_ids
+                },
+            }},
         }
 
     monkeypatch.setattr(multimodel, "run_multimodel_case", fake_case)

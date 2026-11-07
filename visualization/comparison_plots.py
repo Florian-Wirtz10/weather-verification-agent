@@ -9,6 +9,7 @@ from matplotlib.lines import Line2D
 from verification.metrics import CATEGORICAL_SCORES
 from visualization.geography import add_admin_boundaries
 from visualization.plots import (
+    _bias_score_norm,
     _figures_to_gif,
     _reflectivity_cmap_norm,
     _reflectivity_display_data,
@@ -464,6 +465,8 @@ def plot_multimodel_score_heatmaps(
     axes = axes[0]
     score_min = -0.2 if metric == "ets" else 0.0
     score_max = 1.0
+    score_norm = (_bias_score_norm(subset[metric].to_numpy(dtype=float))
+                  if metric == "bias_score" else Normalize(score_min, score_max))
     score_image = None
     for axis, model_id in zip(axes, model_ids):
         pivot = pivots[model_id]
@@ -472,8 +475,7 @@ def plot_multimodel_score_heatmaps(
             origin="lower",
             aspect="auto",
             cmap="RdBu_r",
-            vmin=score_min,
-            vmax=score_max,
+            norm=score_norm,
         )
         axis.set_title(PLOT_LABELS[model_id])
         axis.set_xlabel("Lead time (min)")
@@ -499,7 +501,9 @@ def plot_multimodel_score_heatmaps(
             pivots["stormdit"].loc[common_index, common_columns]
             - pivots["fenglei"].loc[common_index, common_columns]
         )
-        limit = float(np.nanmax(np.abs(difference.to_numpy()))) if difference.size else 1.0
+        finite_difference = difference.to_numpy(dtype=float)
+        finite_difference = finite_difference[np.isfinite(finite_difference)]
+        limit = float(np.max(np.abs(finite_difference))) if finite_difference.size else 1.0
         limit = limit or 1.0
         axis = axes[-1]
         image = axis.imshow(

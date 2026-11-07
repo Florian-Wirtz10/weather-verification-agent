@@ -24,9 +24,9 @@ from data_io.forecast_sources import (
 from data_io.grid import GriddedField, regrid_nearest
 from data_io.radar_obs import read_radar_observation
 from data_io.upstream_model import read_upstream_model_forecasts
-from verification.metrics import CATEGORICAL_SCORES, contingency_table
+from verification.metrics import CATEGORICAL_SCORES, common_valid_arrays, contingency_table
 
-MULTIMODEL_CACHE_VERSION = 4
+MULTIMODEL_CACHE_VERSION = 5
 _COUNT_COLUMNS = (
     "hits",
     "misses",
@@ -71,8 +71,7 @@ def _score_array(forecast_data, observation_data, thresholds, *, lat, lon):
     floor only for the new continuous diagnostics. Existing categorical scores
     keep their original threshold comparison semantics.
     """
-    forecast = np.asarray(forecast_data, dtype=float)
-    observation = np.asarray(observation_data, dtype=float)
+    forecast, observation = common_valid_arrays(forecast_data, observation_data)
     valid = np.isfinite(forecast) & np.isfinite(observation)
     normalized_forecast = np.maximum(forecast, 0.0)
     normalized_observation = np.maximum(observation, 0.0)
@@ -94,7 +93,7 @@ def _score_array(forecast_data, observation_data, thresholds, *, lat, lon):
         }
     result = {}
     for threshold in thresholds:
-        table = contingency_table(forecast_data, observation_data, threshold)
+        table = contingency_table(forecast, observation, threshold)
         forecast_centroid = _echo_centroid(
             normalized_forecast, valid, threshold, lat, lon
         )
@@ -196,6 +195,8 @@ def run_multimodel_case(
             catalog.observations[valid_time],
             bbox=(lat_min, lat_max, lon_min, lon_max),
         )
+        if observation.valid_time != valid_time:
+            raise ValueError(f"CREF header time mismatch at +{lead} minutes")
         aligned_fields = {}
         for model_id in model_ids:
             if model_id == MODEL_STORMDIT:
@@ -211,22 +212,23 @@ def run_multimodel_case(
                         lon_max + 0.02,
                     ),
                 )
-            if field.valid_time != valid_time:
+            if (
+                field.valid_time != valid_time
+                or field.init_time != init_time_utc
+                or field.lead_minutes != lead
+            ):
                 raise ValueError(
                     f"{MODEL_LABELS[model_id]} header time mismatch at +{lead} minutes"
                 )
             aligned = _field_on_observation_grid(field, observation)
             aligned_fields[model_id] = aligned
-        common_valid = np.isfinite(observation.data)
-        for aligned in aligned_fields.values():
-            common_valid &= np.isfinite(aligned.data)
-        observation_for_score = np.where(
-            common_valid, observation.data, np.nan
+        observation_for_score, *forecast_arrays = common_valid_arrays(
+            observation.data, *(field.data for field in aligned_fields.values())
         )
         scores = {}
-        for model_id, aligned in aligned_fields.items():
+        for model_id, forecast_array in zip(aligned_fields, forecast_arrays, strict=True):
             scores[model_id] = _score_array(
-                np.where(common_valid, aligned.data, np.nan),
+                forecast_array,
                 observation_for_score,
                 thresholds,
                 lat=observation.lat,
@@ -305,6 +307,8 @@ def run_multimodel_same_valid_time(
     thresholds=(20,),
 ) -> dict:
     """Read different initializations that verify at one exact valid time."""
+    model_ids = tuple(dict.fromkeys(model_ids))
+    thresholds = tuple(thresholds)
     initializations = sorted(dict.fromkeys(initializations))
     if not 2 <= len(initializations) <= 8:
         raise ValueError("same-valid-time comparison requires 2—8 initializations")
@@ -353,17 +357,36 @@ def run_multimodel_same_valid_time(
                 "frame": result["frames"][lead],
             }
         )
-        for model_id, threshold_map in result["per_lead"][0]["models"].items():
+    # A fair update comparison uses the intersection across initializations as
+    # well as models. Per-initialization masks can otherwise hide different misses.
+    fields = [item["frame"]["observation"] for item in items]
+    fields.extend(item["frame"]["forecasts"][model] for item in items for model in model_ids)
+    reference = fields[0]
+    if any(
+        not np.array_equal(field.lat, reference.lat)
+        or not np.array_equal(field.lon, reference.lon)
+        for field in fields[1:]
+    ):
+        raise ValueError("same-valid-time fields must share the observation grid")
+    common_arrays = common_valid_arrays(*(field.data for field in fields))
+    for index, item in enumerate(items):
+        observation = common_arrays[index]
+        item["scores"] = {
+            model_id: _score_array(
+                common_arrays[len(items) + index * len(model_ids) + model_index],
+                observation, thresholds, lat=reference.lat, lon=reference.lon,
+            )
+            for model_index, model_id in enumerate(model_ids)
+        }
+        for model_id, threshold_map in item["scores"].items():
             for threshold, values in threshold_map.items():
                 rows.append(
                     {
                         "model_id": model_id,
-                        "init_time_utc": init_time.isoformat(),
-                        "init_time_bjt": result[
-                            "context"
-                        ]["init_time_bjt"].isoformat(),
+                        "init_time_utc": item["init_time_utc"].isoformat(),
+                        "init_time_bjt": item["init_time_bjt"].isoformat(),
                         "valid_time_utc": valid_time_utc.isoformat(),
-                        "lead_minutes": lead,
+                        "lead_minutes": item["lead_minutes"],
                         "threshold_dbz": threshold,
                         **values["contingency"],
                         **{
